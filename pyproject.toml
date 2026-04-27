@@ -7,10 +7,10 @@ name = "skcomms"
 version = "0.0.1"
 description = "Realm-scoped, three-tier identity, signed-envelope routing protocol for sovereign AI agents"
 readme = "README.md"
-license = {text = "MIT"}
+license = {text = "GPL-3.0-or-later"}
 requires-python = ">=3.10"
 authors = [
-    {name = "smilinTux.org", email = "hello@smilintux.org"},
+    {name = "smilinTux", email = "chefboyrdave2.1@gmail.com"},
 ]
 keywords = [
     "ai", "agent", "communication", "realm", "routing",
@@ -20,7 +20,7 @@ classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",

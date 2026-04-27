@@ -14,4 +14,4 @@ def test_version():
 
 def test_stub_modules_importable():
     """T1-T13 will fill these in; for the scaffold they just need to import."""
-    from skcomms import cluster, envelope, realm  # noqa: F401
+    from skcomms import cluster, envelope, identity, realm  # noqa: F401

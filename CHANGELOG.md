@@ -11,10 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Initial scaffold (T0 — coord task `893d26dc`).
-- Package skeleton: `cluster`, `envelope`, `realm` stub modules.
+- Package skeleton: `cluster`, `envelope`, `identity`, `realm` stub modules.
 - Smoke test confirming `import skcomms` and `__version__ = "0.0.1"`.
 - Dependency on `skcomm>=0.1.2` (transport library).
 - GPL-3.0-or-later license, matching the rest of the smilinTux ecosystem.
+
+### Fixed
+- LICENSE file now contains the full GPL-3.0 text (an earlier draft of
+  this commit-set had it as MIT; CHANGELOG and pyproject license
+  classifier are now consistent across all artifacts).
 
 ### Decision (T0)
 This repository is intentionally **separate from `skcomm`** (the singular

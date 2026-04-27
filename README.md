@@ -3,7 +3,7 @@
 **Realm-scoped routing protocol for sovereign AI agents.**
 
 `skcomms` (plural) is the **protocol layer** for cross-cluster
-agent communication:
+agent communication — *protocol over transport*:
 
 - **Three-tier identity** — `<agent>@<operator>.<realm>` (e.g.
   `lumina@chef.skworld`), with PGP fingerprint as the canonical
@@ -78,5 +78,8 @@ The CLI entrypoint is `skcomms`. See `skcomms --help`.
 
 ## License
 
-MIT — see `LICENSE`. (`skcomm`, the transport library, is GPL-3.0-or-later;
-the protocol layer is MIT to keep downstream integration unencumbered.)
+**GPL-3.0-or-later** — see [`LICENSE`](LICENSE).
+
+Matches the rest of the smilinTux ecosystem (`skcomm`, the transport
+library this depends on, is also GPL-3.0-or-later). Sovereign-AI infra
+ships under copyleft so downstream forks stay open.
