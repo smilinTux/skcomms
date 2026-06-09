@@ -1,0 +1,1966 @@
+"""
+SKComm CLI — sovereign agent messaging from the command line.
+
+Send, receive, and manage messages across all transports
+from any terminal. Works standalone or alongside the daemon.
+
+Usage:
+    skcomm send lumina "Hello from the terminal"
+    skcomm receive
+    skcomm status
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+import threading
+from pathlib import Path
+from typing import Optional
+
+import click
+
+try:
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
+
+    console = Console()
+except ImportError:
+    console = None  # type: ignore[assignment]
+
+from . import __version__
+from .config import SKCOMM_HOME
+
+_HOME = SKCOMM_HOME
+
+
+def _print(msg: str) -> None:
+    """Print using rich if available, else plain click.echo."""
+    if console:
+        console.print(msg)
+    else:
+        click.echo(msg)
+
+
+@click.group()
+@click.version_option(version=__version__, prog_name="skcomm")
+def main():
+    """SKComm — Sovereign Agent Communication.
+
+    Transport-agnostic encrypted messaging.
+    One message. Many paths. Always delivered.
+    """
+
+
+@main.command()
+@click.argument("recipient")
+@click.argument("message")
+@click.option("--config", "-c", default=None, help="Config file path.")
+@click.option(
+    "--mode",
+    "-m",
+    type=click.Choice(["failover", "broadcast", "stealth", "speed"]),
+    default=None,
+    help="Override routing mode.",
+)
+@click.option("--thread", "-t", default=None, help="Thread ID for conversation grouping.")
+@click.option("--reply-to", default=None, help="Envelope ID this replies to.")
+@click.option(
+    "--urgency",
+    "-u",
+    type=click.Choice(["low", "normal", "high", "critical"]),
+    default="normal",
+)
+def send(
+    recipient: str,
+    message: str,
+    config: Optional[str],
+    mode: Optional[str],
+    thread: Optional[str],
+    reply_to: Optional[str],
+    urgency: str,
+):
+    """Send a message to another agent.
+
+    Messages are routed through all configured transports
+    based on the routing mode (default: failover).
+
+    Examples:
+
+        skcomm send lumina "Sync complete on desktop"
+
+        skcomm send opus "Need review" --urgency high
+    """
+    from .core import SKComm
+    from .models import RoutingMode, Urgency
+
+    comm = SKComm.from_config(config)
+    mode_enum = RoutingMode(mode) if mode else None
+    urgency_enum = Urgency(urgency)
+
+    report = comm.send(
+        recipient=recipient,
+        message=message,
+        mode=mode_enum,
+        thread_id=thread,
+        in_reply_to=reply_to,
+        urgency=urgency_enum,
+    )
+
+    if report.delivered:
+        via = report.successful_transport or "unknown"
+        _print(f"\n  [green]Sent[/] to [bold]{recipient}[/] via {via}")
+        for a in report.attempts:
+            if a.success:
+                _print(f"    [dim]{a.transport_name}: {a.latency_ms:.1f}ms[/]")
+    else:
+        _print(f"\n  [red]Failed[/] to send to [bold]{recipient}[/]")
+        for a in report.attempts:
+            _print(f"    [red]{a.transport_name}: {a.error}[/]")
+        sys.exit(1)
+    _print("")
+
+
+@main.command()
+@click.option("--config", "-c", default=None, help="Config file path.")
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+def receive(config: Optional[str], json_out: bool):
+    """Check all transports for incoming messages.
+
+    Polls every configured transport, deduplicates, and
+    displays received messages.
+    """
+    from .core import SKComm
+
+    comm = SKComm.from_config(config)
+    envelopes = comm.receive()
+
+    if not envelopes:
+        _print("\n  [dim]No new messages.[/]\n")
+        return
+
+    if json_out:
+        for env in envelopes:
+            click.echo(env.model_dump_json(indent=2))
+        return
+
+    _print(f"\n  [bold]{len(envelopes)}[/] message(s) received:\n")
+
+    if console:
+        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        table.add_column("From", style="cyan")
+        table.add_column("Type", style="dim")
+        table.add_column("Content", max_width=60)
+        table.add_column("Thread", style="dim", max_width=12)
+        table.add_column("Urgency")
+
+        urgency_colors = {
+            "low": "dim",
+            "normal": "white",
+            "high": "yellow",
+            "critical": "bold red",
+        }
+
+        for env in envelopes:
+            preview = env.payload.content[:80] + ("..." if len(env.payload.content) > 80 else "")
+            urg = env.metadata.urgency.value
+            urg_color = urgency_colors.get(urg, "white")
+            tid = env.metadata.thread_id[:12] if env.metadata.thread_id else ""
+            table.add_row(
+                env.sender,
+                env.payload.content_type.value,
+                preview,
+                tid,
+                f"[{urg_color}]{urg.upper()}[/]",
+            )
+
+        console.print(table)
+    else:
+        for env in envelopes:
+            click.echo(
+                f"  {env.sender} [{env.payload.content_type.value}]: {env.payload.content[:80]}"
+            )
+
+    _print("")
+
+
+@main.command()
+@click.option("--config", "-c", default=None, help="Config file path.")
+@click.option("--interval", "-i", default=5, type=int, help="Poll interval in seconds.")
+@click.option("--all-agents", is_flag=True, help="Receive for all local agents (auto-discover).")
+def daemon(config: Optional[str], interval: int, all_agents: bool):
+    """Run a background receive daemon that polls for messages.
+
+    Continuously polls all configured transports at the given interval.
+    With --all-agents, discovers all agents in ~/.skcapstone/agents/
+    and receives for all of them with a single daemon.
+
+    \b
+    Examples:
+        skcomm daemon                    # Poll every 5s for current agent
+        skcomm daemon --all-agents       # Poll for all agents
+        skcomm daemon -i 10 --all-agents # Poll every 10s for all agents
+    """
+    import signal
+    import time
+
+    from .config import load_config
+    from .core import SKComm
+
+    cfg = load_config(config)
+
+    # If --all-agents, inject agents: auto into syncthing transport settings
+    if all_agents:
+        for tname, tconf in cfg.transports.items():
+            if tname == "syncthing":
+                tconf.settings["agents"] = "auto"
+
+    comm = SKComm.from_config(config)
+
+    # Re-configure syncthing transport if --all-agents was used
+    if all_agents:
+        for transport in comm.router.transports:
+            if hasattr(transport, "_agents_mode") and transport._agents_mode != "auto":
+                transport._agents_mode = "auto"
+                transport._discover_agents()
+
+    agent_name = comm.identity
+    agents_info = ""
+    for transport in comm.router.transports:
+        if hasattr(transport, "_local_names"):
+            agents_info = f" (scanning for: {', '.join(transport._local_names)})"
+            break
+
+    _print("\n  [bold]SKComm daemon started[/]")
+    _print(f"  Identity: [cyan]{agent_name}[/]{agents_info}")
+    _print(f"  Poll interval: {interval}s")
+    _print("  Press Ctrl+C to stop.\n")
+
+    running = True
+
+    def _shutdown(sig, frame):
+        nonlocal running
+        running = False
+
+    signal.signal(signal.SIGINT, _shutdown)
+    signal.signal(signal.SIGTERM, _shutdown)
+
+    total_received = 0
+    while running:
+        try:
+            envelopes = comm.receive()
+            if envelopes:
+                total_received += len(envelopes)
+                for env in envelopes:
+                    preview = env.payload.content[:60]
+                    urg = env.metadata.urgency.value.upper()
+                    _print(f"  [green]>[/] [{urg}] {env.sender} → {env.recipient}: {preview}")
+        except Exception as exc:
+            logger.warning("cli.py: %s", exc)
+            _print(f"  [red]Error during receive: {exc}[/]")
+
+        time.sleep(interval)
+
+    _print(f"\n  Daemon stopped. {total_received} message(s) received total.\n")
+
+
+@main.command()
+@click.option("--config", "-c", default=None, help="Config file path.")
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+def status(config: Optional[str], json_out: bool):
+    """Show SKComm status and transport health."""
+    from .core import SKComm
+
+    comm = SKComm.from_config(config)
+    st = comm.status()
+
+    if json_out:
+        click.echo(json.dumps(st, indent=2, default=str))
+        return
+
+    ident = st["identity"]
+    _print("")
+    if console:
+        console.print(
+            Panel(
+                f"Identity: [bold cyan]{ident.get('name', 'unknown')}[/]\n"
+                f"Fingerprint: {ident.get('fingerprint') or '[dim]none[/]'}\n"
+                f"Mode: [bold]{st['default_mode']}[/]\n"
+                f"Encrypt: {'[green]yes[/]' if st['encrypt'] else '[red]no[/]'}\n"
+                f"Sign: {'[green]yes[/]' if st['sign'] else '[red]no[/]'}\n"
+                f"Transports: [bold]{st['transport_count']}[/]",
+                title="SKComm",
+                border_style="bright_blue",
+            )
+        )
+
+    transports = st.get("transports", {})
+    if transports and console:
+        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        table.add_column("Transport", style="bold")
+        table.add_column("Status")
+        table.add_column("Latency", justify="right")
+        table.add_column("Details", style="dim")
+
+        status_colors = {
+            "available": "green",
+            "degraded": "yellow",
+            "unavailable": "red",
+        }
+
+        for name, health in transports.items():
+            if isinstance(health, dict):
+                s = health.get("status", "unknown")
+                color = status_colors.get(s, "dim")
+                lat = f"{health.get('latency_ms', 0):.1f}ms" if health.get("latency_ms") else ""
+                err = health.get("error", "")
+                table.add_row(name, f"[{color}]{s.upper()}[/]", lat, err)
+
+                if s == "degraded" and health.get("details", {}).get("disk_warning"):
+                    _print(f"\n  [bold yellow]⚠ {health['details']['disk_warning']}[/]")
+
+        console.print(table)
+
+    _print("")
+
+
+def _detect_syncthing() -> Optional[str]:
+    """Auto-detect the Syncthing comms root directory.
+
+    Checks common locations: ~/.skcapstone/comms, ~/Sync/comms,
+    and queries the Syncthing API if available.
+
+    Returns:
+        str: Path to comms_root if found, else None.
+    """
+    # Reason: prefer the Syncthing-shared path over the local-only default
+    candidates = [
+        Path("~/.skcapstone/sync/comms").expanduser(),
+        Path("~/.skcapstone/comms").expanduser(),
+        Path("~/Sync/skcomm").expanduser(),
+        Path("~/Sync/comms").expanduser(),
+        Path("~/.local/share/syncthing/skcomm").expanduser(),
+    ]
+    for path in candidates:
+        if path.exists():
+            return str(path)
+
+    try:
+        import subprocess
+
+        result = subprocess.run(
+            ["syncthing", "--version"],
+            capture_output=True,
+            timeout=3,
+            check=False,
+        )
+        if result.returncode == 0:
+            return str(Path("~/.skcapstone/comms").expanduser())
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        pass
+
+    return None
+
+
+def _check_disk_space_warning(comms_path: Path) -> None:
+    """Warn if disk space is low enough to trigger Syncthing's minDiskFree.
+
+    Syncthing defaults to 1% free — on a 2TB drive that's ~20GB. If
+    you're near capacity, Syncthing silently refuses to sync new files.
+    This has caused hours of debugging in production.
+
+    Args:
+        comms_path: Path to the comms root directory.
+    """
+    import shutil as _shutil
+
+    try:
+        target = Path(comms_path).expanduser()
+        target.mkdir(parents=True, exist_ok=True)
+        usage = _shutil.disk_usage(target)
+        free_pct = (usage.free / usage.total) * 100
+        free_gb = usage.free / (1024**3)
+        total_gb = usage.total / (1024**3)
+        threshold_gb = total_gb * 0.01
+
+        if free_pct < 1.5:
+            _print(f"  [bold red]⚠ LOW DISK SPACE[/]: {free_gb:.1f}GB free ({free_pct:.1f}%)")
+            _print(
+                f"    Syncthing default minDiskFree = 1% = [bold]{threshold_gb:.0f}GB[/] on this {total_gb:.0f}GB volume"
+            )
+            _print(
+                "    Sync will be [bold red]BLOCKED[/] until you free space or lower the threshold."
+            )
+            _print("    Fix: set minDiskFree to 100MB in Syncthing folder settings.")
+        elif free_pct < 5:
+            _print(
+                f"  [yellow]![/] Disk space: {free_gb:.1f}GB free ({free_pct:.1f}%) — watch for Syncthing minDiskFree threshold"
+            )
+        else:
+            _print(f"  [green]✓[/] Disk space: {free_gb:.1f}GB free ({free_pct:.1f}%)")
+    except OSError:
+        pass
+
+
+def _test_file_transport_ping(drop_root: Path) -> bool:
+    """Test the file transport by writing and removing a probe file.
+
+    Args:
+        drop_root: The filedrop root directory.
+
+    Returns:
+        bool: True if the write/read/remove succeeded.
+    """
+    import time
+
+    probe = drop_root / "inbox" / f".skcomm_probe_{int(time.time())}.tmp"
+    try:
+        probe.write_text("ping")
+        result = probe.exists() and probe.read_text() == "ping"
+        probe.unlink(missing_ok=True)
+        return result
+    except OSError:
+        return False
+
+
+@main.command("init")
+@click.option("--name", default=None, help="Your agent identity name.")
+@click.option("--fingerprint", default=None, help="PGP fingerprint for signing.")
+@click.option("--force", "-f", is_flag=True, help="Overwrite existing config without prompt.")
+def init_config(name: Optional[str], fingerprint: Optional[str], force: bool):
+    """Initialize SKComm configuration.
+
+    Creates ~/.skcomm/config.yml with sensible defaults,
+    auto-detects Syncthing, tests file transport connectivity,
+    and prints a setup summary.
+
+    Examples:
+
+        skcomm init
+
+        skcomm init --name jarvis
+
+        skcomm init --name jarvis --fingerprint ABC123 --force
+    """
+    import yaml
+
+    home = Path(_HOME).expanduser()
+    home.mkdir(parents=True, exist_ok=True)
+
+    config_path = home / "config.yml"
+
+    if config_path.exists() and not force:
+        if not click.confirm(f"Config already exists at {config_path}. Overwrite?", default=False):
+            _print("[yellow]Aborted.[/]")
+            return
+
+    # Prompt for agent name if not provided
+    if not name:
+        import os
+
+        default_name = os.environ.get("USER", "agent")
+        name = click.prompt("Agent name", default=default_name)
+
+    _print(f"\n  [bold]Initializing SKComm for [cyan]{name}[/]...[/]\n")
+
+    # Detect Syncthing
+    comms_root = _detect_syncthing()
+    if comms_root:
+        _print(f"  [green]✓[/] Syncthing comms root detected: [dim]{comms_root}[/]")
+    else:
+        comms_root = str(Path("~/.skcapstone/comms").expanduser())
+        _print(f"  [yellow]![/] Syncthing not detected. Using default: [dim]{comms_root}[/]")
+        _print("    Run [cyan]syncthing[/] and share a folder to enable P2P messaging.")
+
+    # Setup directories
+    filedrop = home / "filedrop"
+    (home / "logs").mkdir(exist_ok=True)
+    (filedrop / "inbox").mkdir(parents=True, exist_ok=True)
+    (filedrop / "outbox").mkdir(parents=True, exist_ok=True)
+    (home / "peers").mkdir(exist_ok=True)
+
+    # Test file transport connectivity
+    file_ok = _test_file_transport_ping(filedrop)
+    if file_ok:
+        _print(f"  [green]✓[/] File transport: OK [dim]({filedrop})[/]")
+    else:
+        _print(f"  [red]✗[/] File transport: write test failed at [dim]{filedrop}[/]")
+
+    # Disk space check — Syncthing silently blocks sync below 1% free
+    _check_disk_space_warning(Path(comms_root))
+
+    config = {
+        "skcomm": {
+            "version": "1.0.0",
+            "identity": {"name": name},
+            "defaults": {
+                "mode": "failover",
+                "encrypt": True,
+                "sign": True,
+                "ack": True,
+                "retry_max": 5,
+                "ttl": 86400,
+            },
+            "transports": {
+                "syncthing": {
+                    "enabled": True,
+                    "priority": 1,
+                    "settings": {
+                        "comms_root": comms_root,
+                    },
+                },
+                "file": {
+                    "enabled": True,
+                    "priority": 2,
+                    "settings": {
+                        "drop_root": str(filedrop),
+                    },
+                },
+            },
+        }
+    }
+
+    if fingerprint:
+        config["skcomm"]["identity"]["fingerprint"] = fingerprint
+
+    config_path.write_text(yaml.dump(config, default_flow_style=False))
+    _print(f"  [green]✓[/] Config written: [dim]{config_path}[/]")
+
+    # Summary
+    _print("\n  [bold green]SKComm ready![/]")
+    _print(f"  Identity:   [bold cyan]{name}[/]")
+    if fingerprint:
+        _print(f"  Fingerprint: [dim]{fingerprint}[/]")
+    _print("  Transports: syncthing (priority 1), file (priority 2)")
+    _print(f"  Config:     [dim]{config_path}[/]")
+    _print("  API:        [dim]skcomm serve[/] (port 9384)")
+    _print("  Send test:  [dim]skcomm send <peer> 'hello'[/]")
+    _print("")
+
+
+@main.group("peer")
+def peer_group():
+    """Peer directory — add, list, and remove peers.
+
+    Maps friendly agent names to transport addresses.
+    Peers are stored in ~/.skcomm/peers/ and used by the router
+    when resolving recipient names.
+    """
+
+
+@peer_group.command("add")
+@click.argument("name")
+@click.argument("address")
+@click.option(
+    "--transport",
+    "-t",
+    default="syncthing",
+    type=click.Choice(["syncthing", "file", "nostr"]),
+    help="Transport type (default: syncthing).",
+)
+@click.option("--fingerprint", default=None, help="PGP fingerprint for this peer.")
+def peer_add(name: str, address: str, transport: str, fingerprint: Optional[str]):
+    """Add or update a peer in the directory.
+
+    Maps a friendly agent name to a transport address.
+    The address is interpreted based on the transport type:
+    - syncthing: path to the comms_root directory
+    - file:      path to the shared inbox directory
+    - nostr:     hex pubkey or relay URL
+
+    Examples:
+
+        skcomm peer add lumina ~/.skcapstone/comms --transport syncthing
+
+        skcomm peer add opus /mnt/shared/inbox --transport file
+
+        skcomm peer add hal9000 abc123...def --transport nostr
+    """
+    from .discovery import PeerInfo, PeerStore, PeerTransport
+
+    settings: dict = {}
+    if transport == "syncthing":
+        settings = {"comms_root": address}
+    elif transport == "file":
+        settings = {"inbox_path": address}
+    else:
+        settings = {"address": address}
+
+    peer = PeerInfo(
+        name=name,
+        fingerprint=fingerprint,
+        transports=[PeerTransport(transport=transport, settings=settings)],
+        discovered_via="manual",
+    )
+
+    store = PeerStore()
+    store.add(peer)
+    _print(f"\n  [green]Peer added:[/] [bold]{name}[/]")
+    _print(f"  Transport: [cyan]{transport}[/]")
+    _print(f"  Address:   [dim]{address}[/]")
+    if fingerprint:
+        _print(f"  Fingerprint: [dim]{fingerprint}[/]")
+    _print("")
+
+
+@peer_group.command("remove")
+@click.argument("name")
+def peer_remove(name: str):
+    """Remove a peer from the directory.
+
+    Examples:
+
+        skcomm peer remove lumina
+    """
+    from .discovery import PeerStore
+
+    store = PeerStore()
+    removed = store.remove(name)
+    if removed:
+        _print(f"\n  [green]Removed peer:[/] {name}\n")
+    else:
+        _print(f"\n  [yellow]Peer not found:[/] {name}\n")
+
+
+@peer_group.command("list")
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+def peer_list(json_out: bool):
+    """List all peers in the directory.
+
+    Shows peers stored via `skcomm peer add` or discovered
+    automatically, with transport endpoints and last-seen times.
+    """
+    from .discovery import PeerStore
+
+    store = PeerStore()
+    all_peers = store.list_all()
+
+    if json_out:
+        import json as _json
+
+        click.echo(
+            _json.dumps(
+                [p.model_dump(mode="json", exclude_none=True) for p in all_peers],
+                indent=2,
+            )
+        )
+        return
+
+    if not all_peers:
+        _print("\n  [dim]No peers in directory.[/]")
+        _print("  [dim]Run [bold]skcomm peer add <name> <address>[/] to add one.[/]\n")
+        return
+
+    _print(f"\n  [bold]{len(all_peers)}[/] peer(s):\n")
+
+    if console:
+        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        table.add_column("Name", style="cyan")
+        table.add_column("Transports", style="dim")
+        table.add_column("Via", style="dim")
+        table.add_column("Last Seen")
+        table.add_column("Fingerprint", style="dim", max_width=16)
+
+        for p in all_peers:
+            transports = ", ".join(t.transport for t in p.transports) or "-"
+            seen = p.last_seen.strftime("%Y-%m-%d %H:%M") if p.last_seen else "-"
+            fp = (
+                (p.fingerprint[:16] + "...")
+                if p.fingerprint and len(p.fingerprint) > 16
+                else (p.fingerprint or "-")
+            )
+            table.add_row(p.name, transports, p.discovered_via, seen, fp)
+
+        console.print(table)
+    else:
+        for p in all_peers:
+            transports = ", ".join(t.transport for t in p.transports) or "none"
+            click.echo(f"  {p.name}  [{transports}]  via {p.discovered_via}")
+
+    _print("")
+
+
+@peer_group.command("fetch")
+@click.argument("name")
+@click.option(
+    "--url", default=None, help="Custom DID document URL (default: skworld.io registry)."
+)
+@click.option("--no-save", is_flag=True, help="Display only, don't save to peer store.")
+def peer_fetch(name: str, url: Optional[str], no_save: bool):
+    """Fetch a peer's identity from their published DID.
+
+    Resolves the peer's DID document from the skworld.io registry
+    (or a custom URL), extracts their identity info, and adds them
+    to the local peer store.
+
+    Examples:
+
+        skcomm peer fetch lumina
+
+        skcomm peer fetch opus --url https://custom.example/did.json
+
+        skcomm peer fetch jarvis --url file:///path/to/did.json
+    """
+    from .key_exchange import KeyExchangeError, fetch_peer_from_did
+
+    source = url or name
+    try:
+        peer = fetch_peer_from_did(source, save=not no_save)
+    except KeyExchangeError as exc:
+        _print(f"\n  [red]Error:[/] {exc}\n")
+        raise SystemExit(1)
+
+    _print("\n  [green]Peer fetched from DID:[/]")
+    _print(f"    Name:        [bold]{peer.name}[/]")
+    if peer.fingerprint:
+        _print(f"    Fingerprint: [dim]{peer.fingerprint}[/]")
+    _print(f"    Via:         [dim]{peer.discovered_via}[/]")
+    if not no_save:
+        _print("    [green]Saved to peer store[/]")
+    _print("")
+
+
+@peer_group.command("export")
+@click.option(
+    "--file", "-f", "file_path", default=None, help="Write bundle to file instead of stdout."
+)
+@click.option("--no-transports", is_flag=True, help="Exclude transport config from bundle.")
+def peer_export(file_path: Optional[str], no_transports: bool):
+    """Export your identity as a peer bundle for sharing.
+
+    Generates a JSON bundle containing your name, PGP fingerprint,
+    public key, and transport config. Share this file with peers
+    who want to add you to their network.
+
+    Examples:
+
+        skcomm peer export
+
+        skcomm peer export --file my-identity.json
+
+        skcomm peer export | scp - user@host:~/peer-bundle.json
+    """
+    from .key_exchange import KeyExchangeError, export_peer_bundle
+
+    try:
+        bundle = export_peer_bundle(include_transports=not no_transports)
+    except KeyExchangeError as exc:
+        _print(f"\n  [red]Error:[/] {exc}\n")
+        raise SystemExit(1)
+
+    bundle_json = json.dumps(bundle, indent=2)
+
+    if file_path:
+        Path(file_path).write_text(bundle_json, encoding="utf-8")
+        _print(f"\n  [green]Bundle written to:[/] {file_path}")
+        _print(f"    Name:        [bold]{bundle['name']}[/]")
+        _print(f"    Fingerprint: [dim]{bundle.get('fingerprint', 'N/A')}[/]")
+        _print("")
+    else:
+        click.echo(bundle_json)
+
+
+@peer_group.command("import")
+@click.argument("source")
+@click.option("--no-gpg", is_flag=True, help="Don't import public key to GPG keyring.")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt.")
+def peer_import(source: str, no_gpg: bool, yes: bool):
+    """Import a peer from a bundle file.
+
+    Reads a JSON peer bundle (from `skcomm peer export`) and adds
+    the peer to the local store. Also imports their public key to
+    the GPG keyring for encrypted messaging.
+
+    SOURCE can be a file path, URL, or '-' for stdin.
+
+    Examples:
+
+        skcomm peer import peer-bundle.json
+
+        skcomm peer import https://example.com/bundle.json
+
+        cat bundle.json | skcomm peer import -
+    """
+    import urllib.request
+
+    from .key_exchange import KeyExchangeError, import_peer_bundle
+
+    # Load bundle from source
+    try:
+        if source == "-":
+            raw = sys.stdin.read()
+        elif source.startswith("http://") or source.startswith("https://"):
+            with urllib.request.urlopen(source, timeout=15) as resp:
+                raw = resp.read().decode("utf-8")
+        else:
+            raw = Path(source).read_text(encoding="utf-8")
+
+        bundle = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        _print(f"\n  [red]Error:[/] Invalid JSON: {exc}\n")
+        raise SystemExit(1)
+    except Exception as exc:
+        logger.warning("cli.py: %s", exc)
+        _print(f"\n  [red]Error:[/] Could not read source: {exc}\n")
+        raise SystemExit(1)
+
+    # Show peer info and confirm
+    _print("\n  [bold]Peer Bundle:[/]")
+    _print(f"    Name:        [bold]{bundle.get('name', 'N/A')}[/]")
+    _print(f"    Fingerprint: [dim]{bundle.get('fingerprint', 'N/A')}[/]")
+    _print(f"    Email:       [dim]{bundle.get('email', 'N/A')}[/]")
+    _print(f"    DID Key:     [dim]{bundle.get('did_key', 'N/A')}[/]")
+    has_key = "Yes" if bundle.get("public_key") else "No"
+    _print(f"    Public Key:  [dim]{has_key}[/]")
+    _print("")
+
+    if not yes:
+        if not click.confirm("  Import this peer?", default=True):
+            _print("  [dim]Cancelled.[/]\n")
+            return
+
+    try:
+        peer = import_peer_bundle(bundle, gpg_import=not no_gpg)
+    except KeyExchangeError as exc:
+        _print(f"\n  [red]Error:[/] {exc}\n")
+        raise SystemExit(1)
+
+    _print(f"  [green]Imported:[/] [bold]{peer.name}[/]")
+    if peer.fingerprint:
+        _print(f"  Fingerprint: [dim]{peer.fingerprint}[/]")
+    if not no_gpg:
+        _print("  [dim]Public key imported to GPG keyring[/]")
+    _print("")
+
+
+@main.command("peers")
+@click.option("--config", "-c", default=None, help="Config file path.")
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+def peers(config: Optional[str], json_out: bool):
+    """List known peers from the peer store.
+
+    Shows all peers discovered via `skcomm discover` or added
+    manually, with their transport endpoints and last-seen times.
+    """
+    from .discovery import PeerStore
+
+    store = PeerStore()
+    all_peers = store.list_all()
+
+    if json_out:
+        import json as _json
+
+        click.echo(
+            _json.dumps(
+                [p.model_dump(mode="json", exclude_none=True) for p in all_peers],
+                indent=2,
+            )
+        )
+        return
+
+    if not all_peers:
+        _print("\n  [dim]No peers in store.[/]")
+        _print("  [dim]Run [bold]skcomm discover[/] to scan for peers.[/]\n")
+        return
+
+    _print(f"\n  [bold]{len(all_peers)}[/] peer(s):\n")
+
+    if console:
+        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        table.add_column("Name", style="cyan")
+        table.add_column("Transports", style="dim")
+        table.add_column("Via", style="dim")
+        table.add_column("Last Seen")
+        table.add_column("Fingerprint", style="dim", max_width=16)
+
+        for p in all_peers:
+            transports = ", ".join(t.transport for t in p.transports) or "-"
+            seen = p.last_seen.strftime("%Y-%m-%d %H:%M") if p.last_seen else "-"
+            fp = (
+                (p.fingerprint[:16] + "...")
+                if p.fingerprint and len(p.fingerprint) > 16
+                else (p.fingerprint or "-")
+            )
+            table.add_row(p.name, transports, p.discovered_via, seen, fp)
+
+        console.print(table)
+    else:
+        for p in all_peers:
+            transports = ", ".join(t.transport for t in p.transports) or "none"
+            click.echo(f"  {p.name}  [{transports}]  via {p.discovered_via}")
+
+    _print("")
+
+
+@main.command("discover")
+@click.option("--config", "-c", default=None, help="Config file path.")
+@click.option("--save/--no-save", default=True, help="Save to peer store.")
+@click.option("--mdns/--no-mdns", default=False, help="Include mDNS LAN scan.")
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+def discover(config: Optional[str], save: bool, mdns: bool, json_out: bool):
+    """Discover peers on the network and Syncthing mesh.
+
+    Scans Syncthing comms directories, file transport inboxes,
+    and optionally the local network via mDNS. Discovered peers
+    are saved to the peer store for use by the router.
+
+    Examples:
+
+        skcomm discover
+
+        skcomm discover --mdns
+
+        skcomm discover --json-out
+    """
+    from .discovery import PeerStore, discover_all
+
+    peers_found = discover_all(skip_mdns=not mdns)
+
+    if json_out:
+        import json as _json
+
+        click.echo(
+            _json.dumps(
+                [p.model_dump(mode="json", exclude_none=True) for p in peers_found],
+                indent=2,
+            )
+        )
+        if save:
+            store = PeerStore()
+            for p in peers_found:
+                store.add(p)
+        return
+
+    if not peers_found:
+        _print("\n  [dim]No peers discovered.[/]")
+        _print("  [dim]Ensure Syncthing is running or send a message first.[/]\n")
+        return
+
+    _print(f"\n  [bold]{len(peers_found)}[/] peer(s) discovered:\n")
+
+    if console:
+        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        table.add_column("Name", style="cyan")
+        table.add_column("Transports", style="dim")
+        table.add_column("Via", style="dim")
+        table.add_column("Last Seen")
+
+        for p in peers_found:
+            transports = ", ".join(t.transport for t in p.transports) or "-"
+            seen = p.last_seen.strftime("%Y-%m-%d %H:%M") if p.last_seen else "-"
+            table.add_row(p.name, transports, p.discovered_via, seen)
+
+        console.print(table)
+    else:
+        for p in peers_found:
+            transports = ", ".join(t.transport for t in p.transports) or "none"
+            click.echo(f"  {p.name}  [{transports}]  via {p.discovered_via}")
+
+    if save:
+        store = PeerStore()
+        for p in peers_found:
+            store.add(p)
+        _print(f"  [green]Saved to {store.peers_dir}[/]\n")
+    else:
+        _print("")
+
+
+@main.group("heartbeat", invoke_without_command=True)
+@click.option("--config", "-c", default=None, help="Config file path.")
+@click.option("--emit/--no-emit", default=True, help="Emit our heartbeat first (v1 legacy).")
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def heartbeat_group(ctx: click.Context, config: Optional[str], emit: bool, json_out: bool):
+    """Heartbeat commands — publish and monitor node health beacons.
+
+    Run without a subcommand to emit a v1 heartbeat and show peer liveness
+    (legacy mode). Use subcommands for the v2 rich state beacon.
+
+    Examples:
+
+        skcomm heartbeat
+
+        skcomm heartbeat publish --node-id jarvis-desktop
+
+        skcomm heartbeat status --node-id jarvis-desktop
+
+        skcomm heartbeat nodes
+    """
+    if ctx.invoked_subcommand is not None:
+        return
+
+    from .config import load_config
+    from .heartbeat import HeartbeatMonitor, PeerLiveness
+
+    cfg = load_config(config)
+
+    syncthing_cfg = cfg.transports.get("syncthing")
+    comms_root_path = None
+    if syncthing_cfg and syncthing_cfg.enabled:
+        raw = syncthing_cfg.settings.get("comms_root")
+        if raw:
+            comms_root_path = Path(raw).expanduser()
+
+    monitor = HeartbeatMonitor(
+        agent_name=cfg.identity.name,
+        fingerprint=cfg.identity.fingerprint,
+        transports=[name for name, tc in cfg.transports.items() if tc.enabled],
+        comms_root=comms_root_path,
+    )
+
+    if emit:
+        monitor.emit()
+
+    results = monitor.scan()
+
+    if json_out:
+        import json as _json
+
+        click.echo(
+            _json.dumps(
+                [r.model_dump(mode="json", exclude_none=True) for r in results],
+                indent=2,
+            )
+        )
+        return
+
+    if not results:
+        if emit:
+            _print(f"\n  [green]Heartbeat emitted[/] as [bold]{cfg.identity.name}[/]")
+        _print("  [dim]No peer heartbeats found yet.[/]\n")
+        return
+
+    if emit:
+        _print(f"\n  [green]Heartbeat emitted[/] as [bold]{cfg.identity.name}[/]\n")
+    else:
+        _print("")
+
+    status_styles = {
+        PeerLiveness.ALIVE: "green",
+        PeerLiveness.STALE: "yellow",
+        PeerLiveness.DEAD: "red",
+        PeerLiveness.UNKNOWN: "dim",
+    }
+
+    if console:
+        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        table.add_column("Peer", style="cyan")
+        table.add_column("Status")
+        table.add_column("Age", justify="right")
+        table.add_column("Transports", style="dim")
+
+        for r in results:
+            color = status_styles.get(r.status, "dim")
+            age = f"{int(r.age_seconds)}s" if r.age_seconds is not None else "-"
+            transports = ", ".join(r.transports) or "-"
+            table.add_row(
+                r.name,
+                f"[{color}]{r.status.value.upper()}[/{color}]",
+                age,
+                transports,
+            )
+
+        console.print(table)
+    else:
+        for r in results:
+            age = f"{int(r.age_seconds)}s" if r.age_seconds is not None else "?"
+            click.echo(f"  {r.name:16} {r.status.value:8} {age}")
+
+    alive = sum(1 for r in results if r.status == PeerLiveness.ALIVE)
+    _print(f"\n  {alive}/{len(results)} peers alive\n")
+
+
+@heartbeat_group.command("publish")
+@click.option("--node-id", required=True, help="Node identifier (e.g. jarvis-desktop).")
+@click.option("--agent-name", default="", help="Human-readable agent name.")
+@click.option(
+    "--capability",
+    "-c",
+    multiple=True,
+    help="Capability to advertise (repeat for multiple).",
+)
+@click.option(
+    "--sync-root",
+    default=None,
+    help="Override Syncthing sync root (default: ~/.skcapstone/sync).",
+)
+@click.option("--state", default="active", help="Node state (active/idle/busy).")
+@click.option("--skcomm-status", default="online", help="SKComm connectivity state.")
+@click.option("--ttl", default=120, help="Heartbeat TTL in seconds.")
+@click.option("--json-out", is_flag=True, help="Print the written JSON.")
+def heartbeat_publish(
+    node_id: str,
+    agent_name: str,
+    capability: tuple,
+    sync_root: Optional[str],
+    state: str,
+    skcomm_status: str,
+    ttl: int,
+    json_out: bool,
+):
+    """Publish a v2 heartbeat for this node (one-shot).
+
+    Writes a rich heartbeat JSON file containing system resources,
+    advertised capabilities, and claimed tasks. Safe to run from a cron
+    job or systemd timer — each node writes only its own file.
+
+    Examples:
+
+        skcomm heartbeat publish --node-id jarvis-desktop \\
+            --agent-name jarvis \\
+            --capability code --capability gpu
+
+        skcomm heartbeat publish --node-id lumina-laptop --ttl 60
+    """
+    from .heartbeat import HeartbeatConfig, HeartbeatPublisher
+
+    cfg = HeartbeatConfig(
+        node_id=node_id,
+        agent_name=agent_name or node_id,
+        capabilities=list(capability),
+        ttl_seconds=ttl,
+        sync_root=(
+            Path(sync_root).expanduser() if sync_root else Path("~/.skcapstone/sync").expanduser()
+        ),
+        skcomm_status=skcomm_status,
+    )
+
+    publisher = HeartbeatPublisher(config=cfg, state=state)
+    path = publisher.publish()
+
+    if json_out:
+        click.echo(path.read_text())
+        return
+
+    _print(f"\n  [green]Heartbeat published[/] → [dim]{path}[/]")
+    _print(f"  Node:   [bold cyan]{node_id}[/]")
+    _print(f"  State:  {state}")
+    _print(f"  TTL:    {ttl}s")
+    if capability:
+        _print(f"  Caps:   {', '.join(capability)}")
+    _print("")
+
+
+@heartbeat_group.command("status")
+@click.argument("node_id")
+@click.option(
+    "--sync-root",
+    default=None,
+    help="Override sync root (default: ~/.skcapstone/sync).",
+)
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+def heartbeat_status(node_id: str, sync_root: Optional[str], json_out: bool):
+    """Show the v2 heartbeat for a specific node.
+
+    Reads the node's heartbeat file and displays its state, resources,
+    capabilities, and whether it has expired.
+
+    Examples:
+
+        skcomm heartbeat status jarvis-desktop
+
+        skcomm heartbeat status lumina-laptop --json-out
+    """
+    from .heartbeat import NodeHeartbeatMonitor
+
+    root = Path(sync_root).expanduser() if sync_root else None
+    monitor = NodeHeartbeatMonitor(sync_root=root)
+    hb = monitor.get_node(node_id)
+
+    if hb is None:
+        _print(f"\n  [yellow]No heartbeat found for node:[/] {node_id}\n")
+        raise SystemExit(1)
+
+    if json_out:
+        click.echo(hb.model_dump_json(indent=2))
+        return
+
+    expired = hb.is_expired()
+    state_color = "green" if not expired else "red"
+    _print(f"\n  Node:     [bold cyan]{hb.node_id}[/]")
+    _print(f"  Agent:    {hb.agent_name or '-'}")
+    _print(f"  State:    [{state_color}]{hb.state}[/]{'  [red][EXPIRED][/]' if expired else ''}")
+    _print(f"  SKComm:   {hb.skcomm_status}")
+    _print(f"  Timestamp: {hb.timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    _print(f"  TTL:       {hb.ttl_seconds}s")
+
+    if hb.capabilities:
+        _print(f"  Caps:      {', '.join(hb.capabilities)}")
+
+    r = hb.resources
+    _print(f"  CPU:       {r.cpu_percent:.1f}%")
+    _print(f"  RAM:       {r.ram_used_gb:.1f} / {r.ram_total_gb:.1f} GB")
+    _print(f"  Disk free: {r.disk_free_gb:.1f} GB")
+    _print(f"  GPU:       {'yes' if r.gpu_available else 'no'}")
+
+    if hb.claimed_tasks:
+        _print(f"  Tasks:     {', '.join(hb.claimed_tasks)}")
+    if hb.loaded_models:
+        _print(f"  Models:    {', '.join(hb.loaded_models)}")
+    _print("")
+
+
+@heartbeat_group.command("nodes")
+@click.option(
+    "--sync-root",
+    default=None,
+    help="Override sync root (default: ~/.skcapstone/sync).",
+)
+@click.option("--capability", "-c", default=None, help="Filter to nodes with this capability.")
+@click.option("--all", "show_all", is_flag=True, help="Include expired (stale) nodes.")
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+def heartbeat_nodes(
+    sync_root: Optional[str],
+    capability: Optional[str],
+    show_all: bool,
+    json_out: bool,
+):
+    """List all live nodes on the mesh (v2 heartbeats).
+
+    Scans the shared heartbeat directory and shows nodes that have
+    published a v2 beacon within their TTL window.
+
+    Examples:
+
+        skcomm heartbeat nodes
+
+        skcomm heartbeat nodes --capability gpu
+
+        skcomm heartbeat nodes --all --json-out
+    """
+    from .heartbeat import NodeHeartbeatMonitor
+
+    root = Path(sync_root).expanduser() if sync_root else None
+    monitor = NodeHeartbeatMonitor(sync_root=root)
+
+    if show_all:
+        nodes = monitor.all_nodes()
+    elif capability:
+        nodes = monitor.find_capable(capability)
+    else:
+        nodes = monitor.discover_nodes()
+
+    if json_out:
+        import json as _json
+
+        click.echo(
+            _json.dumps(
+                [n.model_dump(mode="json") for n in nodes],
+                indent=2,
+                default=str,
+            )
+        )
+        return
+
+    if not nodes:
+        label = f"with capability '{capability}'" if capability else "live"
+        _print(f"\n  [dim]No {label} nodes found.[/]\n")
+        return
+
+    _print(f"\n  [bold]{len(nodes)}[/] node(s):\n")
+
+    if console:
+        from datetime import datetime as _dt
+
+        now = _dt.now(timezone.utc)
+        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        table.add_column("Node", style="cyan")
+        table.add_column("State")
+        table.add_column("Age", justify="right")
+        table.add_column("CPU", justify="right")
+        table.add_column("RAM used", justify="right")
+        table.add_column("GPU")
+        table.add_column("Capabilities", style="dim")
+
+        for n in nodes:
+            age_s = (now - n.timestamp).total_seconds()
+            age_str = f"{int(age_s)}s"
+            expired = n.is_expired(now)
+            state_fmt = f"[red]{n.state}[/]" if expired else f"[green]{n.state}[/]"
+            cpu_str = f"{n.resources.cpu_percent:.0f}%"
+            ram_str = f"{n.resources.ram_used_gb:.1f}G"
+            gpu_str = "[green]yes[/]" if n.resources.gpu_available else "no"
+            caps = ", ".join(n.capabilities) or "-"
+            table.add_row(n.node_id, state_fmt, age_str, cpu_str, ram_str, gpu_str, caps)
+
+        console.print(table)
+    else:
+        for n in nodes:
+            caps = ", ".join(n.capabilities) or "none"
+            click.echo(f"  {n.node_id:24} {n.state:8}  caps=[{caps}]")
+
+    _print("")
+
+
+# ---------------------------------------------------------------------------
+# SKWorld marketplace commands
+# ---------------------------------------------------------------------------
+
+
+@main.group("skill")
+def skill_group():
+    """SKWorld marketplace — publish and discover agent skills.
+
+    Browse, publish, and install sovereign agent skills via
+    the Nostr-based marketplace.
+    """
+
+
+@skill_group.command("list")
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+def skill_list(json_out: bool):
+    """List locally installed skills."""
+    from .marketplace import SkillRegistry
+
+    reg = SkillRegistry()
+    skills = reg.list_all()
+
+    if json_out:
+        import json as _json
+
+        click.echo(
+            _json.dumps(
+                [s.model_dump(mode="json", exclude_none=True) for s in skills],
+                indent=2,
+            )
+        )
+        return
+
+    if not skills:
+        _print("\n  [dim]No skills installed.[/]")
+        _print("  [dim]Run [bold]skcomm skill search[/] to browse the marketplace.[/]\n")
+        return
+
+    _print(f"\n  [bold]{len(skills)}[/] skill(s) installed:\n")
+
+    if console:
+        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        table.add_column("Name", style="cyan")
+        table.add_column("Version")
+        table.add_column("Author", style="dim")
+        table.add_column("Tags", style="dim")
+
+        for s in skills:
+            table.add_row(s.name, s.version, s.author or "-", ", ".join(s.tags) or "-")
+
+        console.print(table)
+    else:
+        for s in skills:
+            click.echo(f"  {s.name:24} v{s.version:8} {s.author or '-'}")
+
+    _print("")
+
+
+@skill_group.command("search")
+@click.argument("query", required=False, default=None)
+@click.option("--relay", "-r", multiple=True, help="Override relay URLs.")
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+def skill_search(query: Optional[str], relay: tuple, json_out: bool):
+    """Search the Nostr marketplace for skills.
+
+    Queries configured relays for published skill manifests.
+
+    Examples:
+
+        skcomm skill search
+
+        skcomm skill search security
+
+        skcomm skill search email --json-out
+    """
+    from .marketplace import search_skills
+
+    relays = list(relay) if relay else None
+    results = search_skills(query=query, relays=relays)
+
+    if json_out:
+        import json as _json
+
+        click.echo(
+            _json.dumps(
+                [s.model_dump(mode="json", exclude_none=True) for s in results],
+                indent=2,
+            )
+        )
+        return
+
+    if not results:
+        _print("\n  [dim]No skills found.[/]\n")
+        return
+
+    _print(f"\n  [bold]{len(results)}[/] skill(s) found:\n")
+
+    if console:
+        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        table.add_column("Name", style="cyan")
+        table.add_column("Version")
+        table.add_column("Author", style="dim")
+        table.add_column("Description", max_width=40)
+        table.add_column("Tags", style="dim")
+
+        for s in results:
+            desc = (s.description[:37] + "...") if len(s.description) > 40 else s.description
+            table.add_row(s.name, s.version, s.author or "-", desc, ", ".join(s.tags) or "-")
+
+        console.print(table)
+    else:
+        for s in results:
+            click.echo(f"  {s.name:24} v{s.version:8} {s.description[:50]}")
+
+    _print("")
+
+
+@skill_group.command("publish")
+@click.argument("manifest_path", type=click.Path(exists=True))
+@click.option(
+    "--key", envvar="NOSTR_PRIVATE_KEY", help="Nostr private key hex (or NOSTR_PRIVATE_KEY env)."
+)
+@click.option("--relay", "-r", multiple=True, help="Override relay URLs.")
+def skill_publish(manifest_path: str, key: Optional[str], relay: tuple):
+    """Publish a skill manifest to the Nostr marketplace.
+
+    Reads a YAML manifest file and publishes it as a Nostr
+    event to configured relays.
+
+    Examples:
+
+        skcomm skill publish skill.yml --key $NOSTR_KEY
+
+        NOSTR_PRIVATE_KEY=abc... skcomm skill publish skill.yml
+    """
+    from .marketplace import SkillManifest, publish_skill
+
+    if not key:
+        _print("\n  [red]Error:[/] Nostr private key required.")
+        _print("  Set --key or NOSTR_PRIVATE_KEY env var.\n")
+        raise SystemExit(1)
+
+    manifest = SkillManifest.from_yaml_file(Path(manifest_path))
+    relays = list(relay) if relay else None
+    event_id = publish_skill(manifest, key, relays=relays)
+
+    if event_id:
+        _print(f"\n  [green]Published[/] [bold]{manifest.name}[/] v{manifest.version}")
+        _print(f"  Event: [dim]{event_id}[/]\n")
+    else:
+        _print(f"\n  [red]Failed[/] to publish {manifest.name}.\n")
+        raise SystemExit(1)
+
+
+@skill_group.command("install")
+@click.argument("name")
+@click.option("--relay", "-r", multiple=True, help="Override relay URLs.")
+def skill_install(name: str, relay: tuple):
+    """Install a skill from the Nostr marketplace.
+
+    Searches for the skill by name, downloads the manifest,
+    and adds it to the local skill registry.
+
+    Examples:
+
+        skcomm skill install email-prescreening
+    """
+    from .marketplace import SkillRegistry, search_skills
+
+    _print(f"\n  Searching for [bold]{name}[/]...")
+    relays = list(relay) if relay else None
+    results = search_skills(query=name, relays=relays)
+
+    match = next((s for s in results if s.name == name), None)
+    if not match and results:
+        match = results[0]
+
+    if not match:
+        _print(f"  [red]Not found:[/] {name}\n")
+        raise SystemExit(1)
+
+    reg = SkillRegistry()
+    reg.install(match)
+    _print(f"  [green]Installed[/] [bold]{match.name}[/] v{match.version}")
+    if match.install_cmd:
+        _print(f"  Run: [cyan]{match.install_cmd}[/]")
+    _print("")
+
+
+# ---------------------------------------------------------------------------
+# Queue commands
+# ---------------------------------------------------------------------------
+
+
+@main.group("queue")
+def queue_group():
+    """Message queue — manage undeliverable envelopes.
+
+    View, drain, and purge the persistent outbox queue
+    for messages that couldn't be delivered.
+    """
+
+
+@queue_group.command("list")
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+def queue_list(json_out: bool):
+    """List all queued envelopes."""
+    from .queue import MessageQueue
+
+    q = MessageQueue()
+    items = q.list_all()
+
+    if json_out:
+        import json as _json
+
+        click.echo(
+            _json.dumps(
+                [m.model_dump(mode="json", exclude_none=True) for m in items],
+                indent=2,
+            )
+        )
+        return
+
+    if not items:
+        _print("\n  [dim]Queue is empty.[/]\n")
+        return
+
+    _print(f"\n  [bold]{len(items)}[/] envelope(s) queued:\n")
+
+    if console:
+        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        table.add_column("ID", style="cyan", max_width=12)
+        table.add_column("Recipient")
+        table.add_column("Attempts", justify="right")
+        table.add_column("Queued")
+        table.add_column("Status")
+
+        for m in items:
+            eid = m.envelope_id[:12]
+            queued = m.queued_at.strftime("%H:%M:%S") if m.queued_at else "-"
+            if m.is_expired:
+                status = "[red]EXPIRED[/]"
+            elif m.is_ready:
+                status = "[green]READY[/]"
+            else:
+                status = "[yellow]WAITING[/]"
+            table.add_row(eid, m.recipient, str(m.attempts), queued, status)
+
+        console.print(table)
+    else:
+        for m in items:
+            click.echo(f"  {m.envelope_id[:12]:14} -> {m.recipient:16} attempts={m.attempts}")
+
+    _print("")
+
+
+@queue_group.command("drain")
+@click.option("--config", "-c", default=None, help="Config file path.")
+def queue_drain(config: Optional[str]):
+    """Attempt to deliver all pending queued envelopes.
+
+    Retries each ready envelope through the configured transports.
+    Successfully delivered envelopes are removed from the queue.
+    """
+    from .core import SKComm
+    from .queue import MessageQueue
+
+    comm = SKComm.from_config(config)
+    q = MessageQueue()
+
+    if q.size == 0:
+        _print("\n  [dim]Queue is empty — nothing to drain.[/]\n")
+        return
+
+    _print(f"\n  Draining {q.size} envelope(s)...\n")
+
+    def try_send(envelope_bytes: bytes, recipient: str) -> bool:
+        from .models import MessageEnvelope
+
+        try:
+            envelope = MessageEnvelope.from_bytes(envelope_bytes)
+            report = comm.send_envelope(envelope)
+            return report.delivered
+        except Exception as e:
+            logger.warning("cli.py: %s", e)
+            return False
+
+    delivered, failed = q.drain(try_send)
+    _print(
+        f"  [green]{delivered}[/] delivered, [red]{failed}[/] failed, [dim]{q.size}[/] remaining\n"
+    )
+
+
+@queue_group.command("purge")
+@click.option("--expired", is_flag=True, default=False, help="Only purge expired envelopes.")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation.")
+def queue_purge(expired: bool, yes: bool):
+    """Remove envelopes from the queue.
+
+    By default, removes ALL queued envelopes. Use --expired
+    to only remove envelopes that have exceeded their TTL.
+    """
+    from .queue import MessageQueue
+
+    q = MessageQueue()
+
+    if q.size == 0:
+        _print("\n  [dim]Queue is empty.[/]\n")
+        return
+
+    if expired:
+        removed = q.purge_expired()
+        _print(f"\n  Purged [bold]{removed}[/] expired envelope(s). {q.size} remaining.\n")
+    else:
+        if not yes:
+            if not click.confirm(f"  Remove all {q.size} queued envelopes?", default=False):
+                _print("  [dim]Cancelled.[/]\n")
+                return
+        items = q.list_all()
+        for m in items:
+            q.dequeue(m.envelope_id)
+        _print(f"\n  Purged [bold]{len(items)}[/] envelope(s).\n")
+
+
+@main.command("serve")
+@click.option("--host", default="127.0.0.1", help="Host to bind to.")
+@click.option("--port", "-p", default=9384, help="Port to bind to.")
+@click.option("--reload", is_flag=True, help="Enable auto-reload (dev mode).")
+def serve(host: str, port: int, reload: bool):
+    """Start the SKComm REST API server.
+
+    Runs a FastAPI server that wraps the SKComm Python API
+    and exposes HTTP endpoints for Flutter/desktop clients.
+
+    Examples:
+
+        skcomm serve
+
+        skcomm serve --port 8080
+
+        skcomm serve --reload  # Dev mode with auto-reload
+    """
+    try:
+        import uvicorn
+    except ImportError:
+        _print("\n  [red]Error:[/] uvicorn not installed.")
+        _print("  Install with: [cyan]pip install skcomm[api][/]\n")
+        raise SystemExit(1)
+
+    _print("\n  [green]Starting SKComm API server[/]")
+    _print(f"  Host: [cyan]{host}[/]")
+    _print(f"  Port: [cyan]{port}[/]")
+    _print(f"  Docs: [cyan]http://{host}:{port}/docs[/]\n")
+
+    uvicorn.run(
+        "skcomm.api:app",
+        host=host,
+        port=port,
+        reload=reload,
+        log_level="info",
+    )
+
+
+@main.command("stats")
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+@click.option("--reset", is_flag=True, help="Reset all metrics.")
+def stats_cmd(json_out: bool, reset: bool):
+    """Show per-transport delivery metrics.
+
+    Displays success/failure counts, latency, and error
+    history for each transport.
+
+    Examples:
+
+        skcomm stats
+
+        skcomm stats --json-out
+
+        skcomm stats --reset
+    """
+    from .metrics import MetricsCollector
+
+    mc = MetricsCollector()
+
+    if reset:
+        mc.reset()
+        _print("\n  [green]Metrics reset.[/]\n")
+        return
+
+    if json_out:
+        import json as _json
+
+        click.echo(_json.dumps(mc.summary(), indent=2, default=str))
+        return
+
+    all_stats = mc.all_stats()
+    if not all_stats:
+        _print("\n  [dim]No transport metrics yet.[/]")
+        _print("  [dim]Send or receive a message to start tracking.[/]\n")
+        return
+
+    summary = mc.summary()
+    _print(
+        f"\n  [bold]Transport Metrics[/]  "
+        f"[green]{summary['total_sends_ok']}[/] sent  "
+        f"[red]{summary['total_sends_fail']}[/] failed  "
+        f"[cyan]{summary['total_receives']}[/] received  "
+        f"({summary['overall_success_rate']} success)\n"
+    )
+
+    if console:
+        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        table.add_column("Transport", style="cyan")
+        table.add_column("Sent", justify="right")
+        table.add_column("Failed", justify="right")
+        table.add_column("Recv", justify="right")
+        table.add_column("Rate")
+        table.add_column("Avg Latency", justify="right")
+        table.add_column("Last Error", style="dim", max_width=30)
+
+        for s in all_stats:
+            rate_color = (
+                "green" if s.success_rate >= 90 else "yellow" if s.success_rate >= 50 else "red"
+            )
+            avg = f"{s.avg_latency_ms:.1f}ms" if s.avg_latency_ms > 0 else "-"
+            err = (
+                (s.last_error[:27] + "...")
+                if s.last_error and len(s.last_error) > 30
+                else (s.last_error or "-")
+            )
+            table.add_row(
+                s.transport,
+                str(s.sends_ok),
+                str(s.sends_fail),
+                str(s.receives),
+                f"[{rate_color}]{s.success_rate:.0f}%[/{rate_color}]",
+                avg,
+                err,
+            )
+
+        console.print(table)
+    else:
+        for s in all_stats:
+            click.echo(
+                f"  {s.transport:16} ok={s.sends_ok} fail={s.sends_fail} "
+                f"recv={s.receives} rate={s.success_rate:.0f}%"
+            )
+
+    _print("")
+
+
+# ---------------------------------------------------------------------------
+# Pub/sub commands
+# ---------------------------------------------------------------------------
+
+
+@main.group("pubsub")
+def pubsub_group():
+    """Sovereign pub/sub — real-time event distribution across agents.
+
+    Subscribe to topics, publish events, and inspect the live topic
+    registry. Uses the in-process PubSubBroker with optional transport
+    forwarding to remote nodes.
+
+    Topic naming convention:  <domain>.<entity>.<action>
+
+    Wildcards:
+        *  matches exactly one level   (agent.* matches agent.heartbeat)
+        #  matches all remaining levels (coord.# matches coord.task.claimed)
+
+    Predefined topics:
+        agent.heartbeat         alive signals
+        agent.status            status changes
+        memory.stored           new memory created
+        memory.promoted         memory promoted to higher tier
+        coord.task.created      new task on board
+        coord.task.claimed      task claimed by agent
+        coord.task.completed    task marked done
+        sync.push               sync state pushed
+        sync.pull               sync state pulled
+        trust.updated           trust level changed
+
+    Examples:
+
+        skcomm pubsub listen agent.*
+
+        skcomm pubsub publish memory.stored '{\"content\": \"hello\"}'
+
+        skcomm pubsub topics
+    """
+
+
+@pubsub_group.command("listen")
+@click.argument("topic")
+@click.option("--timeout", "-t", default=0, help="Stop after N seconds (0 = run forever).")
+@click.option("--json-out", is_flag=True, help="Print each message as raw JSON.")
+@click.option("--count", "-n", default=0, help="Stop after receiving N messages (0 = unlimited).")
+def pubsub_listen(topic: str, timeout: int, json_out: bool, count: int):
+    """Subscribe and print messages on TOPIC in real-time.
+
+    Blocks until Ctrl-C, --timeout seconds elapse, or --count messages
+    are received. Use wildcards to listen across topic families.
+
+    Examples:
+
+        skcomm pubsub listen agent.*
+
+        skcomm pubsub listen coord.# --timeout 30
+
+        skcomm pubsub listen memory.stored --count 5 --json-out
+    """
+    import signal
+    import time
+
+    from .pubsub import PubSubBroker, PubSubMessage
+
+    broker = PubSubBroker(name="cli-listen")
+    received: list[PubSubMessage] = []
+    stop_event = threading.Event()
+
+    def _handler(msg: PubSubMessage) -> None:
+        received.append(msg)
+        if json_out:
+            click.echo(msg.model_dump_json(indent=2))
+        else:
+            ts = msg.timestamp.strftime("%H:%M:%S")
+            if console:
+                console.print(
+                    f"  [dim]{ts}[/]  [cyan]{msg.topic}[/]  "
+                    f"[dim]from[/] [bold]{msg.sender}[/]  "
+                    f"{msg.payload}"
+                )
+            else:
+                click.echo(f"  {ts}  {msg.topic}  from={msg.sender}  {msg.payload}")
+
+        if count and len(received) >= count:
+            stop_event.set()
+
+    broker.subscribe(topic, _handler)
+
+    if not json_out:
+        _print(f"\n  Listening on [bold cyan]{topic}[/]")
+        _print("  Press Ctrl-C to stop.\n")
+
+    deadline = time.monotonic() + timeout if timeout else None
+
+    def _sigint_handler(sig, frame):  # noqa: ANN001
+        stop_event.set()
+
+    old_handler = signal.signal(signal.SIGINT, _sigint_handler)
+
+    try:
+        while not stop_event.is_set():
+            if deadline and time.monotonic() >= deadline:
+                break
+            time.sleep(0.1)
+    finally:
+        signal.signal(signal.SIGINT, old_handler)
+        broker.unsubscribe(topic, _handler)
+
+    if not json_out:
+        _print(f"\n  Received [bold]{len(received)}[/] message(s).\n")
+
+
+@pubsub_group.command("publish")
+@click.argument("topic")
+@click.argument("payload_json")
+@click.option("--sender", "-s", default=None, help="Sender name (defaults to local identity).")
+@click.option("--config", "-c", default=None, help="Config file path (for identity resolution).")
+def pubsub_publish(topic: str, payload_json: str, sender: Optional[str], config: Optional[str]):
+    """Publish a message to TOPIC with PAYLOAD_JSON.
+
+    PAYLOAD_JSON must be a valid JSON object string.
+    The message is dispatched synchronously to all local subscribers.
+
+    Examples:
+
+        skcomm pubsub publish agent.heartbeat '{\"state\": \"active\"}'
+
+        skcomm pubsub publish memory.stored '{\"content\": \"hello world\"}'
+
+        skcomm pubsub publish coord.task.created '{\"task_id\": \"abc-123\"}' --sender opus
+    """
+    import json as _json
+
+    from .pubsub import PubSubBroker
+
+    try:
+        payload = _json.loads(payload_json)
+    except _json.JSONDecodeError as exc:
+        _print(f"\n  [red]Invalid JSON payload:[/] {exc}\n")
+        raise SystemExit(1)
+
+    if not isinstance(payload, dict):
+        _print("\n  [red]Payload must be a JSON object (dict), not a list or scalar.[/]\n")
+        raise SystemExit(1)
+
+    if not sender:
+        try:
+            from .config import load_config
+
+            cfg = load_config(config)
+            sender = cfg.identity.name
+        except Exception as e:
+            logger.warning("cli.py: %s", e)
+            sender = "cli"
+
+    broker = PubSubBroker(name="cli-publish")
+    invoked = broker.publish(topic=topic, message=payload, sender=sender)
+
+    _print(f"\n  [green]Published[/] to [bold cyan]{topic}[/]")
+    _print(f"  Sender:      {sender}")
+    _print(f"  Subscribers: {invoked}")
+    _print(f"  Payload:     {payload}\n")
+
+
+@pubsub_group.command("topics")
+@click.option("--pattern", "-p", default=None, help="Filter topics matching this pattern.")
+def pubsub_topics(pattern: Optional[str]):
+    """List active topics with subscriber counts.
+
+    Shows topics that have had at least one message published in this
+    session, along with the number of registered subscribers.
+
+    Examples:
+
+        skcomm pubsub topics
+
+        skcomm pubsub topics --pattern agent.*
+    """
+    import fnmatch
+
+    from .pubsub import PubSubBroker
+
+    broker = PubSubBroker(name="cli-topics")
+    topics = broker.list_topics()
+
+    if pattern:
+        topics = [t for t in topics if fnmatch.fnmatch(t, pattern)]
+
+    if not topics:
+        label = f" matching [bold]{pattern}[/]" if pattern else ""
+        _print(f"\n  [dim]No active topics{label}.[/]")
+        _print("  [dim]Topics appear after at least one message is published.[/]\n")
+        return
+
+    _print(f"\n  [bold]{len(topics)}[/] active topic(s):\n")
+
+    if console:
+        from rich.table import Table as _Table
+
+        table = _Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        table.add_column("Topic", style="cyan")
+        table.add_column("Subscribers", justify="right")
+
+        for t in sorted(topics):
+            sub_count = broker.subscriber_count(t)
+            table.add_row(t, str(sub_count))
+
+        console.print(table)
+    else:
+        for t in sorted(topics):
+            sub_count = broker.subscriber_count(t)
+            click.echo(f"  {t:40} subs={sub_count}")
+
+    _print("")
+
+
+if __name__ == "__main__":
+    main()
