@@ -76,6 +76,70 @@ The CLI entrypoint is `skcomms`. See `skcomms --help`.
 
 ---
 
+---
+
+## First Principles & The Full Vertical
+
+> **Get back to first principles.**
+> The modern stack is rented. Your messages travel over protocols you didn't design, signed by keys someone else issued, routed by registries you can't audit. You don't own it — you're a tenant.
+>
+> skcomms is your **Comms protocol layer**. The schema is yours. The signing is yours. The realm topology is yours. Every layer open. Every layer **yours**.
+
+**skcomms is the Comms protocol sub-layer of the SKWorld full vertical** — the layer that defines *what a message is*, how it carries sovereign identity, and how realms route to each other without a central authority.
+
+### The full vertical
+
+| Layer | Product(s) |
+|---|---|
+| **Soul** | soul blueprints · cloud9 |
+| **Apps** | skforge · skarchitect |
+| **Comms** | skcomm · **skcomms** · skchat · skvoice |
+| **Models** | skmodel (Ollama/vLLM) |
+| **Data** | skmemory · skdata · skvector · skgraph |
+| **Identity** | capauth · skaid |
+| **Security** | sksecurity · skwaf · skca |
+| **OS** | skos |
+| **Silicon** | *your hardware* |
+
+skcomms answers the protocol question at the Comms layer: *what does a message look like, who signed it, and which realm does it belong to?* skcomm (singular) carries the bytes; skcomms (plural) defines what those bytes mean. The split keeps the dependency graph acyclic and lets each layer evolve at its own cadence.
+
+### Data sovereignty
+
+Your messages carry your identity — cryptographically, in a detached PGP signature you generated on your hardware. The realm tree at `~/.skcomms/` is yours: you write to your own outbox, you read from peer outboxes, and sovereign agent memory at `~/.skcapstone/agents/` never crosses realm boundaries. Nothing phones home. You can walk away and take every envelope with you.
+
+### SKCapstone alignment
+
+**Integrated skcapstone subsystem — pre-alpha.** skcomms resolves cluster identity from `~/.skcapstone/cluster.json` and agent public keys from `~/.skcapstone/agents/<agent>/identity/agent.pub`. The fully-qualified agent identifier (`<agent>@<operator>.<realm>`) is grounded in the skcapstone identity model. Implementation tracks against the skcapstone coordination board (coord tasks T1–T13, tagged `skcomms`). At full phase-6 rollout skcomms will be a registered skcapstone subsystem alongside skcomm, skchat, and skgateway.
+
+### Where skcomms fits in the vertical
+
+```mermaid
+flowchart TD
+    SOUL["Soul layer\nsoul blueprints · cloud9"]
+    APPS["Apps layer\nskforge · skarchitect"]
+    COMMS_PROTO["**Comms protocol — skcomms**\nenvelope schema · realm routing\nPGP signing · FQID identity\n&lt;agent&gt;@&lt;operator&gt;.&lt;realm&gt;"]
+    COMMS_TRANSPORT["Comms transport — skcomm\n17 physical paths\nSyncthing · IMAP · WebRTC · file …"]
+    MODELS["Models layer\nOllama · vLLM · local inference"]
+    DATA["Data layer\nskmemory · skvector · skgraph"]
+    IDENTITY["Identity layer\ncapauth · PGP sovereign profiles"]
+    SECURITY["Security layer\nsksecurity · skwaf · skca"]
+    OS["OS layer\nskos"]
+    SILICON["Silicon\nyour hardware"]
+
+    SOUL --> APPS --> COMMS_PROTO --> COMMS_TRANSPORT --> MODELS --> DATA --> IDENTITY --> SECURITY --> OS --> SILICON
+
+    SKCAPSTONE["skcapstone\norchestrator · cluster.json · agent store"]
+    SKCHAT["skchat\nchat app (UX over protocol+transport)"]
+    SKGATEWAY["skgateway\nGateway / proxy layer"]
+
+    COMMS_PROTO -->|"uses transport backbone"| COMMS_TRANSPORT
+    COMMS_PROTO <-->|"reads cluster.json\nagent pub keys"| SKCAPSTONE
+    COMMS_PROTO -->|"envelope schema consumed by"| SKCHAT
+    COMMS_PROTO -->|"envelope schema consumed by"| SKGATEWAY
+```
+
+---
+
 ## License
 
 **GPL-3.0-or-later** — see [`LICENSE`](LICENSE).
