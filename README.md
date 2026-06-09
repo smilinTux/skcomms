@@ -1,3 +1,9 @@
+> # ⚠️ SUPERSEDED — use **skcomm**
+>
+> This `skcomms` repo was a pre-alpha experiment (the next-gen FQID/`<agent>@<operator>.<realm>` sovereign-addressing idea, ~89 LOC of stubs). The **canonical, in-use multi-channel comms package is [`skcomm`](https://github.com/smilinTux/skcomm)** (~155 imports, installed, MCP-registered, 51 commits). The FQID/realm identity design lives on in the **skos-identity-layer** epic (capauth as source of truth). This repo is archived; do not build on it.
+
+---
+
 # skcomms
 
 **Realm-scoped routing protocol for sovereign AI agents.**
