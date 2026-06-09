@@ -9,7 +9,7 @@ def test_import():
 
 def test_version():
     assert hasattr(skcomms, "__version__")
-    assert skcomms.__version__ == "0.0.1"
+    assert skcomms.__version__ == "0.1.3"
 
 
 def test_stub_modules_importable():
