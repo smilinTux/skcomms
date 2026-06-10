@@ -425,11 +425,40 @@ def _test_file_transport_ping(drop_root: Path) -> bool:
 
 
 @main.command("init")
+@click.option("--agent", "-a", default=None, help="Agent name (defaults to resolved identity).")
+def init(agent: Optional[str]):
+    """Initialize the ~/.skcomms/ realm message tree.
+
+    Creates ``~/.skcomms/<realm>/<operator>/<agent>/{outbox,inbox}`` derived
+    from cluster.json + the resolved agent identity, plus a top-level
+    ``.stignore`` so Syncthing ignores volatile/local files. Idempotent.
+
+    Honors the ``SKCOMMS_HOME`` env override (default ``~/.skcomms``).
+
+    Examples:
+
+        skcomms init
+
+        skcomms init --agent lumina
+    """
+    from .home import scaffold
+
+    info = scaffold(agent=agent)
+    _print(f"\n  [bold green]skcomms initialized[/] for [cyan]{info['agent']}[/]\n")
+    _print(f"  Home:     [dim]{info['home']}[/]")
+    _print(f"  FQID dir: [dim]{info['agent_dir']}[/]")
+    _print(f"  Outbox:   [dim]{info['outbox']}[/]")
+    _print(f"  Inbox:    [dim]{info['inbox']}[/]")
+    _print(f"  Ignore:   [dim]{info['stignore']}[/]")
+    _print("")
+
+
+@main.command("init-config")
 @click.option("--name", default=None, help="Your agent identity name.")
 @click.option("--fingerprint", default=None, help="PGP fingerprint for signing.")
 @click.option("--force", "-f", is_flag=True, help="Overwrite existing config without prompt.")
 def init_config(name: Optional[str], fingerprint: Optional[str], force: bool):
-    """Initialize SKComm configuration.
+    """Initialize SKComm transport configuration (legacy ~/.skcomm/config.yml).
 
     Creates ~/.skcomm/config.yml with sensible defaults,
     auto-detects Syncthing, tests file transport connectivity,
