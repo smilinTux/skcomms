@@ -20,6 +20,9 @@ from typing import Optional
 
 import click
 
+import logging
+logger = logging.getLogger(__name__)
+
 try:
     from rich.console import Console
     from rich.panel import Panel
