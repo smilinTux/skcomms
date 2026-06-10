@@ -33,6 +33,8 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from . import integration as _integration
+
 logger = logging.getLogger("skcomm.heartbeat")
 
 # ---------------------------------------------------------------------------
@@ -397,6 +399,11 @@ class HeartbeatPublisher:
                     self.publish()
                 except Exception as exc:
                     logger.warning("Heartbeat publish failed: %s", exc)
+                    _integration.alert(
+                        "heartbeat_publish_failed",
+                        {"node_id": self._cfg.node_id, "error": str(exc)},
+                        level="warn",
+                    )
                 self._stop_event.wait(self._cfg.publish_interval_seconds)
 
         self._thread = threading.Thread(target=_loop, daemon=True, name="heartbeat-publisher")
@@ -404,6 +411,9 @@ class HeartbeatPublisher:
         logger.info(
             "HeartbeatPublisher started (interval=%ds)", self._cfg.publish_interval_seconds
         )
+        # Register with skcapstone fleet when present (idempotent).
+        _integration.ensure_schedule()
+        _integration.register_self()
 
     def stop(self) -> None:
         """Stop the background publish thread gracefully."""

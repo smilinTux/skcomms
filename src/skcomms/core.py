@@ -30,6 +30,7 @@ from .models import (
 from .outbox import PersistentOutbox
 from .router import Router
 from .transport import DeliveryReport, Transport
+from . import integration as _integration
 
 logger = logging.getLogger("skcomm.core")
 
@@ -517,6 +518,15 @@ class SKComm:
                 "Delivery failed for %s → %s — queued for retry",
                 envelope.envelope_id[:8],
                 recipient,
+            )
+            _integration.alert(
+                "delivery_failed",
+                {
+                    "envelope_id": envelope.envelope_id[:8],
+                    "recipient": recipient,
+                    "error": error_msg,
+                },
+                level="warn",
             )
 
         if report.delivered and self._ack_tracker:
