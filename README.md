@@ -81,6 +81,90 @@ The CLI entrypoint is `skcomms`. See `skcomms --help`.
 
 ---
 
+## CLI reference
+
+The realm layer (FQID addressing, signed Envelope-v1, PGP TOFU, cross-operator
+consent) is the canonical surface. The older transport-config commands
+(`send-transport`, `peers-transport`, `peer …`, `discover`, `init-config`,
+`receive`, `daemon`, `serve`, `heartbeat`, `queue`, `pubsub`, `skill`) are the
+inherited skcomm layer and are summarized at the end.
+
+> Paths below honor the `SKCOMMS_HOME` env override and otherwise default to
+> `~/.skcomms`. `realm` and `operator` come from `~/.skcapstone/cluster.json`;
+> the `agent` component comes from the resolved self identity.
+
+### Bootstrap
+
+| Command | What it does |
+|---|---|
+| `skcomms init [--agent <name>]` | Scaffold the realm message tree: `~/.skcomms/<realm>/<operator>/<agent>/{outbox,inbox}` (derived from `cluster.json` + the resolved agent identity) plus a top-level `.stignore` so Syncthing ignores volatile/local files. Idempotent — never clobbers existing messages. `--agent` overrides identity resolution. |
+| `skcomms init-config [--name …] [--fingerprint …] [-f]` | **Legacy.** Writes the old transport config `~/.skcomm/config.yml` (auto-detects Syncthing, tests the file transport). Not the realm tree — use `init` for that. |
+
+### Realm messaging
+
+| Command | What it does |
+|---|---|
+| `skcomms send <to_fqid> <message> [-a <agent>] [-s <subject>] [-t <thread>] [--reply-to <id>]` | Build a signed **Envelope v1** from the resolved identity, sign it (detached PGP), and write it to the sender's `outbox` *and* the recipient peer's `inbox` under `~/.skcomms`. Example: `skcomms send opus@casey.douno "sync complete"`. |
+| `skcomms inbox [-a <agent>] [--json-out]` | List + **verify** signed messages in this agent's inbox. Each `SignedEnvelope` is parsed and its signature checked against the sender's known public key; verified (`✓`) / failed (`✗`) is shown per message. |
+
+`<to_fqid>` / `<from_fqid>` are FQIDs of the form `<agent>@<operator>.<realm>`
+(e.g. `opus@casey.douno`).
+
+### Peers & registry
+
+`peers` manages the realm tree + the Syncthing-device/PGP-key bindings in
+`peers.json`. `registry` is the read-only multi-backend resolver.
+
+| Command | What it does |
+|---|---|
+| `skcomms peers [-a <agent>] [--json-out]` | List known peers in the realm tree — every `<realm>/<operator>/<agent>` dir other than this agent's, with its inbox message count. |
+| `skcomms peers add <fqid> --syncthing-device-id <id> --pubkey <path> [--via-registry] [--tailscale <node>]` | Wire a peer's Syncthing device id + PGP key into `peers.json`. Derives the PGP fingerprint from `--pubkey` and **TOFU-binds** `fqid → fingerprint` (a conflicting fingerprint on re-add is refused). `--via-registry` resolves the device id + pubkey from the realm registry instead of passing them explicitly; `--tailscale <node>` records a Tailscale connectivity hint. |
+| `skcomms peers show <fqid> [--json-out]` | Show a peer's stored connectivity record (device id, fingerprint, added-at) from `peers.json`. |
+| `skcomms registry list [--json-out]` | List every peer the enabled registry backends know about, with their hint types (syncthing / tailscale / https) and source backends. |
+| `skcomms registry resolve <fqid> [--json-out]` | Resolve a single fqid across the enabled backends and merge their hints (operator, fingerprint, device id, tailscale, https). |
+
+The registry resolves an fqid by consulting one or more pluggable backends —
+the **sovereign Syncthing-shared file** (`_realm/peers.json`) is the default,
+with **opt-in HTTPS** and **Tailscale** backends layered on top.
+
+### Consent grants
+
+Cross-operator memory-recall consent. A grant is a PGP-signed token that lets a
+remote agent read one of this operator's memory collections across an
+operator/realm boundary; the consumer (skmemory) verifies it offline.
+
+| Command | What it does |
+|---|---|
+| `skcomms grant collection-read --collection <op>.<realm>/<name> --to <peer-fqid> [--expires 30d] [-o <file>]` | Mint a signed read-consent token granting `--to` read on `--collection`. Signed with this agent's PGP key. `--expires` accepts `<N>d` (default `30d`) or an ISO-8601 date. Prints the token JSON (or writes it with `-o`). |
+| `skcomms grants accept <source>` | Verify + accept a peer's token. `<source>` is a token file path or `-` for stdin. The signature, granter trust (TOFU), and expiry are verified, then the token is merged idempotently into `${SKCOMMS_HOME:-~/.skcomms}/recall_collections_consent.json` — the file skmemory reads. |
+| `skcomms grants list [--json-out]` | List the consent tokens currently held (collection, granted-to, granted-by, expiry). |
+
+A held token grants read when the collection matches, `granted_to` equals the
+reader fqid, it has not expired, and the signature verifies against the
+granter's TOFU-pinned key.
+
+### Legacy transport layer (inherited skcomm)
+
+These predate the realm layer and operate on the `~/.skcomm/` transport config /
+peer store rather than the `~/.skcomms/` realm tree. Documented briefly:
+
+- `skcomms send-transport <recipient> <message>` — route a message through all
+  configured transports (failover/broadcast/stealth/speed).
+- `skcomms receive` / `skcomms daemon` — poll all transports for incoming
+  messages (one-shot / continuous).
+- `skcomms peers-transport`, `skcomms peer {add,remove,list,fetch,export,import}`,
+  `skcomms discover` — the transport peer store + DID key exchange.
+- `skcomms serve`, `skcomms stats`, `skcomms status`, `skcomms heartbeat …`,
+  `skcomms queue …`, `skcomms pubsub …`, `skcomms skill …` — REST API,
+  metrics, node-health beacons, dead-letter queue, pub/sub, skill marketplace.
+
+Prefer the realm-layer commands above for new work.
+
+See **[Getting started: pair with another operator](docs/PAIRING.md)** for an
+end-to-end walkthrough.
+
+---
+
 ---
 
 ## First Principles & The Full Vertical
