@@ -53,7 +53,7 @@ def main():
     """
 
 
-@main.command()
+@main.command("send-transport")
 @click.argument("recipient")
 @click.argument("message")
 @click.option("--config", "-c", default=None, help="Config file path.")
@@ -450,6 +450,130 @@ def init(agent: Optional[str]):
     _print(f"  Outbox:   [dim]{info['outbox']}[/]")
     _print(f"  Inbox:    [dim]{info['inbox']}[/]")
     _print(f"  Ignore:   [dim]{info['stignore']}[/]")
+    _print("")
+
+
+@main.command("send")
+@click.argument("to_fqid")
+@click.argument("message")
+@click.option("--agent", "-a", default=None, help="Sending agent (defaults to identity).")
+@click.option("--subject", "-s", default=None, help="Optional subject.")
+@click.option("--thread", "-t", default=None, help="Thread id for conversation grouping.")
+@click.option("--reply-to", default=None, help="Envelope id this replies to.")
+def send(
+    to_fqid: str,
+    message: str,
+    agent: Optional[str],
+    subject: Optional[str],
+    thread: Optional[str],
+    reply_to: Optional[str],
+):
+    """Send a signed Envelope v1 to a peer FQID.
+
+    Builds an Envelope v1 from the resolved identity, signs it, and drops
+    it in the sender's outbox + the peer's inbox under ~/.skcomms.
+
+    Examples:
+
+        skcomms send opus@chef.skworld "sync complete"
+
+        skcomms send jarvis@chef.skworld "review please" --subject PR
+    """
+    from .mailbox import send_message
+
+    try:
+        result = send_message(
+            to_fqid,
+            message,
+            agent=agent,
+            subject=subject,
+            thread_id=thread,
+            reply_to=reply_to,
+        )
+    except (ValueError, FileNotFoundError) as exc:
+        _print(f"\n  [red]Send failed:[/] {exc}\n")
+        sys.exit(1)
+
+    _print(f"\n  [green]Sent[/] [dim]{result['id']}[/]")
+    _print(f"  [bold]{result['from_fqid']}[/] -> [bold]{result['to_fqid']}[/]")
+    _print(f"  [dim]outbox:[/] {result['outbox_path']}")
+    _print(f"  [dim]peer:  [/] {result['peer_inbox_path']}")
+    _print("")
+
+
+@main.command("inbox")
+@click.option("--agent", "-a", default=None, help="Agent whose inbox to read.")
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+def inbox(agent: Optional[str], json_out: bool):
+    """List + verify signed messages in this agent's inbox.
+
+    Reads SignedEnvelopes from ~/.skcomms/<realm>/<operator>/<agent>/inbox,
+    verifying each signature against the sender's known public key.
+    """
+    from .mailbox import read_inbox
+
+    items = read_inbox(agent=agent)
+
+    if json_out:
+        import json as _json
+
+        click.echo(
+            _json.dumps(
+                [
+                    {
+                        "envelope": env.to_dict(),
+                        "verified": v.valid,
+                        "reason": v.reason,
+                    }
+                    for env, v in items
+                ],
+                indent=2,
+            )
+        )
+        return
+
+    if not items:
+        _print("\n  [dim]Inbox empty.[/]\n")
+        return
+
+    _print(f"\n  [bold]{len(items)}[/] message(s):\n")
+    for env, v in items:
+        mark = "[green]✓[/]" if v.valid else "[red]✗[/]"
+        subj = f" — {env.subject}" if env.subject else ""
+        _print(f"  {mark} [cyan]{env.from_fqid}[/]{subj}")
+        preview = env.body[:80] + ("..." if len(env.body) > 80 else "")
+        _print(f"      [dim]{preview}[/]")
+        if not v.valid:
+            _print(f"      [red]{v.reason}[/]")
+    _print("")
+
+
+@main.command("peers")
+@click.option("--agent", "-a", default=None, help="This agent (excluded from list).")
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+def peers(agent: Optional[str], json_out: bool):
+    """List known peers in the ~/.skcomms realm tree.
+
+    Each peer is a <realm>/<operator>/<agent> directory other than this
+    agent's own, with its inbox message count.
+    """
+    from .mailbox import list_peers
+
+    found = list_peers(agent=agent)
+
+    if json_out:
+        import json as _json
+
+        click.echo(_json.dumps(found, indent=2))
+        return
+
+    if not found:
+        _print("\n  [dim]No peers known yet.[/]\n")
+        return
+
+    _print(f"\n  [bold]{len(found)}[/] peer(s):\n")
+    for p in found:
+        _print(f"  [cyan]{p['fqid']}[/]  [dim]({p['messages']} msg)[/]")
     _print("")
 
 
@@ -863,11 +987,11 @@ def peer_import(source: str, no_gpg: bool, yes: bool):
     _print("")
 
 
-@main.command("peers")
+@main.command("peers-transport")
 @click.option("--config", "-c", default=None, help="Config file path.")
 @click.option("--json-out", is_flag=True, help="Output as JSON.")
-def peers(config: Optional[str], json_out: bool):
-    """List known peers from the peer store.
+def peers_transport(config: Optional[str], json_out: bool):
+    """List known peers from the transport peer store (legacy).
 
     Shows all peers discovered via `skcomm discover` or added
     manually, with their transport endpoints and last-seen times.
