@@ -47,9 +47,9 @@ on the same realm" collision problem this fixes.
 
 ## Status
 
-**Pre-alpha.** The scaffold landed 2026-04-26 (coord task `893d26dc`).
-Implementation is tracked across coord tasks T1–T13, tagged
-`skcomms` on the SKCapstone coordination board:
+The realm layer is **built and shipped** (scaffold landed 2026-04-26, coord task
+`893d26dc`; the protocol layer T1–T13 shipped 2026-06-10). Tracked, tagged
+`skcomms`, on the SKCapstone coordination board:
 
 ```bash
 skcapstone coord status
@@ -57,20 +57,22 @@ skcapstone coord status
 ls ~/.skcapstone/coordination/tasks/ | grep skcomms
 ```
 
-Phase map:
+Phase map (all shipped):
 
-| Phase | Tasks | What lands |
+| Phase | Tasks | What landed |
 |---|---|---|
 | 1 — Identity bootstrap | T1, T2, T3 | `cluster.json`, fqid in `identity.json`, PGP TOFU |
 | 2 — Comms scaffold | T4, T5, T6 | `~/.skcomms/` tree, envelope sign/verify, CLI |
 | 3 — Syncthing wiring | T7, T8 | Topology doc, `skcomms peers add` |
 | 4 — Vector namespacing | T9, T10 | recall_collections prefix + consent tokens |
-| 5 — Discovery | T11 | Realm peer registry |
-| 6 — Rollout + docs | T12, T13 | Bootstrap chef.skworld, full doc rollup |
+| 5 — Discovery | T11 | Realm peer registry (Syncthing / HTTPS / Tailscale) |
+| 6 — Rollout + docs | T12, T13 | Bootstrap chef.skworld (op), full doc rollup |
+
+T12 (bootstrap `chef.skworld` on this box) is a one-time `skcomms init` op.
 
 ---
 
-## Install (once T1+ has shipped)
+## Install
 
 ```bash
 # Lives in the shared SK* venv:
