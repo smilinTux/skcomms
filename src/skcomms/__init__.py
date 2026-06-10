@@ -27,7 +27,8 @@ from .models import (
     RoutingConfig,
     RoutingMode,
 )
-from .signing import EnvelopeSigner, EnvelopeVerifier, SignedEnvelope, VerificationResult
+from .envelope import Envelope, SignedEnvelope
+from .signing import EnvelopeSigner, EnvelopeVerifier, VerificationResult
 from .transport import HealthStatus, SendResult, Transport, TransportError, TransportStatus
 
 __all__ = [
@@ -46,6 +47,7 @@ __all__ = [
     "SendResult",
     "EnvelopeCrypto",
     "KeyStore",
+    "Envelope",
     "SignedEnvelope",
     "EnvelopeSigner",
     "EnvelopeVerifier",
