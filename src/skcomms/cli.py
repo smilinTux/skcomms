@@ -2522,5 +2522,33 @@ def pubsub_topics(pattern: Optional[str]):
     _print("")
 
 
+@main.group("pair")
+def pair_group():
+    """QR device-pairing: show your invite, accept a scanned one."""
+
+
+@pair_group.command("show")
+@click.option("--embed-key", is_flag=True, help="Embed the full public key (self-contained, offline; larger QR).")
+@click.option("-o", "--out", type=click.Path(), default=None, help="Save the QR to a .png/.svg file.")
+@click.option("-a", "--agent", default=None, help="Agent name (default: resolved self).")
+def pair_show(embed_key, out, agent):
+    from .pairing import bundle_from_self, make_pairing_qr
+    bundle = bundle_from_self(agent, embed_key=embed_key)
+    uri, qr = make_pairing_qr(bundle)
+    click.echo(qr.terminal(compact=True))
+    click.echo(uri)
+    if out:
+        qr.save(out)
+        click.echo(f"saved QR -> {out}")
+
+
+@pair_group.command("accept")
+@click.argument("source")  # an skp:// URI or a file path containing one
+def pair_accept(source):
+    from .pairing import accept_pairing
+    res = accept_pairing(source)
+    click.echo(f"paired with {res['fqid']} (fingerprint {res['fingerprint']})")
+
+
 if __name__ == "__main__":
     main()
