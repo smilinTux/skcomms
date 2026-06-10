@@ -103,3 +103,49 @@ def make_pairing_qr(bundle: PairingBundle):
     import segno
     uri = to_skp_uri(bundle)
     return uri, segno.make(uri, error="m")
+
+
+def _default_fetcher(bundle: "PairingBundle") -> Optional[str]:
+    """Fetch the peer's armored pubkey via its hints (best-effort, no network in tests)."""
+    try:
+        from .key_exchange import fetch_peer_from_did
+        target = bundle.https or bundle.fqid.split("@")[0]
+        peer = fetch_peer_from_did(target)
+        return peer.get("pubkey") if isinstance(peer, dict) else None
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("pubkey fetch failed: %s", exc)
+        return None
+
+
+def accept_pairing(uri_or_path: str, *, fetcher=None) -> dict:
+    """Accept a scanned skp:// URI (or a file containing one): verify the peer's
+    key fingerprint against the bundle, then TOFU-add the peer. Returns a summary
+    dict. Raises ValueError on a fingerprint mismatch or unresolvable key."""
+    import os
+    import tempfile
+    from pathlib import Path
+    from .peers import add_peer, fingerprint_from_pubkey
+    text = uri_or_path
+    p = Path(uri_or_path)
+    if not uri_or_path.startswith(f"{SKP_SCHEME}://") and p.exists():
+        text = p.read_text(encoding="utf-8").strip()
+    bundle = parse_skp_uri(text)
+    pubkey = bundle.pubkey or (fetcher or _default_fetcher)(bundle)
+    if not pubkey:
+        raise ValueError(f"could not resolve a public key for {bundle.fqid}")
+    actual_fp = fingerprint_from_pubkey(pubkey)
+    if actual_fp.upper() != bundle.fingerprint.upper():
+        raise ValueError(
+            f"fingerprint mismatch for {bundle.fqid}: QR claims {bundle.fingerprint}, "
+            f"key is {actual_fp} — refusing to pair")
+    # write the pubkey to a temp file for peers.add_peer (which reads a path)
+    fd, tmp = tempfile.mkstemp(suffix=".asc")
+    os.close(fd)
+    try:
+        Path(tmp).write_text(pubkey, encoding="utf-8")
+        add_peer(bundle.fqid, bundle.syncthing_device_id or "", tmp)
+    finally:
+        os.unlink(tmp)
+    return {"fqid": bundle.fqid, "fingerprint": actual_fp,
+            "syncthing_device_id": bundle.syncthing_device_id,
+            "transport_hints": {k: getattr(bundle, k) for k in ("tailscale", "https") if getattr(bundle, k)}}
