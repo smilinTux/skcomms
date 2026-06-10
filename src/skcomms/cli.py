@@ -1637,6 +1637,153 @@ def skill_install(name: str, relay: tuple):
 
 
 # ---------------------------------------------------------------------------
+# Consent grant commands (cross-operator collection read-consent — T10)
+# ---------------------------------------------------------------------------
+
+
+@main.group("grant")
+def grant_group():
+    """Mint cross-operator collection read-consent tokens.
+
+    A grant lets a remote agent read one of this operator's memory
+    collections across an operator/realm boundary. Tokens are PGP-signed
+    by the granter so the consumer (skmemory) can verify them offline.
+    """
+
+
+@grant_group.command("collection-read")
+@click.option("--collection", required=True, help="Collection <operator>.<realm>/<name>.")
+@click.option("--to", "to_fqid", required=True, help="Reader FQID to grant access to.")
+@click.option(
+    "--expires", default="30d", help="Expiry: '<N>d' days (e.g. 30d) or an ISO-8601 date."
+)
+@click.option(
+    "--out", "-o", "out_file", default=None, help="Write the signed token to a file (else stdout)."
+)
+def grant_collection_read(
+    collection: str, to_fqid: str, expires: str, out_file: Optional[str]
+):
+    """Mint a signed collection read-consent token.
+
+    Builds a token granting ``--to`` read access to ``--collection``,
+    signs it with this agent's PGP key, and prints (or saves) the signed
+    token JSON in the schema skmemory consumes.
+
+    Examples:
+
+        skcomms grant collection-read --collection chef.skworld/journal \\
+            --to opus@casey.douno --expires 30d
+
+        skcomms grant collection-read --collection chef.skworld/notes \\
+            --to opus@casey.douno --expires 2026-12-31 -o grant.json
+    """
+    from .grants import mint_grant
+
+    try:
+        token = mint_grant(collection=collection, to_fqid=to_fqid, expires=expires)
+    except (ValueError, FileNotFoundError) as exc:
+        _print(f"\n  [red]Grant failed:[/] {exc}\n")
+        raise SystemExit(1)
+
+    token_json = json.dumps(token, indent=2)
+    if out_file:
+        Path(out_file).write_text(token_json + "\n", encoding="utf-8")
+        _print(f"\n  [green]Grant minted[/] → [dim]{out_file}[/]")
+        _print(f"  Collection: [cyan]{token['collection']}[/]")
+        _print(f"  To:         [bold]{token['granted_to']}[/]")
+        _print(f"  By:         [bold]{token['granted_by']}[/]")
+        _print(f"  Expires:    [dim]{token['expires']}[/]\n")
+    else:
+        click.echo(token_json)
+
+
+@main.group("grants")
+def grants_group():
+    """Manage held collection read-consent tokens.
+
+    Accept tokens minted by peers and list the grants currently honored
+    in ``${SKCOMMS_HOME:-~/.skcomms}/recall_collections_consent.json``.
+    """
+
+
+@grants_group.command("accept")
+@click.argument("source")
+def grants_accept(source: str):
+    """Verify and accept a consent token into the consent file.
+
+    SOURCE is a token file path, or '-' for stdin. The token's signature,
+    granter trust (TOFU), and expiry are verified before it is merged
+    (idempotently) into the consent file skmemory reads.
+
+    Examples:
+
+        skcomms grants accept grant.json
+
+        cat grant.json | skcomms grants accept -
+    """
+    from .grants import accept_grant
+
+    try:
+        raw = sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")
+        token = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        _print(f"\n  [red]Could not read token:[/] {exc}\n")
+        raise SystemExit(1)
+
+    try:
+        accepted = accept_grant(token)
+    except ValueError as exc:
+        _print(f"\n  [red]Rejected:[/] {exc}\n")
+        raise SystemExit(1)
+
+    _print("\n  [green]Grant accepted[/]")
+    _print(f"  Collection: [cyan]{accepted['collection']}[/]")
+    _print(f"  To:         [bold]{accepted['granted_to']}[/]")
+    _print(f"  By:         [bold]{accepted['granted_by']}[/]")
+    _print(f"  Expires:    [dim]{accepted['expires']}[/]\n")
+
+
+@grants_group.command("list")
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+def grants_list(json_out: bool):
+    """List the consent tokens currently held."""
+    from .grants import list_grants
+
+    grants = list_grants()
+
+    if json_out:
+        click.echo(json.dumps(grants, indent=2))
+        return
+
+    if not grants:
+        _print("\n  [dim]No grants held.[/]\n")
+        return
+
+    _print(f"\n  [bold]{len(grants)}[/] grant(s) held:\n")
+    if console:
+        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        table.add_column("Collection", style="cyan")
+        table.add_column("Granted To")
+        table.add_column("Granted By", style="dim")
+        table.add_column("Expires", style="dim")
+        for g in grants:
+            table.add_row(
+                g.get("collection", "-"),
+                g.get("granted_to", "-"),
+                g.get("granted_by", "-"),
+                g.get("expires", "-"),
+            )
+        console.print(table)
+    else:
+        for g in grants:
+            click.echo(
+                f"  {g.get('collection')}  ->  {g.get('granted_to')}  "
+                f"(by {g.get('granted_by')}, exp {g.get('expires')})"
+            )
+    _print("")
+
+
+# ---------------------------------------------------------------------------
 # Queue commands
 # ---------------------------------------------------------------------------
 
