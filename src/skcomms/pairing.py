@@ -12,6 +12,13 @@ from pydantic import BaseModel, field_validator
 logger = logging.getLogger(__name__)
 SKP_SCHEME = "skp"
 
+# graceful imports — keep the module importable even if deps shift
+try:
+    from .identity import resolve_self_identity
+except Exception:  # noqa: BLE001
+    def resolve_self_identity(agent=None):
+        return {}
+
 
 class PairingBundle(BaseModel):
     fqid: str
@@ -52,3 +59,47 @@ def parse_skp_uri(uri: str) -> PairingBundle:
     return PairingBundle(fqid=q.get("fqid", ""), fingerprint=q.get("fp", ""),
                          syncthing_device_id=q.get("sy"), tailscale=q.get("ts"),
                          https=q.get("https"), pubkey=pubkey)
+
+
+def _self_hints(fqid: str) -> dict:
+    """Connectivity hints for *fqid* from the peer registry (best-effort)."""
+    try:
+        from .registry import PeerRegistry
+        rec = PeerRegistry.from_config().resolve(fqid)
+        if rec is None:
+            return {}
+        return {k: v for k, v in {
+            "syncthing_device_id": rec.syncthing_device_id,
+            "tailscale": (rec.tailscale or {}).get("magicdns") if isinstance(rec.tailscale, dict) else rec.tailscale,
+            "https": rec.https,
+        }.items() if v}
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("self hints unavailable: %s", exc)
+        return {}
+
+
+def _self_pubkey_armor() -> Optional[str]:
+    """This agent's armored public key (for --embed-key), best-effort."""
+    try:
+        from .key_exchange import export_peer_bundle
+        bundle = export_peer_bundle()
+        return bundle.get("pubkey") if isinstance(bundle, dict) else None
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("self pubkey unavailable: %s", exc)
+        return None
+
+
+def bundle_from_self(agent: Optional[str] = None, *, embed_key: bool = False) -> PairingBundle:
+    ident = resolve_self_identity(agent) or {}
+    fqid = ident.get("fqid") or ""
+    fp = ident.get("fingerprint") or ""
+    hints = _self_hints(fqid)
+    pubkey = _self_pubkey_armor() if embed_key else None
+    return PairingBundle(fqid=fqid, fingerprint=fp, pubkey=pubkey, **hints)
+
+
+def make_pairing_qr(bundle: PairingBundle):
+    """Return (skp_uri, segno.QRCode). Caller can .save(path) or .terminal()."""
+    import segno
+    uri = to_skp_uri(bundle)
+    return uri, segno.make(uri, error="m")
