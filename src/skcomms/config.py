@@ -44,6 +44,35 @@ class TransportConfig(BaseModel):
     settings: dict = Field(default_factory=dict)
 
 
+class RegistryConfig(BaseModel):
+    """Realm peer-registry settings (T11).
+
+    Drives :class:`skcomms.registry.PeerRegistry` — which backends are enabled,
+    in what order they are consulted, and per-backend connection details. The
+    defaults are **sovereign**: only the offline ``syncthing-shared`` backend is
+    enabled, so out of the box the registry never reaches the network.
+
+    Attributes:
+        enabled: Backend names that are active (default: syncthing-shared only).
+        order: The order backends are consulted/merged in (default puts the
+            sovereign offline backend first, then the opt-in network ones).
+        https_url_template: Template for the HTTPS backend URL. ``{realm}`` is
+            substituted from ``cluster.json``.
+        tailscale_host_template: Hostname convention mapping a tailnet node to
+            an fqid's ``<agent>`` + ``<operator>`` (default
+            ``skcomms-{agent}-{operator}``).
+        tailscale_tag: Tailnet tag that marks a node as an skcomms peer.
+    """
+
+    enabled: list[str] = Field(default_factory=lambda: ["syncthing-shared"])
+    order: list[str] = Field(
+        default_factory=lambda: ["syncthing-shared", "https", "tailscale"]
+    )
+    https_url_template: str = "https://registry.{realm}/peers.json"
+    tailscale_host_template: str = "skcomms-{agent}-{operator}"
+    tailscale_tag: str = "tag:skcomms"
+
+
 class SKCommConfig(BaseModel):
     """Top-level SKComm configuration.
 
