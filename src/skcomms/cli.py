@@ -548,15 +548,21 @@ def inbox(agent: Optional[str], json_out: bool):
     _print("")
 
 
-@main.command("peers")
+@main.group("peers", invoke_without_command=True)
 @click.option("--agent", "-a", default=None, help="This agent (excluded from list).")
 @click.option("--json-out", is_flag=True, help="Output as JSON.")
-def peers(agent: Optional[str], json_out: bool):
-    """List known peers in the ~/.skcomms realm tree.
+@click.pass_context
+def peers(ctx: click.Context, agent: Optional[str], json_out: bool):
+    """Realm peers — list the message tree, or add/show connectivity records.
 
-    Each peer is a <realm>/<operator>/<agent> directory other than this
-    agent's own, with its inbox message count.
+    Run without a subcommand to list known peers in the ~/.skcomms realm
+    tree (each <realm>/<operator>/<agent> dir other than this agent's, with
+    its inbox message count). Use the ``add``/``show`` subcommands to manage
+    the Syncthing-device + PGP-key bindings in ``peers.json`` (T8).
     """
+    if ctx.invoked_subcommand is not None:
+        return
+
     from .mailbox import list_peers
 
     found = list_peers(agent=agent)
@@ -575,6 +581,109 @@ def peers(agent: Optional[str], json_out: bool):
     for p in found:
         _print(f"  [cyan]{p['fqid']}[/]  [dim]({p['messages']} msg)[/]")
     _print("")
+
+
+@peers.command("add")
+@click.argument("peer_fqid")
+@click.option(
+    "--syncthing-device-id",
+    "device_id",
+    default=None,
+    help="The peer's Syncthing device id (how the realm tree replicates).",
+)
+@click.option(
+    "--pubkey",
+    "pubkey",
+    default=None,
+    type=click.Path(),
+    help="Path to the peer's ASCII-armored PGP public key.",
+)
+@click.option(
+    "--via-registry",
+    is_flag=True,
+    help="(STUB) resolve the peer from a registry — requires T11, not yet decided.",
+)
+def peers_add(
+    peer_fqid: str,
+    device_id: Optional[str],
+    pubkey: Optional[str],
+    via_registry: bool,
+):
+    """Wire a peer's Syncthing device id + PGP key into ``peers.json``.
+
+    Validates the FQID, derives the PGP fingerprint from --pubkey (pure pgpy,
+    no keyring side effects), TOFU-binds fqid->fingerprint (a conflicting
+    fingerprint on re-add is REFUSED), and records the peer (idempotent).
+
+    Examples:
+
+        skcomms peers add opus@casey.douno \\
+            --syncthing-device-id ABCDEF1-...-2345678 \\
+            --pubkey ./opus.asc
+    """
+    if via_registry:
+        _print(
+            "\n  [red]--via-registry requires the T11 registry — not yet decided.[/]"
+        )
+        _print(
+            "  [dim]Add the peer explicitly with "
+            "--syncthing-device-id + --pubkey for now.[/]\n"
+        )
+        raise SystemExit(2)
+
+    if not device_id or not pubkey:
+        _print(
+            "\n  [red]Both --syncthing-device-id and --pubkey are required[/] "
+            "(or use --via-registry once T11 lands).\n"
+        )
+        raise SystemExit(2)
+
+    from .peers import add_peer
+
+    try:
+        rec = add_peer(peer_fqid, syncthing_device_id=device_id, pubkey_path=pubkey)
+    except (ValueError, FileNotFoundError) as exc:
+        _print(f"\n  [red]Peer add failed:[/] {exc}\n")
+        raise SystemExit(1)
+
+    status_label = {
+        "trust_new": "[green]new (TOFU-pinned)[/]",
+        "trust_match": "[cyan]already trusted[/]",
+    }.get(rec["status"], rec["status"])
+    _print(f"\n  [green]Peer added[/] [bold]{rec['fqid']}[/]  {status_label}")
+    _print(f"  Device:      [dim]{rec['syncthing_device_id']}[/]")
+    _print(f"  Fingerprint: [dim]{rec['fingerprint']}[/]")
+    _print(f"  Added:       [dim]{rec['added_at']}[/]\n")
+
+
+@peers.command("show")
+@click.argument("peer_fqid")
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+def peers_show(peer_fqid: str, json_out: bool):
+    """Show a peer's stored connectivity record from ``peers.json``.
+
+    Examples:
+
+        skcomms peers show opus@casey.douno
+    """
+    from .peers import show_peer
+
+    entry = show_peer(peer_fqid)
+    if entry is None:
+        if json_out:
+            click.echo("null")
+        else:
+            _print(f"\n  [yellow]No peer record for[/] {peer_fqid}\n")
+        raise SystemExit(1)
+
+    if json_out:
+        click.echo(json.dumps(entry, indent=2))
+        return
+
+    _print(f"\n  [bold cyan]{peer_fqid}[/]")
+    _print(f"  Device:      [dim]{entry['syncthing_device_id']}[/]")
+    _print(f"  Fingerprint: [dim]{entry['fingerprint']}[/]")
+    _print(f"  Added:       [dim]{entry['added_at']}[/]\n")
 
 
 @main.command("init-config")
