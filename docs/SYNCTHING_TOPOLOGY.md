@@ -160,6 +160,41 @@ key**. The realm/operator components of the FQID determine the folder
 ID/path/label; the device id determines which Syncthing peer that folder is
 shared with; the fingerprint authenticates the contents.
 
+### 4.1 The realm registry (T11) — discovering what to put in `peers.json`
+
+T8's `peers.json` is the *local, explicitly-pinned* store. T11
+(`skcomms.registry`) is the **realm-discovery layer above it**: given just an
+fqid, it finds the connectivity hints (device id, pubkey, tailscale/https) so
+you can pin them. It is **pluggable, multi-backend**, and consulted in a
+configured order — the records merge (first backend to supply a field wins):
+
+| Backend | Default? | Source | Stubbed in tests by |
+| ------- | -------- | ------ | ------------------- |
+| `syncthing-shared` | **ENABLED** (sovereign) | a steward-maintained `${SKCOMMS_HOME}/_realm/peers.json` (a Syncthing **Receive-Only** folder the realm steward publishes) | tmp `_realm/peers.json` file |
+| `https` | opt-in | `GET https://registry.<realm>/peers.json` (realm from `cluster.json`) | an **injected fetcher** callable |
+| `tailscale` | opt-in | `tailscale status --json`, hosts named `skcomms-<agent>-<operator>` | an **injected status_runner** callable |
+
+The unified `PeerRecord` schema is a backward-compatible superset of a T8
+entry: `fqid`, `operator`, `pgp_fingerprint` (accepts T8's `fingerprint`), and
+optional hints `syncthing_device_id`, `tailscale {node, magicdns, ip}`,
+`https`, plus `pubkey`/`source`/`added_at`.
+
+The **Tailscale hostname ⇄ fqid convention** is `skcomms-<agent>-<operator>`
+(the realm is realm-local and not encoded in the hostname), e.g.
+`skcomms-opus-casey` ⇄ `opus@casey.<realm>`. Nodes tagged `tag:skcomms` are
+also treated as skcomms peers.
+
+Wiring:
+
+- `skcomms registry list` / `skcomms registry resolve <fqid>` inspect the resolver.
+- `skcomms peers add <fqid> --via-registry` resolves the device id + pubkey via
+  the registry, then TOFU-binds + records them through the T8 `add_peer` path.
+- `skcomms peers add <fqid> --tailscale <node>` records a Tailscale hint.
+
+Config lives in `skcomms.config.RegistryConfig` with **sovereign defaults**
+(only `syncthing-shared` enabled — the registry never touches the network out
+of the box).
+
 ---
 
 ## 5. The `.stignore` (already written by `scaffold()`)

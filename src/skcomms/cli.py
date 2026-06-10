@@ -601,13 +601,20 @@ def peers(ctx: click.Context, agent: Optional[str], json_out: bool):
 @click.option(
     "--via-registry",
     is_flag=True,
-    help="(STUB) resolve the peer from a registry — requires T11, not yet decided.",
+    help="Resolve the peer (device id + pubkey) via the T11 realm registry.",
+)
+@click.option(
+    "--tailscale",
+    "tailscale_node",
+    default=None,
+    help="Point/add the peer by Tailscale node (records the tailscale hint).",
 )
 def peers_add(
     peer_fqid: str,
     device_id: Optional[str],
     pubkey: Optional[str],
     via_registry: bool,
+    tailscale_node: Optional[str],
 ):
     """Wire a peer's Syncthing device id + PGP key into ``peers.json``.
 
@@ -615,30 +622,75 @@ def peers_add(
     no keyring side effects), TOFU-binds fqid->fingerprint (a conflicting
     fingerprint on re-add is REFUSED), and records the peer (idempotent).
 
+    With ``--via-registry`` the device id + public key are resolved from the
+    T11 realm peer registry (sovereign syncthing-shared backend by default)
+    instead of being passed explicitly. ``--tailscale <node>`` additionally
+    records a Tailscale connectivity hint for the peer.
+
     Examples:
 
         skcomms peers add opus@casey.douno \\
             --syncthing-device-id ABCDEF1-...-2345678 \\
             --pubkey ./opus.asc
+
+        skcomms peers add opus@casey.douno --via-registry
+
+        skcomms peers add opus@casey.douno --via-registry --tailscale skcomms-opus-casey
     """
+    import tempfile
+
+    from .peers import add_peer
+
+    resolved_tailscale: Optional[dict] = None
+
     if via_registry:
-        _print(
-            "\n  [red]--via-registry requires the T11 registry — not yet decided.[/]"
-        )
-        _print(
-            "  [dim]Add the peer explicitly with "
-            "--syncthing-device-id + --pubkey for now.[/]\n"
-        )
-        raise SystemExit(2)
+        from .registry import PeerRegistry
+
+        reg = PeerRegistry.from_config()
+        rec_resolved = reg.resolve(peer_fqid)
+        if rec_resolved is None:
+            _print(f"\n  [red]Registry could not resolve[/] [bold]{peer_fqid}[/]")
+            _print(
+                "  [dim]No enabled backend has this peer. Publish it to the "
+                "shared realm file (_realm/peers.json) or add it explicitly "
+                "with --syncthing-device-id + --pubkey.[/]\n"
+            )
+            raise SystemExit(1)
+
+        device_id = device_id or rec_resolved.syncthing_device_id
+        resolved_tailscale = rec_resolved.tailscale
+
+        if not device_id:
+            _print(
+                f"\n  [red]Registry resolved[/] {peer_fqid} [red]but it has no "
+                "Syncthing device id[/] — cannot wire the realm tree.\n"
+            )
+            raise SystemExit(1)
+
+        if not pubkey:
+            if not rec_resolved.pubkey:
+                _print(
+                    f"\n  [red]Registry resolved[/] {peer_fqid} [red]but carries "
+                    "no public key[/] — supply --pubkey to TOFU-bind it.\n"
+                )
+                raise SystemExit(1)
+            _tmp = tempfile.NamedTemporaryFile(
+                "w", suffix=".asc", delete=False, encoding="utf-8"
+            )
+            _tmp.write(rec_resolved.pubkey)
+            _tmp.close()
+            pubkey = _tmp.name
+
+    if tailscale_node:
+        # Explicit --tailscale node sets/overrides the recorded hint.
+        resolved_tailscale = {"node": tailscale_node}
 
     if not device_id or not pubkey:
         _print(
             "\n  [red]Both --syncthing-device-id and --pubkey are required[/] "
-            "(or use --via-registry once T11 lands).\n"
+            "(or use --via-registry to resolve them).\n"
         )
         raise SystemExit(2)
-
-    from .peers import add_peer
 
     try:
         rec = add_peer(peer_fqid, syncthing_device_id=device_id, pubkey_path=pubkey)
@@ -653,6 +705,8 @@ def peers_add(
     _print(f"\n  [green]Peer added[/] [bold]{rec['fqid']}[/]  {status_label}")
     _print(f"  Device:      [dim]{rec['syncthing_device_id']}[/]")
     _print(f"  Fingerprint: [dim]{rec['fingerprint']}[/]")
+    if resolved_tailscale:
+        _print(f"  Tailscale:   [dim]{resolved_tailscale.get('node') or '?'}[/]")
     _print(f"  Added:       [dim]{rec['added_at']}[/]\n")
 
 
@@ -684,6 +738,100 @@ def peers_show(peer_fqid: str, json_out: bool):
     _print(f"  Device:      [dim]{entry['syncthing_device_id']}[/]")
     _print(f"  Fingerprint: [dim]{entry['fingerprint']}[/]")
     _print(f"  Added:       [dim]{entry['added_at']}[/]\n")
+
+
+@main.group("registry")
+def registry_group():
+    """Realm peer registry — inspect the multi-backend peer resolver (T11).
+
+    The registry resolves an fqid to a connectivity record by consulting one
+    or more pluggable backends (sovereign Syncthing-shared file by default,
+    plus opt-in HTTPS + Tailscale) and merging their hints. Use ``list`` to
+    enumerate known peers and ``resolve`` to inspect a single fqid.
+    """
+
+
+@registry_group.command("list")
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+def registry_list(json_out: bool):
+    """List every peer the enabled registry backends know about.
+
+    Examples:
+
+        skcomms registry list
+
+        skcomms registry list --json-out
+    """
+    from .registry import PeerRegistry
+
+    recs = PeerRegistry.from_config().list()
+
+    if json_out:
+        click.echo(json.dumps([r.to_dict() for r in recs], indent=2))
+        return
+
+    if not recs:
+        _print("\n  [dim]No peers known to any enabled registry backend.[/]\n")
+        return
+
+    _print(f"\n  [bold]{len(recs)}[/] registry peer(s):\n")
+    for r in recs:
+        hints = []
+        if r.syncthing_device_id:
+            hints.append("syncthing")
+        if r.tailscale:
+            hints.append("tailscale")
+        if r.https:
+            hints.append("https")
+        via = ", ".join(r.sources) or "-"
+        _print(
+            f"  [cyan]{r.fqid}[/]  [dim]({', '.join(hints) or 'no hints'} — via {via})[/]"
+        )
+    _print("")
+
+
+@registry_group.command("resolve")
+@click.argument("peer_fqid")
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+def registry_resolve(peer_fqid: str, json_out: bool):
+    """Resolve a single fqid across the enabled registry backends.
+
+    Examples:
+
+        skcomms registry resolve opus@casey.douno
+
+        skcomms registry resolve opus@casey.douno --json-out
+    """
+    from .registry import PeerRegistry
+
+    try:
+        rec = PeerRegistry.from_config().resolve(peer_fqid)
+    except ValueError as exc:
+        _print(f"\n  [red]Invalid fqid:[/] {exc}\n")
+        raise SystemExit(2)
+
+    if rec is None:
+        if json_out:
+            click.echo("null")
+        else:
+            _print(f"\n  [yellow]Could not resolve[/] {peer_fqid} [dim](no backend has it)[/]\n")
+        raise SystemExit(1)
+
+    if json_out:
+        click.echo(json.dumps(rec.to_dict(), indent=2))
+        return
+
+    _print(f"\n  [bold cyan]{rec.fqid}[/]")
+    _print(f"  Operator:    [dim]{rec.operator}[/]")
+    if rec.pgp_fingerprint:
+        _print(f"  Fingerprint: [dim]{rec.pgp_fingerprint}[/]")
+    if rec.syncthing_device_id:
+        _print(f"  Device:      [dim]{rec.syncthing_device_id}[/]")
+    if rec.tailscale:
+        _print(f"  Tailscale:   [dim]{rec.tailscale}[/]")
+    if rec.https:
+        _print(f"  HTTPS:       [dim]{rec.https}[/]")
+    _print(f"  Via:         [dim]{', '.join(rec.sources) or '-'}[/]\n")
 
 
 @main.command("init-config")
