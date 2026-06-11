@@ -30,10 +30,54 @@ Set ``SKCOMM_DEV_AUTH=1`` as a reminder to yourself that auth is disabled.
 
 from __future__ import annotations
 
+import glob
 import logging
 import re
 import time
+from pathlib import Path
 from typing import Optional
+
+
+def _find_pubkey_by_fingerprint(
+    fingerprint: str,
+    *,
+    agents_root: "Optional[Path]" = None,
+    extra_globs: "Optional[list[str]]" = None,
+) -> Optional[str]:
+    """Scan per-agent CapAuth identity dirs + the skcomms peers store for the
+    armored public key whose fingerprint matches ``fingerprint``.
+
+    Reconciles the WebRTC SDP-verify key resolution with the mailbox/TOFU layer:
+    local agents keep their keypair under ``~/.skcapstone/agents/<a>/capauth/identity``
+    (the path fixed 2026-06-11), which the legacy ``~/.skcomm/keys`` + gpg lookup
+    never searched.
+
+    Args:
+        fingerprint: 40-char hex fingerprint (spaces/case-insensitive).
+        agents_root: override the agents root (for tests).
+        extra_globs: additional glob patterns of ``*.asc`` pubkeys to search.
+
+    Returns:
+        Armored public key string, or None.
+    """
+    import pgpy  # type: ignore[import]
+
+    want = fingerprint.replace(" ", "").upper()
+    base = agents_root or (Path.home() / ".skcapstone" / "agents")
+    patterns = [str(base / "*" / "capauth" / "identity" / "public.asc")]
+    patterns.append(str(Path.home() / ".skcomms" / "**" / "peers" / "*.asc"))
+    if extra_globs:
+        patterns.extend(extra_globs)
+
+    for pattern in patterns:
+        for path in glob.glob(pattern, recursive=True):
+            try:
+                key, _ = pgpy.PGPKey.from_file(path)
+            except Exception:  # noqa: BLE001 — skip unreadable/non-key files
+                continue
+            if str(key.fingerprint).replace(" ", "").upper() == want:
+                return str(key)
+    return None
 
 logger = logging.getLogger("skcomm.capauth_validator")
 
@@ -254,7 +298,24 @@ class CapAuthValidator:
             except Exception as exc:
                 logger.debug("CapAuth: failed to parse key at %s: %s", key_path, exc)
 
-        # 2. System GPG keyring
+        # 2. Per-agent CapAuth identity dirs + skcomms peers store, matched by
+        #    fingerprint. Reconciles the WebRTC verify path with the mailbox/TOFU
+        #    layer (2026-06-11) so a *local* agent's signed SDP (e.g. opus↔lumina)
+        #    verifies — those keys live under capauth/identity, not ~/.skcomm/keys.
+        armor = _find_pubkey_by_fingerprint(fingerprint)
+        if armor:
+            try:
+                key, _ = pgpy.PGPKey.from_blob(armor)
+                logger.debug(
+                    "CapAuth: loaded key for %s from agent/peers store", fingerprint
+                )
+                return key
+            except Exception as exc:
+                logger.debug(
+                    "CapAuth: parse failed for agent/peers key %s: %s", fingerprint, exc
+                )
+
+        # 3. System GPG keyring
         try:
             import subprocess
 
