@@ -45,6 +45,7 @@ class P2PSession:
         send_signal: Optional[Callable[[str, dict], Awaitable[None]]] = None,
         ice_servers: Optional[list[dict]] = None,
         label: str = CHANNEL_LABEL,
+        on_track: Optional[Callable[[object], None]] = None,
     ) -> None:
         from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection
 
@@ -58,13 +59,24 @@ class P2PSession:
 
         self._send_signal = send_signal
         self._label = label
+        self._on_track = on_track
         self.channel = None
+        self.received_tracks: list = []
         self._open = asyncio.Event()
         self._inbox: asyncio.Queue = asyncio.Queue()
 
         @self.pc.on("datachannel")
         def _on_datachannel(ch) -> None:  # answerer receives the channel
             self._bind_channel(ch)
+
+        @self.pc.on("track")
+        def _on_track(track) -> None:  # inbound media (audio/video) from the peer
+            self.received_tracks.append(track)
+            if self._on_track is not None:
+                try:
+                    self._on_track(track)
+                except Exception as exc:  # noqa: BLE001 — callback must not break negotiation
+                    logger.debug("p2p: on_track callback error: %s", exc)
 
     # -- channel wiring -----------------------------------------------------
     def _bind_channel(self, channel) -> None:
@@ -80,6 +92,15 @@ class P2PSession:
 
         if getattr(channel, "readyState", None) == "open":
             self._open.set()
+
+    # -- media --------------------------------------------------------------
+    def add_track(self, track) -> None:
+        """Attach an outbound media track (e.g. a TTS audio track) before negotiation.
+
+        Call before :meth:`call` (offerer) or before answering so the track is
+        advertised in the SDP. The data channel rides alongside ("both together").
+        """
+        self.pc.addTrack(track)
 
     # -- negotiation --------------------------------------------------------
     async def call(self) -> None:
