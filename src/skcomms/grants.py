@@ -183,8 +183,18 @@ def _resolve_expires(expires: str) -> str:
 
 
 def _agent_identity_dir(agent: str) -> Path:
-    """Path to the agent's CapAuth identity dir."""
-    return Path.home() / ".skcapstone" / "agents" / agent / "identity"
+    """Path to the agent's CapAuth identity dir.
+
+    Canonical: ``~/.skcapstone/agents/<agent>/capauth/identity`` (mirrors
+    :func:`skcomms.mailbox._agent_identity_dir`); falls back to the legacy
+    bare ``identity`` dir. The bare-only path missed the real per-agent key
+    and fell through to the operator key under ``~/.capauth``.
+    """
+    base = Path.home() / ".skcapstone" / "agents" / agent
+    capauth_dir = base / "capauth" / "identity"
+    if capauth_dir.exists():
+        return capauth_dir
+    return base / "identity"
 
 
 def _load_signer(agent: str) -> EnvelopeSigner:

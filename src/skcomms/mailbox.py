@@ -35,8 +35,20 @@ logger = logging.getLogger("skcomms.mailbox")
 
 
 def _agent_identity_dir(agent: str) -> Path:
-    """Path to the agent's CapAuth identity dir."""
-    return Path.home() / ".skcapstone" / "agents" / agent / "identity"
+    """Path to the agent's CapAuth identity dir.
+
+    Canonical location is ``~/.skcapstone/agents/<agent>/capauth/identity``
+    (where provisioning + pairing keep the per-agent keypair). Falls back to
+    the legacy bare ``identity`` dir for older layouts. The previous bare-only
+    path silently missed every agent's real key and fell through to the
+    operator key under ``~/.capauth`` — signing agent messages as the operator
+    and breaking signature verification fleet-wide.
+    """
+    base = Path.home() / ".skcapstone" / "agents" / agent
+    capauth_dir = base / "capauth" / "identity"
+    if capauth_dir.exists():
+        return capauth_dir
+    return base / "identity"
 
 
 def _load_signer(agent: str) -> EnvelopeSigner:
