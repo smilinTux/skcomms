@@ -144,3 +144,35 @@ def test_embed_key_bundle_fingerprint_matches_embedded_key(tmp_path, monkeypatch
     b = P.bundle_from_self(embed_key=True)
     assert b.pubkey == pub
     assert fingerprint_from_pubkey(b.pubkey).upper() == b.fingerprint.upper()
+
+
+def test_default_fetcher_resolves_local_agent_key(tmp_path, monkeypatch):
+    """A compact QR for a locally-provisioned agent resolves its key from disk
+    (no network) — the same-box/self-pair case."""
+    import skcomms.pairing as P
+    from skcomms.peers import fingerprint_from_pubkey
+    pub = _gen_pubkey(); fp = fingerprint_from_pubkey(pub)
+    d = tmp_path / ".skcapstone" / "agents" / "opus" / "capauth" / "identity"
+    d.mkdir(parents=True)
+    (d / "public.asc").write_text(pub)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    b = P.PairingBundle(fqid="opus@chef.skworld", fingerprint=fp, syncthing_device_id="X")
+    assert P._default_fetcher(b) == pub
+
+
+def test_accept_compact_local_agent_pairs(tmp_path, monkeypatch):
+    """End-to-end: a compact QR for a local agent is accepted (key resolved
+    locally, fingerprint verified, peer TOFU-added) with NO embedded key and NO
+    injected fetcher."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / ".skcomms"))
+    import skcomms.pairing as P
+    from skcomms.peers import fingerprint_from_pubkey
+    pub = _gen_pubkey(); fp = fingerprint_from_pubkey(pub)
+    d = tmp_path / ".skcapstone" / "agents" / "opus" / "capauth" / "identity"
+    d.mkdir(parents=True)
+    (d / "public.asc").write_text(pub)
+    uri = P.to_skp_uri(P.PairingBundle(fqid="opus@chef.skworld", fingerprint=fp,
+                                       syncthing_device_id="DEV-7"))  # compact
+    res = P.accept_pairing(uri)   # no fetcher, no embedded key
+    assert res["fqid"] == "opus@chef.skworld"

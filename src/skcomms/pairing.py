@@ -133,16 +133,60 @@ def make_pairing_qr(bundle: PairingBundle):
     return uri, segno.make(uri, error="m")
 
 
+def _local_agent_pubkey(fqid: str) -> Optional[str]:
+    """The armored pubkey for *fqid* if that agent lives on THIS box.
+
+    Covers same-box/self pairing (the agent's CapAuth key is on disk) and any
+    locally-provisioned agent — no network needed.
+    """
+    try:
+        from pathlib import Path
+        agent = fqid.split("@", 1)[0]
+        if not agent:
+            return None
+        p = Path.home() / ".skcapstone" / "agents" / agent / "capauth" / "identity" / "public.asc"
+        if p.exists():
+            armor = p.read_text(encoding="utf-8")
+            if "PGP PUBLIC KEY" in armor:
+                return armor
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("local agent pubkey lookup failed: %s", exc)
+    return None
+
+
+def _known_peer_pubkey(fqid: str) -> Optional[str]:
+    """A previously-stored armored pubkey for *fqid* from the TOFU store."""
+    try:
+        from .tofu import _load_store  # type: ignore
+        rec = (_load_store() or {}).get(fqid) or {}
+        armor = rec.get("pubkey")
+        if armor and "PGP PUBLIC KEY" in armor:
+            return armor
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("tofu pubkey lookup failed: %s", exc)
+    return None
+
+
 def _default_fetcher(bundle: "PairingBundle") -> Optional[str]:
-    """Fetch the peer's armored pubkey via its hints (best-effort, no network in tests)."""
+    """Resolve the peer's armored pubkey for a COMPACT QR (no network in tests).
+
+    Order: a locally-provisioned agent's CapAuth key (covers same-box/self
+    pairing), then a previously-stored TOFU key, then a DID/HTTPS fetch via the
+    bundle's hint. ``accept_pairing`` always re-verifies the result against the
+    bundle's fingerprint, so a wrong key is still rejected.
+    """
+    local = _local_agent_pubkey(bundle.fqid) or _known_peer_pubkey(bundle.fqid)
+    if local:
+        return local
     try:
         from .key_exchange import fetch_peer_from_did
         target = bundle.https or bundle.fqid.split("@")[0]
         peer = fetch_peer_from_did(target)
-        return peer.get("pubkey") if isinstance(peer, dict) else None
+        if isinstance(peer, dict):
+            return peer.get("public_key") or peer.get("pubkey")
     except Exception as exc:  # noqa: BLE001
         logger.debug("pubkey fetch failed: %s", exc)
-        return None
+    return None
 
 
 def accept_pairing(uri_or_path: str, *, fetcher=None) -> dict:
