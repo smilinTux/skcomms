@@ -44,7 +44,7 @@ def test_bundle_from_self_embed_key(monkeypatch):
     monkeypatch.setattr(P, "resolve_self_identity",
         lambda agent=None: {"fqid": "lumina@chef.skworld", "fingerprint": "AB"*20})
     monkeypatch.setattr(P, "_self_hints", lambda fqid: {})
-    monkeypatch.setattr(P, "_self_pubkey_armor", lambda: "-----BEGIN PGP-----\nx\n-----END-----\n")
+    monkeypatch.setattr(P, "_self_pubkey_armor", lambda *a, **k: "-----BEGIN PGP PUBLIC KEY BLOCK-----\nx\n-----END PGP PUBLIC KEY BLOCK-----\n")
     b = P.bundle_from_self(embed_key=True)
     assert b.pubkey and "PGP" in b.pubkey
 
@@ -105,3 +105,42 @@ def test_accept_rejects_fingerprint_mismatch(tmp_path, monkeypatch):
                                    syncthing_device_id="D", pubkey=other))
     with pytest.raises(ValueError):
         accept_pairing(uri)   # embedded key's fingerprint != claimed fingerprint
+
+
+def test_self_pubkey_armor_returns_agent_key_matching_fingerprint(tmp_path, monkeypatch):
+    """_self_pubkey_armor returns the agent's own key only when it matches the
+    expected fingerprint (never the operator key)."""
+    import skcomms.pairing as P
+    from skcomms.peers import fingerprint_from_pubkey
+    # build a fake agent home with a public.asc
+    pub = _gen_pubkey()
+    fp = fingerprint_from_pubkey(pub)
+    agent_dir = tmp_path / ".skcapstone" / "agents" / "lumina" / "capauth" / "identity"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "public.asc").write_text(pub)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("SKAGENT", "lumina")
+    # matching fingerprint -> returns the key
+    assert P._self_pubkey_armor(fp, "lumina") == pub
+    # non-matching expected fingerprint -> None (won't embed a wrong key)
+    assert P._self_pubkey_armor("00" * 20, "lumina") is None
+
+
+def test_embed_key_bundle_fingerprint_matches_embedded_key(tmp_path, monkeypatch):
+    """The whole point: an embed-key bundle's claimed fingerprint == the
+    embedded key's fingerprint, so accept_pairing won't reject it."""
+    import skcomms.pairing as P
+    from skcomms.peers import fingerprint_from_pubkey
+    pub = _gen_pubkey()
+    fp = fingerprint_from_pubkey(pub)
+    agent_dir = tmp_path / ".skcapstone" / "agents" / "lumina" / "capauth" / "identity"
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "public.asc").write_text(pub)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("SKAGENT", "lumina")
+    monkeypatch.setattr(P, "resolve_self_identity",
+                        lambda agent=None: {"fqid": "lumina@chef.skworld", "fingerprint": fp})
+    monkeypatch.setattr(P, "_self_hints", lambda fqid: {})
+    b = P.bundle_from_self(embed_key=True)
+    assert b.pubkey == pub
+    assert fingerprint_from_pubkey(b.pubkey).upper() == b.fingerprint.upper()

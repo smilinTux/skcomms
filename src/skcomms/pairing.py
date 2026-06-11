@@ -78,15 +78,43 @@ def _self_hints(fqid: str) -> dict:
         return {}
 
 
-def _self_pubkey_armor() -> Optional[str]:
-    """This agent's armored public key (for --embed-key), best-effort."""
-    try:
-        from .key_exchange import export_peer_bundle
-        bundle = export_peer_bundle()
-        return bundle.get("pubkey") if isinstance(bundle, dict) else None
-    except Exception as exc:  # noqa: BLE001
-        logger.debug("self pubkey unavailable: %s", exc)
-        return None
+def _self_pubkey_armor(expected_fingerprint: Optional[str] = None,
+                       agent: Optional[str] = None) -> Optional[str]:
+    """The active AGENT's own armored public key (for --embed-key).
+
+    Returns the agent's CapAuth public key — **never the operator key**.
+    ``export_peer_bundle()`` / ``~/.capauth`` hold the *operator's* key
+    (e.g. chef), which is the wrong key for an agent's pairing QR; only the
+    per-agent ``capauth/identity/public.asc`` matches the agent's identity
+    fingerprint. When *expected_fingerprint* is given, a candidate is returned
+    only if its fingerprint matches — so an embedded key is always the right
+    one (or None, falling back to a compact, fetch-on-accept QR).
+    """
+    import os
+    from pathlib import Path
+
+    name = agent or os.environ.get("SKAGENT") or os.environ.get("SKCAPSTONE_AGENT")
+    candidates = []
+    if name:
+        candidates.append(
+            Path.home() / ".skcapstone" / "agents" / name / "capauth" / "identity" / "public.asc"
+        )
+    for p in candidates:
+        try:
+            if not p.exists():
+                continue
+            armor = p.read_text(encoding="utf-8")
+            if "PGP PUBLIC KEY" not in armor:
+                continue
+            if expected_fingerprint:
+                from .peers import fingerprint_from_pubkey
+                if fingerprint_from_pubkey(armor).upper() != expected_fingerprint.upper():
+                    logger.debug("agent key at %s does not match identity fingerprint", p)
+                    continue
+            return armor
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("agent pubkey read failed at %s: %s", p, exc)
+    return None
 
 
 def bundle_from_self(agent: Optional[str] = None, *, embed_key: bool = False) -> PairingBundle:
@@ -94,7 +122,7 @@ def bundle_from_self(agent: Optional[str] = None, *, embed_key: bool = False) ->
     fqid = ident.get("fqid") or ""
     fp = ident.get("fingerprint") or ""
     hints = _self_hints(fqid)
-    pubkey = _self_pubkey_armor() if embed_key else None
+    pubkey = _self_pubkey_armor(fp, agent) if embed_key else None
     return PairingBundle(fqid=fqid, fingerprint=fp, pubkey=pubkey, **hints)
 
 
