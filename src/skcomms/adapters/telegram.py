@@ -160,6 +160,8 @@ class TelegramAdapter(ChannelAdapter):
         bindings_store: Optional[dict[str, str]] = None,
     ) -> None:
         # --- Core config ---
+        # api_id / api_hash: config dict values only (env fallback is in
+        # _build_telethon_client, called lazily when no client is injected).
         self._token = config.get("bot_token", "")
         self._api_id = config.get("api_id")
         self._api_hash = config.get("api_hash")
@@ -793,9 +795,28 @@ class TelegramAdapter(ChannelAdapter):
 
     def _build_telethon_client(self) -> Optional[Any]:
         """
-        Attempt to construct a real Telethon client from config.
+        Attempt to construct a real ``telethon.TelegramClient`` from config.
 
-        Returns None if Telethon is not installed or config is incomplete.
+        Uses ``api_id`` and ``api_hash`` from the config dict passed to
+        ``__init__``.  Returns ``None`` (instead of raising) when credentials
+        are absent or Telethon is not installed, so the caller (``connect()``)
+        can fall back to the Bot API path or raise ``AdapterAuthError`` with a
+        clear message.
+
+        To pass credentials via environment variables, populate the config
+        dict before constructing the adapter::
+
+            import os
+            config = {
+                "api_id":    os.environ["TELEGRAM_API_ID"],
+                "api_hash":  os.environ["TELEGRAM_API_HASH"],
+                "session_file": "~/.skcapstone/agents/lumina/telegram.session",
+            }
+            adapter = TelegramAdapter(config=config)
+
+        The smoke script (``scripts/telegram_smoke.py``) handles this automatically.
+
+        Install dep: ``pip install "skcomms[telegram]"``
         """
         if not self._api_id or not self._api_hash:
             return None
@@ -807,7 +828,7 @@ class TelegramAdapter(ChannelAdapter):
         except ImportError:
             logger.warning(
                 "Telethon not installed — user session mode unavailable. "
-                "Install with: pip install telethon"
+                "Install with: pip install 'skcomms[telegram]'"
             )
             return None
 

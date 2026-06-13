@@ -126,6 +126,218 @@ class DiscordClientProtocol(Protocol):
 
 
 # ---------------------------------------------------------------------------
+# Real discord.py wrapper (satisfies DiscordClientProtocol)
+# ---------------------------------------------------------------------------
+
+
+class _DiscordPyClientWrapper:
+    """
+    Thin wrapper around a ``discord.py`` ``discord.Client`` that satisfies
+    :class:`DiscordClientProtocol`.
+
+    discord.py uses event callbacks (``on_message``) rather than a poll queue.
+    This wrapper bridges that model by enqueuing ``MESSAGE_CREATE`` payloads in
+    ``_event_queue``; :meth:`drain_events` flushes and returns them.
+
+    The wrapper is built (but not connected) by
+    :meth:`DiscordAdapter._build_discord_client`.  No network I/O occurs until
+    :meth:`connect` is called.
+
+    Token is stored as-is; discord.py accepts bare tokens (the "Bot " prefix
+    is optional and appended automatically by the library if absent).
+
+    Args:
+        token: Bot token — from ``DISCORD_BOT_TOKEN`` env var or config.
+
+    Notes:
+        ``discord.py`` requires a running event loop for ``discord.Client``
+        instantiation; we defer creation to :meth:`connect` to avoid issues
+        when this is constructed outside an async context.
+    """
+
+    def __init__(self, token: str) -> None:
+        self._token = token
+        self._discord_client: Any = None  # discord.Client — created in connect()
+        self._connected = False
+        self._event_queue: list[dict] = []
+        self._me: Optional[dict] = None
+
+    # --- DiscordClientProtocol implementation ---
+
+    def is_connected(self) -> bool:
+        if self._discord_client is None:
+            return False
+        return not self._discord_client.is_closed()
+
+    async def connect(self) -> None:
+        """
+        Build the discord.Client with the required intents and register the
+        ``on_message`` callback that populates ``_event_queue``.
+
+        Does NOT call ``discord.Client.start()`` / ``login()`` yet — that
+        happens lazily when the caller calls :meth:`login` to retrieve the
+        bot identity.  A bare ``connect()`` here is intentionally cheap.
+        """
+        import discord
+
+        intents = discord.Intents.default()
+        intents.message_content = True  # privileged — must be enabled in Dev Portal
+        intents.guild_messages = True
+        intents.dm_messages = True
+
+        self._discord_client = discord.Client(intents=intents)
+
+        # Register message-create callback to feed the drain queue
+        @self._discord_client.event
+        async def on_message(message: Any) -> None:
+            # Build a dict that matches the shape DiscordAdapter._normalize expects
+            payload: dict = {
+                "type": "MESSAGE_CREATE",
+                "id": str(message.id),
+                "channel_id": str(message.channel.id),
+                "content": message.content or "",
+                "author": {
+                    "id": str(message.author.id),
+                    "username": getattr(message.author, "name", ""),
+                    "global_name": getattr(message.author, "display_name", None),
+                    "discriminator": getattr(message.author, "discriminator", "0"),
+                    "bot": message.author.bot,
+                },
+                "attachments": [
+                    {
+                        "id": str(att.id),
+                        "filename": att.filename,
+                        "content_type": att.content_type or "application/octet-stream",
+                        "size": att.size,
+                        "url": att.url,
+                    }
+                    for att in message.attachments
+                ],
+            }
+            guild = getattr(message, "guild", None)
+            if guild is not None:
+                payload["guild_id"] = str(guild.id)
+            ref = getattr(message, "reference", None)
+            if ref is not None and getattr(ref, "message_id", None) is not None:
+                payload["message_reference"] = {
+                    "message_id": str(ref.message_id),
+                    "channel_id": str(ref.channel_id) if ref.channel_id else str(message.channel.id),
+                }
+            self._event_queue.append(payload)
+
+        self._connected = True
+
+    async def login(self) -> dict:
+        """
+        Authenticate with Discord and return the bot user dict.
+
+        Calls ``discord.Client.login()`` which validates the token and populates
+        ``client.user``.  Must be called after :meth:`connect`.
+
+        Returns:
+            Dict with ``id``, ``username``, ``discriminator``, ``bot`` keys.
+
+        Raises:
+            Exception: On invalid token or network failure.
+        """
+        if self._discord_client is None:
+            raise RuntimeError("_DiscordPyClientWrapper.connect() must be called first")
+        await self._discord_client.login(self._token)
+        user = self._discord_client.user
+        if user is None:
+            return {}
+        self._me = {
+            "id": str(user.id),
+            "username": str(user.name),
+            "discriminator": getattr(user, "discriminator", "0"),
+            "bot": user.bot,
+        }
+        return self._me
+
+    async def send_message(
+        self,
+        channel_id: str,
+        content: str,
+        *,
+        message_reference: Optional[dict] = None,
+    ) -> dict:
+        """
+        Send a text message to a Discord channel via REST.
+
+        Args:
+            channel_id: Snowflake id string of the target channel.
+            content: Message body (≤ 2 000 chars).
+            message_reference: Optional reply reference dict with ``message_id``.
+
+        Returns:
+            Discord message object dict with ``id`` key.
+        """
+        if self._discord_client is None:
+            raise RuntimeError("Not connected")
+        channel = self._discord_client.get_channel(int(channel_id))
+        if channel is None:
+            # fetch_channel goes to the REST API; requires the bot to have access
+            channel = await self._discord_client.fetch_channel(int(channel_id))
+        kwargs: dict = {}
+        if message_reference and message_reference.get("message_id"):
+            import discord
+
+            ref = discord.MessageReference(
+                message_id=int(message_reference["message_id"]),
+                channel_id=int(message_reference.get("channel_id", channel_id)),
+                fail_if_not_exists=False,
+            )
+            kwargs["reference"] = ref
+        sent = await channel.send(content, **kwargs)
+        return {"id": str(sent.id), "channel_id": str(sent.channel.id)}
+
+    async def send_file(
+        self,
+        channel_id: str,
+        content: bytes,
+        filename: str,
+        *,
+        caption: str = "",
+    ) -> dict:
+        """
+        Upload a file to a Discord channel.
+
+        Args:
+            channel_id: Snowflake id string of the target channel.
+            content: Raw file bytes.
+            filename: Suggested filename for the attachment.
+            caption: Optional text message sent alongside the file.
+
+        Returns:
+            Discord message object dict with ``id`` key.
+        """
+        if self._discord_client is None:
+            raise RuntimeError("Not connected")
+        import io
+
+        import discord
+
+        channel = self._discord_client.get_channel(int(channel_id))
+        if channel is None:
+            channel = await self._discord_client.fetch_channel(int(channel_id))
+        fp = discord.File(io.BytesIO(content), filename=filename)
+        sent = await channel.send(content=caption or None, file=fp)
+        return {"id": str(sent.id), "channel_id": str(sent.channel.id)}
+
+    def drain_events(self) -> list[dict]:
+        """Flush and return all queued ``MESSAGE_CREATE`` payloads."""
+        events = list(self._event_queue)
+        self._event_queue.clear()
+        return events
+
+    async def disconnect(self) -> None:
+        """Close the discord.py Gateway connection."""
+        if self._discord_client is not None and not self._discord_client.is_closed():
+            await self._discord_client.close()
+        self._connected = False
+
+
+# ---------------------------------------------------------------------------
 # DiscordAdapter
 # ---------------------------------------------------------------------------
 
@@ -155,6 +367,8 @@ class DiscordAdapter(ChannelAdapter):
         bindings_store: Optional[dict[str, str]] = None,
     ) -> None:
         # --- Core config ---
+        # bot_token: from config dict only; env fallback is in
+        # _build_discord_client (called lazily when no client is injected).
         self._bot_token: str = config.get("bot_token", "")
         self._poll_s: float = config.get("poll_interval_s", 1)
         self._guilds: dict[str, dict] = config.get("guilds", {})
@@ -528,28 +742,39 @@ class DiscordAdapter(ChannelAdapter):
 
     def _build_discord_client(self) -> Optional[DiscordClientProtocol]:
         """
-        Attempt to construct a real Discord client from config.
+        Construct a real discord.py-based client wrapped to satisfy
+        :class:`DiscordClientProtocol`.
 
-        Returns None if ``discord.py`` is not installed or config is
-        incomplete.  Production wiring point: replace this stub with a
-        real ``discord.Client`` / ``discord.ext.commands.Bot`` wrapper.
+        Returns ``None`` if ``discord.py`` is not installed or ``bot_token``
+        is not configured.  No network connection is made here; that happens
+        inside :meth:`connect` when the returned wrapper's ``connect()`` is
+        called.
+
+        Token resolution (in priority order):
+          1. ``bot_token`` set in the config dict passed to ``__init__``.
+          2. ``DISCORD_BOT_TOKEN`` environment variable.
+
+        Install dep: ``pip install "skcomms[discord]"``
         """
-        if not self._bot_token:
-            return None
-        try:
-            # Real wiring (production) — guarded by try/import so tests
-            # never need discord.py installed.
-            # import discord
-            # ...
+        import os
+
+        token = self._bot_token or os.environ.get("DISCORD_BOT_TOKEN", "")
+        if not token:
             logger.warning(
-                "DiscordAdapter: real discord.py client not yet wired. "
-                "Pass discord_client= for now, or install discord.py and "
-                "complete _build_discord_client()."
+                "DiscordAdapter: no bot_token configured and DISCORD_BOT_TOKEN not set. "
+                "Pass discord_client= explicitly or set the env var."
             )
             return None
+        try:
+            import discord  # noqa: F401 — imported for availability check
         except ImportError:
-            logger.warning("discord.py not installed — pass discord_client= explicitly")
+            logger.warning(
+                "discord.py not installed — install with: "
+                "pip install 'skcomms[discord]'  (or: pip install discord.py)"
+            )
             return None
+
+        return _DiscordPyClientWrapper(token)
 
     def _load_bindings(self) -> None:
         """Load FQID bindings from the YAML identity store."""

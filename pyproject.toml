@@ -64,6 +64,16 @@ webrtc = [
     "aiortc>=1.9.0",
     "websockets>=12.0",
 ]
+telegram = [
+    # Telethon: Telegram user-session client used by TelegramAdapter.
+    # Installs: pip install "skcomms[telegram]"
+    "telethon>=1.36",
+]
+discord = [
+    # discord.py: Discord Gateway + REST client used by DiscordAdapter.
+    # Installs: pip install "skcomms[discord]"
+    "discord.py>=2.3",
+]
 discovery = [
     "zeroconf>=0.131.0",
 ]
@@ -83,6 +93,8 @@ all = [
     "fastapi>=0.109.0,<1.0.0",
     "uvicorn[standard]>=0.27.0",
     "aiortc>=1.9.0",
+    "telethon>=1.36",
+    "discord.py>=2.3",
 ]
 dev = [
     "pytest>=7.0",
