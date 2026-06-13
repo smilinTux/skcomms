@@ -33,6 +33,14 @@ class NodeMap:
                              encoding="utf-8")
 
     def bind(self, fqid: str, node_id: str) -> None:
+        # Clear any stale entries before rebinding so the forward/reverse maps
+        # stay consistent: drop fqid's old node, and drop node_id's old fqid.
+        old_node = self._f2n.get(fqid)
+        if old_node is not None:
+            self._n2f.pop(old_node, None)
+        old_fqid = self._n2f.get(node_id)
+        if old_fqid is not None:
+            self._f2n.pop(old_fqid, None)
         self._f2n[fqid] = node_id
         self._n2f[node_id] = fqid
         self._save()
