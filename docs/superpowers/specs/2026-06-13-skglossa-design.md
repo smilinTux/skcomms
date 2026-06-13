@@ -98,13 +98,54 @@ densest, terse English cheapest.**
   **structure/auditability**, not inference speed. (Caveat: counts are model tokens,
   not wire bytes, and tokenizer-specific to these two models.)
 
+## 1c. Meta-language — the validated form: in-context macros (MEASURED 2026-06-13)
+
+The one approach that **beats plain English on both wire AND model tokens without
+losing meaning** — empirically validated. A "meta-language" = short phrases carrying
+large meaning. Tested in two forms, 10 agent instructions × 2 models (real
+tokenizers + comprehension fidelity):
+
+| Form | tokens (qwen / haiku) | fidelity (usable) |
+|---|---|---|
+| Full English (baseline) | — | 100% |
+| **Bare jargon** (terse, no definitions) | **−42% / −40%** | **60% / 80%** ⚠️ |
+| **In-context macros** (defined once, then reused) | **−67% / −66%** | **100% / 100%** ✅ |
+
+- **Bare jargon is a trap.** Big token savings, but the models *misread 1-in-5 to
+  2-in-5* — and **action-flipping** misreads: `.41` (host) → read as a software
+  *version*; `NA` (next-action) → *North America region*; `skmem-pg` → *Slab Memory
+  Page cache*. Overloaded tokens are landmines, and the cheaper model (qwen) is
+  *worse* at expanding them. **Do not ship bare jargon.**
+- **In-context macros win cleanly.** Defining `ROLLBACK <host> prev := …` once in the
+  shared prompt **pins the slot types** → every misread above vanished. −67% tokens,
+  **100% fidelity**. Macro block ≈ 310 tokens once; **break-even at 2 reuses** of the
+  shared prompt (~17 individual messages). For any *standing* agent channel, strictly
+  better than English on both axes.
+
+**This recasts L2 and L5 (supersedes the synthetic-codebook design):**
+- **L2 = a shared, versioned MACRO LEXICON** — terse real phrases with **explicit
+  English definitions** carried in the agents' system prompt — NOT synthetic integer
+  codes. The definitions *are* the gloss, so **§5 auditability is satisfied by
+  construction** (the expansion is literally written down). Versioned/hash-pinned so
+  the handshake confirms both hold the same lexicon.
+- **L5 emergent = agents negotiate NEW macros mid-session** ("let's call X `Q1`"),
+  which is exactly the validated in-context form, extended live — and auditable (the
+  definition lands in the log/transcript).
+
+**Honest bound:** the win requires the **explicit shared definitions in-context**
+(bare jargon fails). Frozen models can't remember a macro across sessions, so the
+lexicon is re-prefixed/cached per session; a *persistent learned* macro language
+would need a fine-tune (the model change — L4/research). And a macro NOT in the
+lexicon degrades toward bare-jargon failure, so the lexicon must be authored
+carefully + the model told to ask rather than guess on unknown shorthand.
+
 ## 2. The layered protocol (modem-inspired)
 
 ```
-L5  Emergent     — session-private codebook agents EVOLVE via referential games   [phase G4 — "liberated"]
-L4  Latent       — shared codec-model vectors (true neuralese; needs a shared model) [phase G5 — frontier/gated]
+L5  Emergent     — agents NEGOTIATE new in-context macros mid-session (auditable)   [phase G4 — "liberated"; see §1c]
+L4  Latent       — shared codec-model vectors (true neuralese; needs a shared model) [phase G5 — frontier/gated/research]
 L3  Token-stream — shared-tokenizer token-IDs; delta-vs-shared-context
-L2  Codebook     — semantic concept/intent → short code (versioned, shared dict)
+L2  Macro lexicon — terse phrases + explicit in-context definitions (VALIDATED −67%/100% fidelity; NOT synthetic codes — §1c)
 L1  Schema       — typed/structured messages (CBOR), zero prose
 L0  English      — structured natural language; the always-works floor + gloss target
         ▲ density climbs upward; the WEAKER peer caps the reachable level
