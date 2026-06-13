@@ -11,18 +11,30 @@ import cbor2
 from skcomms.glossa import codec, gloss
 from skcomms.glossa.codebook import Codebook
 from skcomms.glossa.handshake import CapabilityDescriptor, Session, negotiate
+from skcomms.glossa.macros import MacroLexicon, expand_macros
 from skcomms.glossa.message import Message
 
 
 class GlossaSession:
-    def __init__(self, *, local: CapabilityDescriptor, codebook: Codebook) -> None:
+    def __init__(self, *, local: CapabilityDescriptor, codebook: Codebook,
+                 lexicon: MacroLexicon | None = None) -> None:
         self.local = local
         self.codebook = codebook
+        self._lexicon = lexicon
         self._session: Session | None = None
         self._transport: Callable[[bytes], None] | None = None
         self._on_message: Callable[[Message], None] | None = None
         self._on_error: Callable[[bytes, Exception], None] | None = None
         self.audit_log: list[str] = []
+
+    def macro_prompt_block(self) -> str:
+        return self._lexicon.render_prompt_block() if self._lexicon else ""
+
+    def _audit_gloss(self, m: Message) -> str:
+        eng = gloss.to_english(m)
+        if self._lexicon is not None and m.text:
+            eng = eng.replace(m.text, expand_macros(m.text, self._lexicon))
+        return eng
 
     @property
     def level(self) -> int:
@@ -42,7 +54,7 @@ class GlossaSession:
 
     def say(self, m: Message) -> None:
         raw = codec.encode(m, self.level, self.codebook)
-        self.audit_log.append(f"[tx L{self.level}] {gloss.to_english(m)}")
+        self.audit_log.append(f"[tx L{self.level}] {self._audit_gloss(m)}")
         if self._transport is not None:
             self._transport(raw)
 
@@ -63,6 +75,6 @@ class GlossaSession:
                 self._on_error(raw, exc)
                 return
             raise
-        self.audit_log.append(f"[rx L{self.level}] {gloss.to_english(m)}")
+        self.audit_log.append(f"[rx L{self.level}] {self._audit_gloss(m)}")
         if self._on_message is not None:
             self._on_message(m)
