@@ -17,6 +17,6 @@ def test_uuids_are_valid_and_distinct():
 def test_protocol_constants():
     assert gatt.PROTOCOL_VERSION == 1
     assert gatt.DEFAULT_TTL == 7
-    assert gatt.HEADER_LEN == 30
+    assert gatt.HEADER_LEN == 38
     assert gatt.PAD_BLOCKS == (256, 512, 1024, 2048)
     assert gatt.BROADCAST_ID == b"\xff" * 8
