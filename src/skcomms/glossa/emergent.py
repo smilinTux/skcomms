@@ -69,3 +69,22 @@ def parse_propose(raw: bytes) -> tuple[str, str]:
 def apply_propose(session: "SessionMacros", raw: bytes) -> None:
     phrase, definition = parse_propose(raw)
     session.propose(phrase, definition)
+
+
+class EmergentNegotiator:
+    """Drives session-macro negotiation + audit. propose() returns a wire frame and
+    logs the definition; receive_propose() applies an inbound frame and logs it."""
+
+    def __init__(self, *, base: MacroLexicon) -> None:
+        self.macros = SessionMacros(base=base)
+        self.audit_log: list[str] = []
+
+    def propose(self, phrase: str, definition: str) -> bytes:
+        self.macros.propose(phrase, definition)
+        self.audit_log.append(f"[propose] `{phrase}` := {definition}")
+        return frame_propose(phrase, definition)
+
+    def receive_propose(self, raw: bytes) -> None:
+        phrase, definition = parse_propose(raw)
+        self.macros.propose(phrase, definition)
+        self.audit_log.append(f"[accept] `{phrase}` := {definition}")
