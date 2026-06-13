@@ -38,6 +38,13 @@ def encode(m: Message, level: int, codebook: Codebook | None = None) -> bytes:
         return _l0_encode(m)
     if level == L1_SCHEMA:
         return cbor2.dumps(m.to_dict())
+    if level == L2_CODEBOOK:
+        if codebook is None:
+            raise ValueError("L2 codebook level requires a codebook")
+        code = codebook.code_for(m.intent)
+        # intent slot: int code if known, else the raw string
+        head = code if code is not None else m.intent
+        return cbor2.dumps([head, m.args, m.refs, m.text])
     raise ValueError(f"unsupported level {level}")
 
 
@@ -46,4 +53,11 @@ def decode(raw: bytes, level: int, codebook: Codebook | None = None) -> Message:
         return _l0_decode(raw)
     if level == L1_SCHEMA:
         return Message.from_dict(cbor2.loads(raw))
+    if level == L2_CODEBOOK:
+        if codebook is None:
+            raise ValueError("L2 codebook level requires a codebook")
+        head, args, refs, text = cbor2.loads(raw)
+        intent = codebook.concept_for(head) if isinstance(head, int) else head
+        return Message(intent=intent or "", args=dict(args),
+                       refs=list(refs), text=text)
     raise ValueError(f"unsupported level {level}")
