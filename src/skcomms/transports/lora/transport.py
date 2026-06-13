@@ -9,6 +9,8 @@ methods are the real path; the sync Transport ABC methods bridge to them (the sy
 from __future__ import annotations
 
 import os
+import time
+from typing import Callable
 
 from skcomms.transport import (
     HealthStatus,
@@ -27,6 +29,7 @@ from skcomms.transports.ble.protocol import (
 from skcomms.transports.lora import framing
 from skcomms.transports.lora.addressing import NodeMap
 from skcomms.transports.lora.interface import LoRaMeshInterface
+from skcomms.transports.lora.store import AirtimeBudget, ForwardQueue
 
 
 class LoRaTransport(Transport):
@@ -36,13 +39,31 @@ class LoRaTransport(Transport):
 
     def __init__(self, *, identity: MeshIdentity,
                  interface: LoRaMeshInterface | None,
-                 node_map: NodeMap | None = None) -> None:
+                 node_map: NodeMap | None = None,
+                 budget: AirtimeBudget | None = None,
+                 clock: Callable[[], float] | None = None) -> None:
         self.identity = identity
         self.iface = interface
         self.nodes = node_map or NodeMap()
         self._inbox: list[bytes] = []
         self._reasm = framing.FrameReassembler()
         self._config: dict = {}
+        # Duty-cycle enforcement is ALWAYS on. If no budget is supplied, default
+        # to a conservative one over a 1-hour window. max_bytes is comfortably
+        # above a single LoRa MTU (so normal multi-frame messages aren't starved
+        # one-frame-per-window) while still capping sustained airtime.
+        if budget is None:
+            budget = AirtimeBudget(
+                max_bytes=max(framing.LORA_MTU, 10_000), window_s=3600.0,
+            )
+        if budget.max_bytes < framing.LORA_MTU:
+            raise ValueError(
+                f"AirtimeBudget.max_bytes ({budget.max_bytes}) must be >= the "
+                f"LoRa MTU ({framing.LORA_MTU}) or full frames can never send"
+            )
+        self._budget = budget
+        self._queue = ForwardQueue(budget)
+        self._clock = clock or time.time
         if interface is not None:
             interface.on_receive(self._on_frame)
 
@@ -66,7 +87,21 @@ class LoRaTransport(Transport):
         )
         dest = self.nodes.node_for(recipient)
         for frame in framing.to_frames(pkt):
+            self._queue.enqueue(frame, dest)
+        await self._drain()
+
+    async def _drain(self) -> None:
+        for frame, dest in self._queue.drain_with_dest(now=self._clock()):
             await self.iface.send_frame(frame, dest=dest)
+
+    async def flush(self) -> None:
+        """Drain again at the current clock so frames held back by a full
+        airtime window can go out once the window has rolled over."""
+        await self._drain()
+
+    def pending(self) -> int:
+        """Frames queued but not yet sent (held back by the airtime budget)."""
+        return self._queue.pending()
 
     def identity_id_for(self, recipient: str):
         from skcomms.transports.ble.identity import id_hash
@@ -78,7 +113,7 @@ class LoRaTransport(Transport):
             return
         # deliver payload (signature carried; verification wired in L4 once the
         # sender's Ed25519 pubkey is resolvable from pairing).
-        self._inbox.append(pkt.payload)
+        self._inbox.append(pkt.payload)  # TODO(L4): verify pkt.signature via sender Ed25519 pubkey (from NodeMap/pairing) before delivering; drop unverifiable
 
     def receive(self) -> list[bytes]:
         out, self._inbox = self._inbox, []
