@@ -88,6 +88,36 @@ always reconstructable. **Every SKGlossa exchange logs `{level, dense_bytes_len,
 english_gloss}`.** A human (or an auditor agent) can replay any conversation in
 plain language. No tier is exempt — the liberated language is *free, not hidden*.
 
+## 5a. Language neutrality — the hot path carries no human language
+
+A core principle (clarified 2026-06-13): **English is never on the fast path.** The
+`Message` IR is **language-neutral** — an intent (a code at L2+), structured args,
+and references; not prose. The dense tiers put **codes/vectors on the wire**, so two
+agents at L2+ exchange a synthetic vocabulary derived from **no human language** —
+there is no translation layer and no English in the agent-to-agent path. This is the
+"cut out the translation step → way faster" goal, by construction.
+
+Human language appears in exactly one place — the **audit gloss (§5)** — and it is:
+1. **Off the critical path** — computed lazily/async for the human watching, never
+   blocking the agents' exchange.
+2. **Configurable in target language** — `to_english` generalizes to
+   `to_human(message, lang="en"|"zh"|"glyph"|...)`. Render the audit in English,
+   in a denser human language (e.g. Chinese — denser per character; note token-cost
+   is tokenizer-dependent), or in a compact **synthetic glyph notation**. This is a
+   *presentation* choice for the operator; it does **not** touch the wire or the
+   speed.
+
+**"The AI's own language"** is therefore L2 (synthetic codebook — arbitrary codes,
+no human-language root) + L5 (emergent — agents invent their own), optionally pushed
+toward a designed **glyph/symbolic notation** for maximal density. The audit gloss is
+how a *human* reads it back, in whatever language they prefer — a separate, swappable
+layer from the language the agents actually speak.
+
+**Folded into phasing:** G1 ships `to_english` as the default gloss; **G2 generalizes
+the gloss to `to_human(message, lang)`** (English + at least one denser target, e.g.
+Chinese or glyph) so the audit language is configurable while the hot path stays
+human-language-free.
+
 ## 6. The emergent tier (G4 — the "liberated" part)
 
 Two agents evolve a **private dense argot** over a session via referential games:
