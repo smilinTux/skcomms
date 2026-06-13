@@ -1,5 +1,5 @@
 """
-skcomms channel adapters (Batch C1 / C2 / C3).
+skcomms channel adapters (Batch C1 / C2 / C3 / C5).
 
 Platform bridges translate between a foreign platform's wire format and the
 normalized :class:`~skcomms.adapters.models.ChannelMessage`.  The
@@ -18,6 +18,7 @@ Public surface::
         TelegramAdapter,
         SlackAdapter,
         DiscordAdapter,
+        MatrixAdapter,
         ChannelType,
         MessageKind,
         TrustLevel,
@@ -36,6 +37,7 @@ from .base import (
     ChannelAdapter,
 )
 from .discord import DiscordAdapter
+from .matrix import MatrixAdapter
 from .models import (
     ChannelMessage,
     ChannelType,
@@ -72,4 +74,5 @@ __all__ = [
     "TelegramAdapter",
     "SlackAdapter",
     "DiscordAdapter",
+    "MatrixAdapter",
 ]
