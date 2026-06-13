@@ -16,12 +16,15 @@ class CapabilityDescriptor:
     model_tier: str          # "large" | "small" | ... — the weaker-peer signal
     max_level: int           # highest codec level this agent supports
     codebook_version: str    # the L2 codebook version this agent holds
+    lexicon_version: str = ""  # the macro-lexicon version this agent holds
 
 
 @dataclass
 class Session:
     level: int
     codebook_version: str
+    macros_enabled: bool = False
+    lexicon_version: str = ""
 
 
 def negotiate(local: CapabilityDescriptor, remote: CapabilityDescriptor) -> Session:
@@ -33,4 +36,10 @@ def negotiate(local: CapabilityDescriptor, remote: CapabilityDescriptor) -> Sess
     # empty when peers hold different versions (no shared codebook).
     agreed = (local.codebook_version
               if local.codebook_version == remote.codebook_version else "")
-    return Session(level=level, codebook_version=agreed)
+    # Macros only speak when both peers hold the SAME lexicon (an unknown macro
+    # degrades to the bare-jargon failure mode, so version-match is the gate).
+    shared_lex = (local.lexicon_version
+                  if local.lexicon_version and local.lexicon_version == remote.lexicon_version
+                  else "")
+    return Session(level=level, codebook_version=agreed,
+                   macros_enabled=bool(shared_lex), lexicon_version=shared_lex)
