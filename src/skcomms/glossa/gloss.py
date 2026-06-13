@@ -34,7 +34,9 @@ def to_human(m: Message, lang: str = "en",
     english = to_english(m)
     if lang == "en" or translate is None:
         return english
-    return translate(english, lang)
+    # A translator returning None/"" must not propagate — the audit never fails.
+    # (Translator EXCEPTIONS still propagate; only empty results fall back.)
+    return translate(english, lang) or english
 
 
 def decode_to_english(raw: bytes, level: int, codebook: Codebook | None = None) -> str:

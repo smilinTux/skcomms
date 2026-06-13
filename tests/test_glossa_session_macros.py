@@ -30,3 +30,18 @@ def test_audit_log_shows_expanded_macro_meaning():
     a.say(Message(intent="instruct", text="ROLLBACK <host> prev"))
     # the audit log carries the EXPANDED meaning (host pinned), not just the shorthand
     assert any("roll back the deployment ON HOST" in line for line in a.audit_log)
+
+
+def test_audit_gloss_expands_only_text_slot_not_intent():
+    # intent string EQUALS the text → a global replace would expand the intent
+    # too. Only the ": <text>" clause must carry the macro expansion.
+    cb, lex = default_codebook(), default_macro_lexicon()
+    s = GlossaSession(local=_desc("a@x.y"), codebook=cb, lexicon=lex)
+    m = Message(intent="GTD-sweep", text="GTD-sweep")
+    line = s._audit_gloss(m)
+    # intent stays the raw shorthand (NOT expanded)
+    assert "intent 'GTD-sweep'" in line
+    # the text slot IS expanded
+    assert ": (review all open coord tasks" in line
+    # exactly one expansion occurred (the text slot), not two
+    assert line.count("review all open coord tasks") == 1

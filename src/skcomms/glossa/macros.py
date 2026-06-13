@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 
 # Seed macros — the slot-typed forms the experiment validated to 100% fidelity.
 # Each definition PINS the slot type, which is what kills the bare-jargon misreads
@@ -67,12 +68,15 @@ _PROMPT_HEADER = (
 def expand_macros(text: str, lexicon: "MacroLexicon") -> str:
     """Literal substitution of known macros → definitions (for the audit gloss).
 
-    Longest-phrase-first so multi-word macros match before any prefix."""
-    out = text
-    for phrase, definition in sorted(lexicon.items(), key=lambda kv: -len(kv[0])):
-        if phrase in out:
-            out = out.replace(phrase, f"({definition})")
-    return out
+    SINGLE-PASS, non-re-entrant: one alternation regex of all phrases (longest
+    first, so multi-word macros match before any prefix) with re.sub. Inserted
+    definition text is never re-scanned, so a macro phrase appearing inside
+    ANOTHER macro's definition is preserved (no latent double-expansion)."""
+    phrases = sorted((p for p, _ in lexicon.items()), key=len, reverse=True)
+    if not phrases:
+        return text
+    pattern = re.compile("|".join(re.escape(p) for p in phrases))
+    return pattern.sub(lambda mt: f"({lexicon.expand(mt.group(0))})", text)
 
 
 def default_macro_lexicon() -> MacroLexicon:

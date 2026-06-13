@@ -1,4 +1,8 @@
-from skcomms.glossa.macros import default_macro_lexicon, expand_macros
+from skcomms.glossa.macros import (
+    MacroLexicon,
+    default_macro_lexicon,
+    expand_macros,
+)
 
 
 def test_prompt_block_lists_macros_with_definitions():
@@ -20,3 +24,17 @@ def test_expand_macros_does_literal_audit_substitution():
 def test_expand_macros_leaves_unknown_text_untouched():
     lex = default_macro_lexicon()
     assert expand_macros("just plain words", lex) == "just plain words"
+
+
+def test_expand_macros_is_single_pass_no_reexpansion():
+    # "main" occurs INSIDE ship's definition; single-pass substitution must NOT
+    # rewrite that inserted definition text on a later phrase.
+    lex = MacroLexicon({"ship": "rebase onto main then push",
+                        "main": "MAIN-BRANCH-REF"})
+    out = expand_macros("ship", lex)
+    assert out == "(rebase onto main then push)"
+    # the outer macro still expands, and the definition's "main" is preserved
+    assert "MAIN-BRANCH-REF" not in out
+    # a standalone "main" elsewhere DOES still expand
+    assert expand_macros("ship and main", lex) == \
+        "(rebase onto main then push) and (MAIN-BRANCH-REF)"

@@ -4,6 +4,7 @@ gloss of everything (the audit invariant)."""
 
 from __future__ import annotations
 
+from dataclasses import replace as _replace
 from typing import Callable
 
 import cbor2
@@ -31,10 +32,13 @@ class GlossaSession:
         return self._lexicon.render_prompt_block() if self._lexicon else ""
 
     def _audit_gloss(self, m: Message) -> str:
-        eng = gloss.to_english(m)
+        # Expand macros in the TEXT SLOT ONLY: gloss a copy whose text is
+        # pre-expanded, so only the ": <text>" clause carries the expansion
+        # (a global replace would also rewrite a matching intent/arg).
         if self._lexicon is not None and m.text:
-            eng = eng.replace(m.text, expand_macros(m.text, self._lexicon))
-        return eng
+            expanded = expand_macros(m.text, self._lexicon)
+            return gloss.to_english(_replace(m, text=expanded))
+        return gloss.to_english(m)
 
     @property
     def level(self) -> int:
