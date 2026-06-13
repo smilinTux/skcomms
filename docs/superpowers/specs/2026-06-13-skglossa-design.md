@@ -69,12 +69,34 @@ L4 (latent) and L5 (emergent) remain in the ladder but are **honestly labeled
 research** — a genuine AI-native speed win requires the shared-codec/model change
 above, not a wire format.
 
-## 1b. Empirical grounding (in progress)
+## 1b. Empirical grounding — MEASURED (2026-06-13)
 
-The "which language is densest for *our* models" question is being answered with a
-**measured token-count benchmark** (English vs Chinese vs schema/JSON, tokenized on
-qwen3.6 + claude-haiku) rather than assumed. Findings replace this note when in;
-they decide whether "converse in Chinese for fewer tokens" is real for our fleet.
+Token-count benchmark, 14 representative agent messages, English vs Chinese vs
+schema/JSON, tokenized on the **real tokenizers**: qwen3.6-27b (exact, llama.cpp
+`/tokenize` at .100:8082) and claude-haiku-4-5 (real Claude tokenizer via the skchat
+proxy at :18783, minus a verified 7-token chat wrapper).
+
+| Representation | qwen3.6 total | vs EN | haiku total | vs EN |
+|---|--:|--:|--:|--:|
+| **English** | **326** | — | **343** | — |
+| Chinese | 333 | +2.1% | 534 | **+55.7%** |
+| Schema/JSON | 352 | +8.0% | 377 | +9.9% |
+
+**Verdict: both "speed languages" are refuted for our models — plain English is the
+densest, terse English cheapest.**
+- **Chinese is a loss:** break-even on qwen (+2%), and a **catastrophic +56% on
+  Haiku** — its English-tuned BPE shatters CJK into many sub-byte tokens. The
+  "Chinese is denser" intuition (true per *character*) does **not** survive contact
+  with these tokenizers. Do not switch to Chinese for speed.
+- **Schema/JSON also loses on the common case:** its quotes/keys/braces tokenize
+  heavily → +8–10% overall, up to **+125% on short acks**; it only wins on long,
+  field-rich messages (handoff/report, −8% to −27%) — and partly by *dropping
+  free-text nuance*.
+- **Implication:** the cheapest agent-to-agent representation on *our* fleet is
+  **terse English**. This **empirically confirms §1a** — there is no token-density
+  win to chase within frozen models; SKGlossa's value is **wire bytes (LoRa)** +
+  **structure/auditability**, not inference speed. (Caveat: counts are model tokens,
+  not wire bytes, and tokenizer-specific to these two models.)
 
 ## 2. The layered protocol (modem-inspired)
 
