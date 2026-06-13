@@ -1,4 +1,7 @@
+import struct
+
 from skcomms.transports.ble.protocol import (
+    FLAG_FRAGMENTED,
     MeshPacket,
     PacketType,
     Reassembler,
@@ -48,3 +51,41 @@ def test_reassembler_ignores_unrelated_fragment_ids():
     for f in big[:-1]:
         last = r.feed(decode(f))
     assert last is None
+
+
+def _frag_pkt(payload):
+    return MeshPacket(
+        type=PacketType.FRAGMENT_START, ttl=7, flags=FLAG_FRAGMENTED,
+        timestamp=1, msg_id=b"\x09" * 8, sender_id=b"\xaa" * 8,
+        recipient_id=b"\xbb" * 8, payload=payload,
+    )
+
+
+def test_short_fragment_payload_returns_none_no_crash():
+    # FLAG_FRAGMENTED but only 2 bytes of payload (< 4) → drop, don't crash
+    r = Reassembler()
+    assert r.feed(_frag_pkt(b"\x00\x00")) is None
+
+
+def test_out_of_range_index_returns_none():
+    # idx=5, total=2 → idx >= total → drop
+    r = Reassembler()
+    assert r.feed(_frag_pkt(struct.pack(">HH", 5, 2) + b"junk")) is None
+
+
+def test_total_zero_returns_none():
+    r = Reassembler()
+    assert r.feed(_frag_pkt(struct.pack(">HH", 0, 0) + b"junk")) is None
+
+
+def test_out_of_order_fragments_still_reassemble():
+    original = bytes(range(256)) * 8  # 2048 bytes
+    frags = fragment(_msg(original), mtu=185)
+    assert len(frags) > 1
+    r = Reassembler()
+    out = None
+    for f in reversed(frags):  # feed in reverse order
+        out = r.feed(decode(f))
+    assert out is not None
+    assert out.payload == original
+    assert out.type == PacketType.MESSAGE

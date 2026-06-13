@@ -80,5 +80,6 @@ class MeshIdentity:
         try:
             Ed25519PublicKey.from_public_bytes(ed_pub).verify(sig, data)
             return True
-        except InvalidSignature:
+        except (InvalidSignature, ValueError):
+            # ValueError: from_public_bytes rejects wrong-length/invalid keys.
             return False

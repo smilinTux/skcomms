@@ -182,12 +182,17 @@ class Reassembler:
     def feed(self, frag: MeshPacket) -> MeshPacket | None:
         if not (frag.flags & FLAG_FRAGMENTED):
             return frag  # not a fragment; pass through
+        # Drop hostile/malformed fragments rather than crash.
+        if len(frag.payload) < 4:
+            return None
         idx, total = struct.unpack(">HH", frag.payload[:4])
+        if total == 0 or idx >= total:
+            return None
         chunk = frag.payload[4:]
         slots = self._buf.setdefault(frag.msg_id, {})
         slots[idx] = chunk
         self._totals[frag.msg_id] = total
-        if len(slots) < total:
+        if len(slots) != total or not all(i in slots for i in range(total)):
             return None
         whole = b"".join(slots[i] for i in range(total))
         del self._buf[frag.msg_id]

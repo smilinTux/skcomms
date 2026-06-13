@@ -42,3 +42,9 @@ def test_sign_and_verify_roundtrip():
 def test_my_id_matches_id_hash():
     ident = MeshIdentity.generate("me@x.y")
     assert ident.my_id == id_hash("me@x.y")
+
+
+def test_verify_returns_false_on_bad_length_pubkey():
+    # from_public_bytes raises ValueError on a non-32-byte key; verify must
+    # swallow it and return False, not propagate.
+    assert MeshIdentity.verify(b"tooshort", b"msg", b"\x00" * 64) is False

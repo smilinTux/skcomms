@@ -8,6 +8,7 @@ session work and is exercised at the transport layer in P3. P1 proves routing.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Callable
 
@@ -73,5 +74,7 @@ class MeshNode:
                 self._on_message(pkt)
         if decision.forward:
             # schedule rebroadcast of the TTL-decremented packet
-            import asyncio
+            # P2: retain task ref + done-callback to surface exceptions; real
+            # BleakRadio notify callbacks may fire off-loop — schedule via
+            # loop.call_soon_threadsafe.
             asyncio.create_task(self.radio.broadcast(encode(decision.packet)))
