@@ -21,15 +21,20 @@ async def test_two_nodes_exchange_a_frame():
 
 
 @pytest.mark.asyncio
-async def test_airtime_is_accounted():
+async def test_bytes_sent_is_accounted_as_telemetry():
+    # The fake tracks raw bytes-sent telemetry only; it does NOT enforce a cap.
+    # Duty-cycle enforcement now lives in the transport's AirtimeBudget (C1),
+    # so the fake exposes no second cap (no can_send / airtime_budget).
     medium = FakeLoRaMedium()
-    a = FakeLoRaInterface("node-a", medium, airtime_budget_bytes=100)
+    a = FakeLoRaInterface("node-a", medium)
     await a.start()
-    assert a.airtime_used == 0
+    assert a.bytes_sent == 0
     await a.send_frame(b"x" * 40, dest=None)
-    assert a.airtime_used == 40
-    assert a.can_send(50) is True       # 40+50 <= 100
-    assert a.can_send(70) is False      # 40+70 > 100
+    assert a.bytes_sent == 40
+    await a.send_frame(b"x" * 60, dest=None)
+    assert a.bytes_sent == 100          # raw telemetry keeps accumulating
+    assert not hasattr(a, "can_send")   # no second enforcement path
+    assert not hasattr(a, "airtime_budget")
 
 
 @pytest.mark.asyncio

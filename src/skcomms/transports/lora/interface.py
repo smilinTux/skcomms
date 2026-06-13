@@ -50,14 +50,20 @@ class FakeLoRaMedium:
 
 
 class FakeLoRaInterface(LoRaMeshInterface):
-    def __init__(self, node_id: str, medium: FakeLoRaMedium,
-                 *, airtime_budget_bytes: int = 10_000) -> None:
+    """In-memory bus for tests.
+
+    `bytes_sent` is RAW TELEMETRY ONLY (total bytes ever transmitted by this
+    node) — it does NOT enforce any cap. Duty-cycle enforcement lives in the
+    transport's AirtimeBudget (see store.py); the interface never second-guesses
+    it, so there is exactly one enforcement path.
+    """
+
+    def __init__(self, node_id: str, medium: FakeLoRaMedium) -> None:
         self.node_id = node_id
         self._medium = medium
         self._cb: ReceiveCb | None = None
         self.running = False
-        self.airtime_budget = airtime_budget_bytes
-        self.airtime_used = 0
+        self.bytes_sent = 0   # telemetry only; not a cap
         medium.register(self)
 
     async def start(self) -> None:
@@ -66,21 +72,18 @@ class FakeLoRaInterface(LoRaMeshInterface):
     async def stop(self) -> None:
         self.running = False
 
-    def can_send(self, nbytes: int) -> bool:
-        return self.airtime_used + nbytes <= self.airtime_budget
-
     async def send_frame(self, data: bytes, *, dest: str | None) -> None:
         if not self.running:
             raise RuntimeError("interface not started")
-        self.airtime_used += len(data)
+        self.bytes_sent += len(data)
         await self._medium.deliver(self.node_id, data, dest)
 
     def on_receive(self, cb: ReceiveCb) -> None:
         self._cb = cb
 
     def info(self) -> dict:
-        return {"node_id": self.node_id, "airtime_used": self.airtime_used,
-                "airtime_budget": self.airtime_budget, "running": self.running}
+        return {"node_id": self.node_id, "bytes_sent": self.bytes_sent,
+                "running": self.running}
 
     def _inbound(self, data: bytes, src: str) -> None:
         if self._cb is not None:
