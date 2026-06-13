@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from typing import Callable
 
+import cbor2
+
 from skcomms.glossa import codec, gloss
 from skcomms.glossa.codebook import Codebook
 from skcomms.glossa.handshake import CapabilityDescriptor, Session, negotiate
@@ -19,6 +21,7 @@ class GlossaSession:
         self._session: Session | None = None
         self._transport: Callable[[bytes], None] | None = None
         self._on_message: Callable[[Message], None] | None = None
+        self._on_error: Callable[[bytes, Exception], None] | None = None
         self.audit_log: list[str] = []
 
     @property
@@ -30,6 +33,9 @@ class GlossaSession:
 
     def on_message(self, cb: Callable[[Message], None]) -> None:
         self._on_message = cb
+
+    def on_error(self, cb: Callable[[bytes, Exception], None]) -> None:
+        self._on_error = cb
 
     def handshake(self, remote: CapabilityDescriptor) -> None:
         self._session = negotiate(self.local, remote)
@@ -43,12 +49,20 @@ class GlossaSession:
     def receive(self, raw: bytes) -> None:
         try:
             m = codec.decode(raw, self.level, self.codebook)
-        except Exception as exc:
-            # Inbound frame not decodable at our level (e.g. peer hasn't
-            # handshaked us yet, so we're still at L0 while it sent denser).
-            # Log the failure rather than crashing the sender's transport call.
+        except (cbor2.CBORDecodeError, UnicodeDecodeError, ValueError) as exc:
+            # A decode-shape failure on an inbound frame. Distinguish two cases:
             self.audit_log.append(f"[rx L{self.level}] <undecodable: {exc}>")
-            return
+            if self._session is None:
+                # Not yet handshaked (still at our default level) — a denser
+                # frame from a peer that hasn't handshaked us is a tolerable
+                # pre-handshake transient. The degenerate one-sided case.
+                return
+            # Handshaked: both peers AGREED a level, so a decode failure here is
+            # a REAL fault (corruption / truncation / version skew). Surface it.
+            if self._on_error is not None:
+                self._on_error(raw, exc)
+                return
+            raise
         self.audit_log.append(f"[rx L{self.level}] {gloss.to_english(m)}")
         if self._on_message is not None:
             self._on_message(m)

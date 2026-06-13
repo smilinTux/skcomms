@@ -56,8 +56,16 @@ def decode(raw: bytes, level: int, codebook: Codebook | None = None) -> Message:
     if level == L2_CODEBOOK:
         if codebook is None:
             raise ValueError("L2 codebook level requires a codebook")
-        head, args, refs, text = cbor2.loads(raw)
-        intent = codebook.concept_for(head) if isinstance(head, int) else head
+        decoded = cbor2.loads(raw)
+        if not isinstance(decoded, list) or len(decoded) != 4:
+            raise ValueError("malformed L2 frame — expected [head, args, refs, text]")
+        head, args, refs, text = decoded
+        if isinstance(head, int):
+            intent = codebook.concept_for(head)
+            if intent is None:
+                raise ValueError(f"unknown codebook code {head} — codebook version skew")
+        else:
+            intent = head
         return Message(intent=intent or "", args=dict(args),
                        refs=list(refs), text=text)
     raise ValueError(f"unsupported level {level}")

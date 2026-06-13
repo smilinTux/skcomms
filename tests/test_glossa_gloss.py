@@ -11,6 +11,18 @@ def test_to_english_renders_prose():
     assert isinstance(eng, str) and len(eng) > 0
 
 
+def test_gloss_renders_intent_not_in_codebook():
+    # The audit invariant must hold even for an intent the codebook doesn't
+    # know: the gloss stays readable AND the raw intent is visible in it.
+    cb = default_codebook()
+    intent = "novel.intent.not.in.book"
+    m = Message(intent=intent, text="hello")
+    raw = codec.encode(m, codec.L2_CODEBOOK, cb)
+    eng = gloss.decode_to_english(raw, codec.L2_CODEBOOK, cb)
+    assert intent in eng
+    assert "hello" in eng
+
+
 def test_gloss_works_at_every_level():
     cb = default_codebook()
     m = Message(intent="status.report", args={"oof": 42}, text="ok")

@@ -29,4 +29,8 @@ def negotiate(local: CapabilityDescriptor, remote: CapabilityDescriptor) -> Sess
     # L2 (codebook) requires both to hold the SAME codebook version; else cap at L1.
     if level >= codec.L2_CODEBOOK and local.codebook_version != remote.codebook_version:
         level = codec.L1_SCHEMA
-    return Session(level=level, codebook_version=local.codebook_version)
+    # Session.codebook_version means "the AGREED shared version" — symmetric;
+    # empty when peers hold different versions (no shared codebook).
+    agreed = (local.codebook_version
+              if local.codebook_version == remote.codebook_version else "")
+    return Session(level=level, codebook_version=agreed)

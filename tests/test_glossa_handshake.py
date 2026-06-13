@@ -30,6 +30,21 @@ def test_matching_codebook_allows_l2():
     assert negotiate(a, b).level == codec.L2_CODEBOOK
 
 
+def test_negotiate_codebook_version_is_agreed_and_symmetric():
+    # codebook_version on the Session means "the AGREED shared version".
+    # For mismatched descriptors there is no shared codebook -> "" both ways.
+    a = _desc("a@x.y", "large", codec.L2_CODEBOOK, "vAAAAAAAAAA1")
+    b = _desc("b@x.y", "large", codec.L2_CODEBOOK, "vBBBBBBBBBB2")
+    assert negotiate(a, b).codebook_version == negotiate(b, a).codebook_version == ""
+
+
+def test_negotiate_codebook_version_set_when_matching():
+    cb = default_codebook().version
+    a = _desc("a@x.y", "large", codec.L2_CODEBOOK, cb)
+    b = _desc("b@x.y", "large", codec.L2_CODEBOOK, cb)
+    assert negotiate(a, b).codebook_version == cb
+
+
 def test_negotiate_is_symmetric():
     cb = default_codebook().version
     a = _desc("a@x.y", "large", codec.L2_CODEBOOK, cb)
