@@ -27,6 +27,7 @@ class PairingBundle(BaseModel):
     tailscale: Optional[str] = None
     https: Optional[str] = None
     pubkey: Optional[str] = None           # armored, only when --embed-key
+    noise_static_pubkey: Optional[str] = None  # urlsafe-b64 of 32-byte X25519 pub (SMP/BLE)
 
     @field_validator("fqid", "fingerprint")
     @classmethod
@@ -46,6 +47,8 @@ def to_skp_uri(b: PairingBundle) -> str:
         params["https"] = b.https
     if b.pubkey:
         params["pk"] = base64.urlsafe_b64encode(b.pubkey.encode()).decode()
+    if b.noise_static_pubkey:
+        params["ns"] = b.noise_static_pubkey
     return f"{SKP_SCHEME}://pair?" + urlencode(params)
 
 
@@ -58,7 +61,8 @@ def parse_skp_uri(uri: str) -> PairingBundle:
     pubkey = base64.urlsafe_b64decode(pk.encode()).decode() if pk else None
     return PairingBundle(fqid=q.get("fqid", ""), fingerprint=q.get("fp", ""),
                          syncthing_device_id=q.get("sy"), tailscale=q.get("ts"),
-                         https=q.get("https"), pubkey=pubkey)
+                         https=q.get("https"), pubkey=pubkey,
+                         noise_static_pubkey=q.get("ns"))
 
 
 def _self_hints(fqid: str) -> dict:
