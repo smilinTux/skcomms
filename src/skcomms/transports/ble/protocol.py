@@ -132,3 +132,64 @@ def unpad(padded: bytes) -> bytes:
     if len(body) != true_len:
         raise ValueError("padded length prefix exceeds data")
     return body
+
+
+# --- Fragmentation -----------------------------------------------------------
+
+def fragment(p: MeshPacket, *, mtu: int) -> list[bytes]:
+    """Encode `p`; if it fits in `mtu`, return [bytes]. Otherwise split the
+    encoded packet into FRAGMENT_* packets sharing the original msg_id.
+
+    Fragment payload = 2-byte index + 2-byte total + chunk. The original packet
+    type is recovered by the Reassembler from the reassembled bytes.
+    """
+    whole = encode(p)
+    if len(whole) <= mtu:
+        return [whole]
+
+    # room for our own header + 4 bytes of fragment metadata
+    chunk_room = mtu - HEADER_SIZE - 4
+    if chunk_room <= 0:
+        raise ValueError("mtu too small to fragment")
+    chunks = [whole[i:i + chunk_room] for i in range(0, len(whole), chunk_room)]
+    total = len(chunks)
+    out: list[bytes] = []
+    for idx, chunk in enumerate(chunks):
+        if idx == 0:
+            ftype = PacketType.FRAGMENT_START
+        elif idx == total - 1:
+            ftype = PacketType.FRAGMENT_END
+        else:
+            ftype = PacketType.FRAGMENT_CONTINUE
+        meta = struct.pack(">HH", idx, total) + chunk
+        frag = MeshPacket(
+            type=ftype, ttl=p.ttl, flags=FLAG_FRAGMENTED, timestamp=p.timestamp,
+            msg_id=p.msg_id, sender_id=p.sender_id, recipient_id=p.recipient_id,
+            payload=meta,
+        )
+        out.append(encode(frag))
+    return out
+
+
+class Reassembler:
+    """Collects FRAGMENT_* packets keyed by msg_id and returns the original
+    MeshPacket once all fragments for a msg_id have arrived."""
+
+    def __init__(self) -> None:
+        self._buf: dict[bytes, dict[int, bytes]] = {}
+        self._totals: dict[bytes, int] = {}
+
+    def feed(self, frag: MeshPacket) -> MeshPacket | None:
+        if not (frag.flags & FLAG_FRAGMENTED):
+            return frag  # not a fragment; pass through
+        idx, total = struct.unpack(">HH", frag.payload[:4])
+        chunk = frag.payload[4:]
+        slots = self._buf.setdefault(frag.msg_id, {})
+        slots[idx] = chunk
+        self._totals[frag.msg_id] = total
+        if len(slots) < total:
+            return None
+        whole = b"".join(slots[i] for i in range(total))
+        del self._buf[frag.msg_id]
+        del self._totals[frag.msg_id]
+        return decode(whole)
