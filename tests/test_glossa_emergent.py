@@ -1,5 +1,5 @@
-from skcomms.glossa.macros import default_macro_lexicon
 from skcomms.glossa.emergent import SessionMacros
+from skcomms.glossa.macros import default_macro_lexicon
 
 
 def test_starts_from_base_and_expands_base_macros():

@@ -1,5 +1,5 @@
-from skcomms.glossa.macros import default_macro_lexicon
 from skcomms.glossa.emergent import EmergentNegotiator
+from skcomms.glossa.macros import default_macro_lexicon
 
 
 def test_propose_logs_definition_for_audit():

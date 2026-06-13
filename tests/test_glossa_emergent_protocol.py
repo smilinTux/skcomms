@@ -1,10 +1,10 @@
-from skcomms.glossa.macros import default_macro_lexicon
 from skcomms.glossa.emergent import (
     SessionMacros,
     apply_propose,
     frame_propose,
     parse_propose,
 )
+from skcomms.glossa.macros import default_macro_lexicon
 
 
 def test_propose_frame_roundtrip():
