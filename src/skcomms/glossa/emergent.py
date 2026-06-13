@@ -51,3 +51,21 @@ class SessionMacros:
                 lines.append(f"- `{phrase}` := {definition}")
             block = block + "\n" + "\n".join(lines)
         return block
+
+
+def frame_propose(phrase: str, definition: str) -> bytes:
+    return json.dumps({"p": phrase, "d": definition},
+                      separators=(",", ":")).encode()
+
+
+def parse_propose(raw: bytes) -> tuple[str, str]:
+    try:
+        d = json.loads(raw.decode())
+        return d["p"], d["d"]
+    except Exception as exc:
+        raise ValueError(f"malformed propose frame: {exc}") from exc
+
+
+def apply_propose(session: "SessionMacros", raw: bytes) -> None:
+    phrase, definition = parse_propose(raw)
+    session.propose(phrase, definition)
