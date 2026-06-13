@@ -39,6 +39,7 @@ dependencies = [
     "psutil>=5.9",
     "pyyaml>=6.0,<7.0",
     "segno>=1.5",
+    "cbor2>=5.4",
 ]
 
 [project.optional-dependencies]
