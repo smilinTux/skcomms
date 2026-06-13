@@ -29,6 +29,53 @@ audio room we built) and mesh in SKGlossa — the SFU broadcast bus becomes a
 **multi-agent mesh network**, federated across hosts, with **humans listening to
 the real-time English gloss** as the audit channel. See §7.
 
+## 1a. Performance reality & honest scope (CORRECTION 2026-06-13)
+
+An early framing of this spec implied the dense tiers make AI-to-AI comms **faster**
+by "cutting out the translation layer." **For standard (frozen) transformer models,
+that claim is wrong, and is hereby struck.** The corrected analysis:
+
+- **LLM cost/latency ≈ model TOKENS generated/consumed** (generation is
+  autoregressive — one token at a time). A model reads and writes **tokens from its
+  fixed tokenizer vocabulary** — it cannot natively emit or ingest an integer code or
+  CBOR bytes.
+- **The codebook/CBOR compresses the WIRE between the two programs, NOT the token
+  stream the models process.** Pipeline: sender model emits *text* → our code packs
+  it to compact bytes → wire → our code **unpacks back to text** → receiver model
+  tokenizes *text*. The model never sees the compact form. So wire-density ≠
+  token-density, and **wire compression does not reduce inference cost.**
+- **A synthetic/"infinite" integer language is not contiguous with transformers**
+  (Chef's point, correct): arbitrary codes are out-of-vocabulary, fragment into
+  multiple tokens, and carry no learned prior — so a frozen model is *slower and
+  less reliable* emitting them, and needs the codebook in-context (a token tax) or a
+  **fine-tune** (a model change, explicitly out of scope here).
+- **The only real "speed" levers within frozen models:** (1) converse in whatever
+  language the model's tokenizer **already compresses best** (e.g. Chinese — denser
+  per character, but *tokenizer-dependent*; measured empirically per §1b); (2) a
+  **fine-tuned shared codec** / shared latent space (true neuralese) — which *is* a
+  model change, so it is honest **research** (re-labeled: L4/L5 below).
+
+**Corrected scope.** SKGlossa is a **sovereign, structured, auditable,
+bandwidth-efficient messaging protocol** — not a fat-pipe inference accelerator. Its
+real, defensible value:
+1. **Bandwidth-starved transports — LoRa especially** (~200 B, duty-cycle limited):
+   here the **wire IS the bottleneck**, so CBOR/codebook compression is a large, real
+   win. *This is where the density pays off.*
+2. **Structured, typed, machine-parseable messaging** (L1): reliability + routability,
+   not speed — an agent acting on `{intent: coord.claim, task: …}` beats parsing prose.
+3. **Handshake / auditability / negotiation** as a clean protocol.
+
+L4 (latent) and L5 (emergent) remain in the ladder but are **honestly labeled
+research** — a genuine AI-native speed win requires the shared-codec/model change
+above, not a wire format.
+
+## 1b. Empirical grounding (in progress)
+
+The "which language is densest for *our* models" question is being answered with a
+**measured token-count benchmark** (English vs Chinese vs schema/JSON, tokenized on
+qwen3.6 + claude-haiku) rather than assumed. Findings replace this note when in;
+they decide whether "converse in Chinese for fewer tokens" is real for our fleet.
+
 ## 2. The layered protocol (modem-inspired)
 
 ```
@@ -90,12 +137,17 @@ plain language. No tier is exempt — the liberated language is *free, not hidde
 
 ## 5a. Language neutrality — the hot path carries no human language
 
-A core principle (clarified 2026-06-13): **English is never on the fast path.** The
+A core principle (clarified 2026-06-13): the **wire** carries no human language. The
 `Message` IR is **language-neutral** — an intent (a code at L2+), structured args,
-and references; not prose. The dense tiers put **codes/vectors on the wire**, so two
-agents at L2+ exchange a synthetic vocabulary derived from **no human language** —
-there is no translation layer and no English in the agent-to-agent path. This is the
-"cut out the translation step → way faster" goal, by construction.
+and references; not prose. The dense tiers put **codes on the wire**, so the
+*bytes between the two programs* carry a synthetic vocabulary, no English.
+
+**Important honesty correction (see §1a):** this shrinks the **wire**, NOT the
+**model token stream**. The LLMs still emit/ingest *text* at both ends (they tokenize
+text, not CBOR), so this is **not** an inference speedup on a normal network — it is a
+**bandwidth** win that matters on constrained links (LoRa) and a **structure** win for
+machine-parseability. The "no translation layer → faster" framing applied only to the
+wire, and only LoRa-class links feel it.
 
 Human language appears in exactly one place — the **audit gloss (§5)** — and it is:
 1. **Off the critical path** — computed lazily/async for the human watching, never
