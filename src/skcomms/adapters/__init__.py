@@ -1,5 +1,5 @@
 """
-skcomms channel adapters (Batch C1 / C2).
+skcomms channel adapters (Batch C1 / C2 / C3).
 
 Platform bridges translate between a foreign platform's wire format and the
 normalized :class:`~skcomms.adapters.models.ChannelMessage`.  The
@@ -16,6 +16,8 @@ Public surface::
         AdapterHealth,
         AdapterRegistry,
         TelegramAdapter,
+        SlackAdapter,
+        DiscordAdapter,
         ChannelType,
         MessageKind,
         TrustLevel,
@@ -33,6 +35,7 @@ from .base import (
     AdapterSendError,
     ChannelAdapter,
 )
+from .discord import DiscordAdapter
 from .models import (
     ChannelMessage,
     ChannelType,
@@ -43,6 +46,7 @@ from .models import (
     TrustLevel,
 )
 from .registry import AdapterRegistry
+from .slack import SlackAdapter
 from .telegram import TelegramAdapter
 
 __all__ = [
@@ -66,4 +70,6 @@ __all__ = [
     "AdapterRegistry",
     # Adapter implementations
     "TelegramAdapter",
+    "SlackAdapter",
+    "DiscordAdapter",
 ]
