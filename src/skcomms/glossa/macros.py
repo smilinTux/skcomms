@@ -50,6 +50,30 @@ class MacroLexicon:
         canonical = json.dumps(self._m, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).hexdigest()[:12]
 
+    def render_prompt_block(self) -> str:
+        lines = [_PROMPT_HEADER]
+        for phrase, definition in self._m.items():
+            lines.append(f"- `{phrase}` := {definition}")
+        return "\n".join(lines)
+
+
+_PROMPT_HEADER = (
+    "SKGlossa macro lexicon — when a message uses one of these macros, expand it to "
+    "EXACTLY the meaning below. If a message uses shorthand NOT listed here, do not "
+    "guess — ask the sender to clarify.\n"
+)
+
+
+def expand_macros(text: str, lexicon: "MacroLexicon") -> str:
+    """Literal substitution of known macros → definitions (for the audit gloss).
+
+    Longest-phrase-first so multi-word macros match before any prefix."""
+    out = text
+    for phrase, definition in sorted(lexicon.items(), key=lambda kv: -len(kv[0])):
+        if phrase in out:
+            out = out.replace(phrase, f"({definition})")
+    return out
+
 
 def default_macro_lexicon() -> MacroLexicon:
     return MacroLexicon(_SEED)
