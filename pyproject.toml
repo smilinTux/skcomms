@@ -78,6 +78,7 @@ discord = [
 discovery = [
     "zeroconf>=0.131.0",
 ]
+meshtastic = ["meshtastic>=2.3"]
 api = [
     "fastapi>=0.109.0,<1.0.0",
     "uvicorn[standard]>=0.27.0",
