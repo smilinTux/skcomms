@@ -12,7 +12,8 @@ async def test_two_nodes_exchange_a_frame():
     b = FakeLoRaInterface("node-b", medium)
     got = []
     b.on_receive(lambda data, src: got.append((data, src)))
-    await a.start(); await b.start()
+    await a.start()
+    await b.start()
 
     await a.send_frame(b"hello-lora", dest=None)  # broadcast
     await asyncio.sleep(0.01)
@@ -40,7 +41,9 @@ async def test_directed_frame_only_reaches_dest():
     bgot, cgot = [], []
     b.on_receive(lambda d, s: bgot.append(d))
     c.on_receive(lambda d, s: cgot.append(d))
-    await a.start(); await b.start(); await c.start()
+    await a.start()
+    await b.start()
+    await c.start()
     await a.send_frame(b"for-b", dest="node-b")
     await asyncio.sleep(0.01)
     assert bgot == [b"for-b"]

@@ -18,7 +18,8 @@ async def test_envelope_round_trips_between_two_nodes():
     ib = FakeLoRaInterface("node-b", medium)
     a = _transport("a@x.y", ia)
     b = _transport("b@x.y", ib)
-    await a.start(); await b.start()
+    await a.start()
+    await b.start()
 
     await a.send_async(b"sovereign-message-over-lora", recipient="b@x.y")
     await asyncio.sleep(0.05)
@@ -34,7 +35,8 @@ async def test_large_envelope_fragments_and_reassembles():
     ib = FakeLoRaInterface("node-b", medium)
     a = _transport("a@x.y", ia)
     b = _transport("b@x.y", ib)
-    await a.start(); await b.start()
+    await a.start()
+    await b.start()
     payload = bytes(range(256)) * 3  # 768 bytes -> multi-frame
     await a.send_async(payload, recipient="b@x.y")
     await asyncio.sleep(0.05)
