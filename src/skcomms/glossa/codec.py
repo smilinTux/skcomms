@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 
+import cbor2
+
 from skcomms.glossa.codebook import Codebook
 from skcomms.glossa.message import Message
 
@@ -34,10 +36,14 @@ def _l0_decode(raw: bytes) -> Message:
 def encode(m: Message, level: int, codebook: Codebook | None = None) -> bytes:
     if level == L0_ENGLISH:
         return _l0_encode(m)
+    if level == L1_SCHEMA:
+        return cbor2.dumps(m.to_dict())
     raise ValueError(f"unsupported level {level}")
 
 
 def decode(raw: bytes, level: int, codebook: Codebook | None = None) -> Message:
     if level == L0_ENGLISH:
         return _l0_decode(raw)
+    if level == L1_SCHEMA:
+        return Message.from_dict(cbor2.loads(raw))
     raise ValueError(f"unsupported level {level}")
