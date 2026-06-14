@@ -9,7 +9,7 @@ The outbox is filesystem-based: one JSON file per queued message.
 No database needed. Works offline. Survives daemon restarts.
 
 Layout:
-    ~/.skcomms/outbox/
+    ~/.skcapstone/skcomms/outbox/
     ├── pending/          # messages awaiting retry
     │   └── {id}.json
     └── dead/             # permanently failed messages
@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger("skcomms.outbox")
 
-DEFAULT_OUTBOX_DIR = "~/.skcomms/outbox"
+DEFAULT_OUTBOX_DIR = "~/.skcapstone/skcomms/outbox"
 DEFAULT_MAX_RETRIES = 10
 DEFAULT_BASE_BACKOFF = 5
 

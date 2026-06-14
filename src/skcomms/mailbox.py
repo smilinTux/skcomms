@@ -1,4 +1,4 @@
-"""FQID-aware mailbox — send / inbox / peers over the ~/.skcomms tree (T6).
+"""FQID-aware mailbox — send / inbox / peers over the ~/.skcapstone/skcomms tree (T6).
 
 Coord task ``ff0b2c15``. This is the canonical message-passing layer:
 messages are Envelope v1 (:mod:`skcomms.envelope`), addressed by FQID,
@@ -232,7 +232,7 @@ def read_inbox(agent: Optional[str] = None) -> list[tuple[Envelope, Verification
 
 
 def list_peers(agent: Optional[str] = None) -> list[dict]:
-    """List known peers discovered in the ~/.skcomms realm tree.
+    """List known peers discovered in the ~/.skcapstone/skcomms realm tree.
 
     A peer is any ``<realm>/<operator>/<agent>`` directory other than this
     agent's own. Useful for routing and discovery before real Syncthing

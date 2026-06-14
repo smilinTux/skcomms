@@ -165,7 +165,7 @@ def test_accept_compact_local_agent_pairs(tmp_path, monkeypatch):
     locally, fingerprint verified, peer TOFU-added) with NO embedded key and NO
     injected fetcher."""
     monkeypatch.setenv("HOME", str(tmp_path))
-    monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / ".skcomms"))
+    monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / ".skcapstone/skcomms"))
     import skcomms.pairing as P
     from skcomms.peers import fingerprint_from_pubkey
     pub = _gen_pubkey(); fp = fingerprint_from_pubkey(pub)

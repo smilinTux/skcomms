@@ -7,7 +7,7 @@ PGP-signed by the granter so the consumer can verify authenticity without a
 live channel.
 
 The shared on-disk contract (read by skmemory T9) lives at
-``${SKCOMMS_HOME:-~/.skcomms}/recall_collections_consent.json``::
+``${SKCOMMS_HOME:-~/.skcapstone/skcomms}/recall_collections_consent.json``::
 
     {
       "tokens": [
@@ -420,7 +420,7 @@ def accept_grant(token: dict, pubkey: Optional[str] = None) -> dict:
     """Verify a token, then merge it into the consent file (idempotent).
 
     On success the token lands in
-    ``${SKCOMMS_HOME:-~/.skcomms}/recall_collections_consent.json`` in the
+    ``${SKCOMMS_HOME:-~/.skcapstone/skcomms}/recall_collections_consent.json`` in the
     EXACT schema skmemory T9 reads. Re-accepting the same grant (same
     collection + granted_to + granted_by) replaces the prior entry rather than
     appending a duplicate.

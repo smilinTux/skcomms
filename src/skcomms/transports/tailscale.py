@@ -20,7 +20,7 @@ Availability:
 
 Peer IP discovery (in order of precedence):
     1. Manual: ``register_peer_ip(name, ip)`` at runtime
-    2. Peer store: ``~/.skcomms/peers/<name>.yml`` → ``transports[].settings.tailscale_ip``
+    2. Peer store: ``~/.skcapstone/skcomms/peers/<name>.yml`` → ``transports[].settings.tailscale_ip``
     3. Auto-detect: ``tailscale status --json`` hostname/DNS matching
 """
 

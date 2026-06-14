@@ -1,7 +1,7 @@
-"""Tests for the ~/.skcomms/ scaffold (T4, ``479ce678``).
+"""Tests for the ~/.skcapstone/skcomms/ scaffold (T4, ``479ce678``).
 
 Covers:
-    - skcomms_home() honors SKCOMMS_HOME override, defaults to ~/.skcomms.
+    - skcomms_home() honors SKCOMMS_HOME override, defaults to ~/.skcapstone/skcomms.
     - scaffold() creates <realm>/<operator>/<agent>/{outbox,inbox} derived
       from cluster.json + resolve_identity.
     - .stignore written at the top level.
@@ -27,7 +27,7 @@ class TestSkcommsHome:
         monkeypatch.delenv("SKCOMMS_HOME", raising=False)
         from skcomms.home import skcomms_home
 
-        assert skcomms_home() == Path.home() / ".skcomms"
+        assert skcomms_home() == Path.home() / ".skcapstone" / "skcomms"
 
     def test_env_override(self, monkeypatch, tmp_path):
         monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "custom"))

@@ -337,7 +337,7 @@ class SKComms:
     all outbound envelopes via CapAuth PGP keys.
 
     Usage:
-        comm = SKComms.from_config("~/.skcomms/config.yml")
+        comm = SKComms.from_config("~/.skcapstone/skcomms/config.yml")
         comm.send("lumina", "Hello from Opus")
         messages = comm.receive()
 
@@ -377,7 +377,7 @@ class SKComms:
         config enables encrypt/sign.
 
         Args:
-            config_path: Path to config file. Defaults to ~/.skcomms/config.yml.
+            config_path: Path to config file. Defaults to ~/.skcapstone/skcomms/config.yml.
 
         Returns:
             Configured SKComms instance ready to send and receive.
@@ -537,7 +537,7 @@ class SKComms:
     def _resolve_peer_transports(self, recipient: str) -> list[str]:
         """Look up the preferred transports for a recipient from the peer store.
 
-        Checks ~/.skcomms/peers/<name>.yml for a list of configured transports.
+        Checks ~/.skcapstone/skcomms/peers/<name>.yml for a list of configured transports.
         Returns transport names the router should prefer for this recipient.
 
         Args:

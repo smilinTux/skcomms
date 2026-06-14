@@ -7,7 +7,7 @@ for an fqid is recorded; later contacts must match it. A *different*
 fingerprint for a known fqid is a CONFLICT and is rejected — never silently
 overwritten.
 
-Store layout (``${SKCOMMS_HOME:-~/.skcomms}/known_fingerprints.json``)::
+Store layout (``${SKCOMMS_HOME:-~/.skcapstone/skcomms}/known_fingerprints.json``)::
 
     {
       "lumina@chef.skworld": {

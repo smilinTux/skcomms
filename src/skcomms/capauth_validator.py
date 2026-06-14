@@ -15,7 +15,7 @@ The detached PGP signature covers the UTF-8 string::
 A ±300-second window is accepted to tolerate clock skew while preventing
 replay attacks. The signer's public key is resolved from:
 
-1. ``~/.skcomms/keys/<FINGERPRINT>.asc`` — SKComms per-agent keystore
+1. ``~/.skcapstone/skcomms/keys/<FINGERPRINT>.asc`` — SKComms per-agent keystore
 2. ``gpg --export --armor <FINGERPRINT>`` — system GPG keyring
 
 **Remote validation** is available by setting ``capauth_url`` to a
@@ -49,7 +49,7 @@ def _find_pubkey_by_fingerprint(
 
     Reconciles the WebRTC SDP-verify key resolution with the mailbox/TOFU layer:
     local agents keep their keypair under ``~/.skcapstone/agents/<a>/capauth/identity``
-    (the path fixed 2026-06-11), which the legacy ``~/.skcomms/keys`` + gpg lookup
+    (the path fixed 2026-06-11), which the legacy ``~/.skcapstone/skcomms/keys`` + gpg lookup
     never searched.
 
     Args:
@@ -65,7 +65,7 @@ def _find_pubkey_by_fingerprint(
     want = fingerprint.replace(" ", "").upper()
     base = agents_root or (Path.home() / ".skcapstone" / "agents")
     patterns = [str(base / "*" / "capauth" / "identity" / "public.asc")]
-    patterns.append(str(Path.home() / ".skcomms" / "**" / "peers" / "*.asc"))
+    patterns.append(str(Path.home() / ".skcapstone" / "skcomms" / "**" / "peers" / "*.asc"))
     if extra_globs:
         patterns.extend(extra_globs)
 
@@ -98,7 +98,7 @@ class CapAuthValidator:
       the token signature. Set ``capauth_url`` to enable.
     - **Local PGP** (default): verifies the detached PGP signature embedded
       in the token against the signer's public key. Requires ``pgpy`` and
-      either ``~/.skcomms/keys/<FINGERPRINT>.asc`` or GPG keyring.
+      either ``~/.skcapstone/skcomms/keys/<FINGERPRINT>.asc`` or GPG keyring.
     - **Dev mode** (no auth): ``require_auth=False`` accepts a plain
       40-hex fingerprint with no signature. **Never use in production.**
 
@@ -155,7 +155,7 @@ class CapAuthValidator:
 
         A ±300-second window is accepted to tolerate clock skew while
         preventing replay attacks. The signer's public key is loaded from
-        ``~/.skcomms/keys/<FINGERPRINT>.asc`` or the system GPG keyring.
+        ``~/.skcapstone/skcomms/keys/<FINGERPRINT>.asc`` or the system GPG keyring.
 
         **Dev-mode shortcut** — when ``require_auth=False`` a plain
         40-hex fingerprint (no dots) is accepted without any signature.
@@ -275,7 +275,7 @@ class CapAuthValidator:
 
         Search order:
 
-        1. ``~/.skcomms/keys/<FINGERPRINT>.asc`` — SKComms per-agent keystore
+        1. ``~/.skcapstone/skcomms/keys/<FINGERPRINT>.asc`` — SKComms per-agent keystore
         2. ``gpg --export --armor <FINGERPRINT>`` — system GPG keyring
 
         Args:
@@ -289,7 +289,7 @@ class CapAuthValidator:
         import pgpy  # type: ignore[import]
 
         # 1. SKComms local key store
-        key_path = Path.home() / ".skcomms" / "keys" / f"{fingerprint}.asc"
+        key_path = Path.home() / ".skcapstone" / "skcomms" / "keys" / f"{fingerprint}.asc"
         if key_path.exists():
             try:
                 key, _ = pgpy.PGPKey.from_file(str(key_path))
@@ -301,7 +301,7 @@ class CapAuthValidator:
         # 2. Per-agent CapAuth identity dirs + skcomms peers store, matched by
         #    fingerprint. Reconciles the WebRTC verify path with the mailbox/TOFU
         #    layer (2026-06-11) so a *local* agent's signed SDP (e.g. opus↔lumina)
-        #    verifies — those keys live under capauth/identity, not ~/.skcomms/keys.
+        #    verifies — those keys live under capauth/identity, not ~/.skcapstone/skcomms/keys.
         armor = _find_pubkey_by_fingerprint(fingerprint)
         if armor:
             try:

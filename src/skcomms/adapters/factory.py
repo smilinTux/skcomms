@@ -3,7 +3,7 @@ Adapter factory + config→registry builder (Tier 3 runtime plumbing).
 
 Mirrors the ``BUILTIN_TRANSPORTS`` pattern in ``core.py``: a registry of
 ``adapter_type → constructor`` plus a builder that reads the ``adapters:`` block
-of ``~/.skcomms/config.yml``, expands ``${ENV_VAR}`` placeholders, and constructs
+of ``~/.skcapstone/skcomms/config.yml``, expands ``${ENV_VAR}`` placeholders, and constructs
 each *enabled* adapter — gracefully skipping any whose required token is missing
 (the GATED-friendly path, so the daemon never crashes without creds).
 

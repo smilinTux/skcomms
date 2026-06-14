@@ -7,7 +7,7 @@ Discovery sources (tried in order):
     3. Nostr relay metadata queries (if nostr deps installed)
     4. mDNS/Zeroconf LAN announcements (if zeroconf installed)
 
-Discovered peers are persisted as YAML files in ~/.skcomms/peers/
+Discovered peers are persisted as YAML files in ~/.skcapstone/skcomms/peers/
 and used by the Router to resolve agent names to transport configs.
 """
 
@@ -114,7 +114,7 @@ class PeerInfo(BaseModel):
 
 
 class PeerStore:
-    """Persistent peer registry at ~/.skcomms/peers/.
+    """Persistent peer registry at ~/.skcapstone/skcomms/peers/.
 
     Each peer is stored as a YAML file named {name}.yml.
 
@@ -288,8 +288,8 @@ def discover_file_transport(
     Extracts sender/recipient from envelope JSON files.
 
     Args:
-        inbox_path: File transport inbox (default ~/.skcomms/inbox).
-        outbox_path: File transport outbox (default ~/.skcomms/outbox).
+        inbox_path: File transport inbox (default ~/.skcapstone/skcomms/inbox).
+        outbox_path: File transport outbox (default ~/.skcapstone/skcomms/outbox).
 
     Returns:
         List of discovered PeerInfo.

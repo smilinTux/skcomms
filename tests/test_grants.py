@@ -1,7 +1,7 @@
 """Tests for cross-operator collection consent tokens (T10, ``a68c54ce``).
 
 skcomms is the PRODUCER of recall-consent tokens; skmemory T9 is the consumer
-that reads ``${SKCOMMS_HOME:-~/.skcomms}/recall_collections_consent.json``.
+that reads ``${SKCOMMS_HOME:-~/.skcapstone/skcomms}/recall_collections_consent.json``.
 This test suite verifies:
 
     - mint_grant produces a token whose PGP signature over canonical_bytes

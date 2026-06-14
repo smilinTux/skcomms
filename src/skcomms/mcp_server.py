@@ -54,14 +54,14 @@ server = Server("skcomms")
 # ---------------------------------------------------------------------------
 
 _DEFAULT_PORT = 9384
-_CONFIG_PATH = Path("~/.skcomms/config.yaml")
-_CONFIG_PATH_ALT = Path("~/.skcomms/config.yml")
+_CONFIG_PATH = Path("~/.skcapstone/skcomms/config.yaml")
+_CONFIG_PATH_ALT = Path("~/.skcapstone/skcomms/config.yml")
 
 
 def _load_api_port() -> int:
     """Discover the SKComms API port from config or return the default.
 
-    Checks ~/.skcomms/config.yaml (and .yml) for an ``api.port`` key.
+    Checks ~/.skcapstone/skcomms/config.yaml (and .yml) for an ``api.port`` key.
     Falls back to 9384 if the config is absent or the key is missing.
 
     Returns:

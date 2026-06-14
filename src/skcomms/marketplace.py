@@ -5,7 +5,7 @@ Skills are published as Nostr kind 30078 parameterized-replaceable events
 (NIP-78 application-specific data). Each skill manifest is a JSON payload
 with metadata, tags, and install instructions.
 
-Local registry at ~/.skcomms/skills/ tracks installed skills as YAML files.
+Local registry at ~/.skcapstone/skcomms/skills/ tracks installed skills as YAML files.
 
 Usage:
     from skcomms.marketplace import SkillManifest, SkillRegistry
@@ -111,7 +111,7 @@ class SkillManifest(BaseModel):
 
 
 class SkillRegistry:
-    """Local registry of installed skills at ~/.skcomms/skills/.
+    """Local registry of installed skills at ~/.skcapstone/skcomms/skills/.
 
     Each installed skill is stored as a YAML manifest file.
 

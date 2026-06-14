@@ -17,7 +17,7 @@ The binding is recorded via the TOFU store (:mod:`skcomms.tofu`): the first
 fingerprint seen for an fqid is trusted; a *different* fingerprint on re-add is
 a CONFLICT and is **refused** — never silently rebound.
 
-Store layout (``${SKCOMMS_HOME:-~/.skcomms}/peers.json``)::
+Store layout (``${SKCOMMS_HOME:-~/.skcapstone/skcomms}/peers.json``)::
 
     {
       "peers": {

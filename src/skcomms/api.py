@@ -1210,7 +1210,7 @@ async def get_peers():
     """Get the peer directory.
 
     Returns all peers stored in the local peer registry
-    (~/.skcomms/peers/ YAML files) plus any peers from the peer store.
+    (~/.skcapstone/skcomms/peers/ YAML files) plus any peers from the peer store.
 
     Returns:
         List of PeerResponse objects with transport addresses.

@@ -113,7 +113,7 @@ def _skcomms_home() -> Path:
     """Resolve the skcomms home directory."""
     global _SKCOMMS_HOME
     if _SKCOMMS_HOME is None:
-        _SKCOMMS_HOME = Path("~/.skcomms").expanduser()
+        _SKCOMMS_HOME = Path("~/.skcapstone/skcomms").expanduser()
     return _SKCOMMS_HOME
 
 

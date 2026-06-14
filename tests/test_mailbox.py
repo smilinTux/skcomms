@@ -5,7 +5,7 @@ Covers:
       sender's outbox AND the peer's inbox.
     - read_inbox reads + verifies SignedEnvelopes from the inbox.
     - a tampered inbox envelope is flagged (verified=False).
-    - list_peers enumerates known peers in the ~/.skcomms tree.
+    - list_peers enumerates known peers in the ~/.skcapstone/skcomms tree.
 
 No live transports — everything operates on a tmp SKCOMMS_HOME with
 in-process PGP keys.

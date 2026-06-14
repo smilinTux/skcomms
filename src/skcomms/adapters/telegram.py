@@ -12,7 +12,7 @@ is already a member.
 The Telethon client is **injectable** (pass ``telethon_client`` to the constructor)
 so the adapter is fully unit-testable without any live credentials.
 
-Config block in ``~/.skcomms/config.yml``::
+Config block in ``~/.skcapstone/skcomms/config.yml``::
 
     adapters:
       telegram:
@@ -27,7 +27,7 @@ Config block in ``~/.skcomms/config.yml``::
             chat_id: "-5134021983"
             agent_fqid: "lumina@skworld.io"
             allow_untrusted: true
-        identity_store: "~/.skcomms/adapters/telegram-ids.yaml"
+        identity_store: "~/.skcapstone/skcomms/adapters/telegram-ids.yaml"
 
 Known gap
 ---------
@@ -171,7 +171,7 @@ class TelegramAdapter(ChannelAdapter):
         self._poll_s = config.get("poll_interval_s", 2)
         self._rooms: dict[str, dict] = config.get("rooms", {})
         self._id_store_path = config.get(
-            "identity_store", "~/.skcomms/adapters/telegram-ids.yaml"
+            "identity_store", "~/.skcapstone/skcomms/adapters/telegram-ids.yaml"
         )
 
         # --- State ---

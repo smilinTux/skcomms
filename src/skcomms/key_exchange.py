@@ -50,7 +50,7 @@ def fetch_peer_from_did(
 
     Args:
         name_or_url: Agent slug (e.g. "lumina") or full DID document URL.
-        peers_dir: Directory to save peer files (default ~/.skcomms/peers).
+        peers_dir: Directory to save peer files (default ~/.skcapstone/skcomms/peers).
         save: Whether to persist the peer to disk.
 
     Returns:
@@ -312,7 +312,7 @@ def import_peer_bundle(
 
     Args:
         bundle: Parsed peer bundle dict.
-        peers_dir: Directory for peer files (default ~/.skcomms/peers).
+        peers_dir: Directory for peer files (default ~/.skcapstone/skcomms/peers).
         gpg_import: Whether to import the public key to GPG keyring.
 
     Returns:
@@ -350,7 +350,7 @@ def import_peer_bundle(
         # Default transports
         transports = [
             PeerTransport(transport="syncthing", settings={"comms_root": "~/.skcapstone/comms"}),
-            PeerTransport(transport="file", settings={"inbox_path": "~/.skcomms/inbox"}),
+            PeerTransport(transport="file", settings={"inbox_path": "~/.skcapstone/skcomms/inbox"}),
         ]
 
     peer = PeerInfo(
@@ -491,7 +491,7 @@ def _get_email_from_key(armor: str) -> Optional[str]:
 
 def _get_local_transports() -> list[dict]:
     """Read local skcomms config and return transport info suitable for bundle."""
-    config_path = Path.home() / ".skcomms" / "config.yml"
+    config_path = Path.home() / ".skcapstone" / "skcomms" / "config.yml"
     if not config_path.exists():
         return []
 
@@ -522,7 +522,7 @@ def _get_local_transports() -> list[dict]:
 
 
 def _default_peers_dir() -> Path:
-    return Path(os.environ.get("SKCOMMS_HOME", str(Path.home() / ".skcomms"))) / "peers"
+    return Path(os.environ.get("SKCOMMS_HOME", str(Path.home() / ".skcapstone" / "skcomms"))) / "peers"
 
 
 def _safe_filename(name: str) -> str:

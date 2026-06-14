@@ -275,7 +275,7 @@ class KeyStore:
     """Manages peer public keys for encryption and verification.
 
     Stores ASCII-armored public keys indexed by agent name or fingerprint.
-    Loads from ~/.skcomms/peers/ directory if available.
+    Loads from ~/.skcapstone/skcomms/peers/ directory if available.
 
     Args:
         peers_dir: Path to the peers directory.
@@ -283,7 +283,7 @@ class KeyStore:
 
     def __init__(self, peers_dir: Optional[Path] = None) -> None:
         self._keys: dict[str, str] = {}
-        self._peers_dir = peers_dir or Path.home() / ".skcomms" / "peers"
+        self._peers_dir = peers_dir or Path.home() / ".skcapstone" / "skcomms" / "peers"
         self._loaded = False
 
     def _ensure_loaded(self) -> None:

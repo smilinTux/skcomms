@@ -90,7 +90,7 @@ def _skcapstone_home() -> Path:
 
 
 def _skcomms_home() -> Path:
-    return Path(os.environ.get("SKCOMMS_HOME", str(Path.home() / ".skcomms")))
+    return Path(os.environ.get("SKCOMMS_HOME", str(Path.home() / ".skcapstone" / "skcomms")))
 
 
 def _tailnet_params() -> tuple[str, str]:
@@ -276,7 +276,7 @@ async def did_publish(fingerprint: str = Depends(_require_capauth)) -> JSONRespo
     """Generate all DID tiers and write files to disk.
 
     Writes:
-      ``~/.skcomms/well-known/did.json``   → Tier 2 (mesh)
+      ``~/.skcapstone/skcomms/well-known/did.json``   → Tier 2 (mesh)
       ``~/.skcapstone/did/key.json``       → Tier 1 (did:key)
       ``~/.skcapstone/did/public.json``    → Tier 3 (public)
       ``~/.skcapstone/did/did_key.txt``    → plain did:key string

@@ -6,7 +6,7 @@ files. A drain loop retries delivery with exponential backoff and
 removes expired messages that exceed their TTL.
 
 Queue layout:
-    ~/.skcomms/queue/
+    ~/.skcapstone/skcomms/queue/
     ├── {envelope_id}.skc.json       # Envelope bytes
     └── {envelope_id}.skc.meta.json  # Retry state and metadata
 
@@ -116,7 +116,7 @@ class MessageQueue:
     TTL-based expiry, and crash-safe operation.
 
     Args:
-        queue_dir: Directory for queue files. Defaults to ~/.skcomms/queue/.
+        queue_dir: Directory for queue files. Defaults to ~/.skcapstone/skcomms/queue/.
     """
 
     def __init__(self, queue_dir: Optional[Path] = None):

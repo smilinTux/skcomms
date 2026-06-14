@@ -2,7 +2,7 @@
 SKComms transport metrics — per-transport delivery stats and latency tracking.
 
 Tracks success/failure counts, average latency, error history,
-and uptime per transport. Persisted as JSON at ~/.skcomms/metrics.json
+and uptime per transport. Persisted as JSON at ~/.skcapstone/skcomms/metrics.json
 so stats survive restarts.
 
 Usage:

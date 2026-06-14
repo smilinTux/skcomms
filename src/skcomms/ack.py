@@ -10,7 +10,7 @@ resolved as "confirmed."
 Pending ACKs that exceed the timeout are marked "timed_out"
 and can be retried or escalated.
 
-Persistence: pending ACKs are stored as JSON in ~/.skcomms/acks/
+Persistence: pending ACKs are stored as JSON in ~/.skcapstone/skcomms/acks/
 so they survive process restarts.
 """
 

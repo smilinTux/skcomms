@@ -179,7 +179,7 @@ def register_self(pid_file: Optional[str] = None) -> bool:
     try:
         _sdk.register_service(
             SERVICE,
-            pid_file=pid_file or str(Path("~/.skcomms/daemon.pid").expanduser()),
+            pid_file=pid_file or str(Path("~/.skcapstone/skcomms/daemon.pid").expanduser()),
         )
         return True
     except Exception as exc:  # pragma: no cover - defensive

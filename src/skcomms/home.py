@@ -1,8 +1,8 @@
-"""``~/.skcomms/`` realm message tree scaffold (T4, ``479ce678``).
+"""``~/.skcapstone/skcomms/`` realm message tree scaffold (T4, ``479ce678``).
 
 Builds the sovereign, Syncthing-shareable message tree::
 
-    ~/.skcomms/
+    ~/.skcapstone/skcomms/
       .stignore                         # Syncthing ignore (volatile/local)
       <realm>/<operator>/<agent>/
         outbox/                         # messages this agent has sent
@@ -13,7 +13,7 @@ Builds the sovereign, Syncthing-shareable message tree::
 the ``fqid`` agent component, falling back to the ``agent`` field).
 
 The home root honors the ``SKCOMMS_HOME`` env override and defaults to
-``~/.skcomms``. The scaffold is idempotent — re-running never clobbers
+``~/.skcapstone/skcomms``. The scaffold is idempotent — re-running never clobbers
 existing message files.
 """
 
@@ -48,7 +48,7 @@ logs/
 def skcomms_home() -> Path:
     """Resolve the skcomms home root.
 
-    Honors the ``SKCOMMS_HOME`` env override; defaults to ``~/.skcomms``.
+    Honors the ``SKCOMMS_HOME`` env override; defaults to ``~/.skcapstone/skcomms``.
 
     Returns:
         Path: The (un-created) home root path.
@@ -56,7 +56,7 @@ def skcomms_home() -> Path:
     override = os.environ.get("SKCOMMS_HOME")
     if override:
         return Path(override).expanduser()
-    return Path.home() / ".skcomms"
+    return Path.home() / ".skcapstone" / "skcomms"
 
 
 def _agent_name(agent: Optional[str]) -> str:
@@ -73,7 +73,7 @@ def _agent_name(agent: Optional[str]) -> str:
 
 
 def scaffold(agent: Optional[str] = None) -> dict:
-    """Create the ``~/.skcomms/<realm>/<operator>/<agent>/{outbox,inbox}`` tree.
+    """Create the ``~/.skcapstone/skcomms/<realm>/<operator>/<agent>/{outbox,inbox}`` tree.
 
     Idempotent — safe to re-run; existing files are preserved. Also writes a
     top-level ``.stignore`` if one does not already exist.

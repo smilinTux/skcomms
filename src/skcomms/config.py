@@ -1,7 +1,7 @@
 """
 SKComms configuration — load and validate settings from YAML.
 
-Default config location: ~/.skcomms/config.yml
+Default config location: ~/.skcapstone/skcomms/config.yml
 Follows the same pattern as skcapstone's config.yaml.
 """
 
@@ -18,7 +18,7 @@ from .models import RoutingMode
 
 logger = logging.getLogger("skcomms.config")
 
-SKCOMMS_HOME = "~/.skcomms"
+SKCOMMS_HOME = "~/.skcapstone/skcomms"
 
 
 class IdentityConfig(BaseModel):
@@ -33,7 +33,7 @@ class DaemonConfig(BaseModel):
 
     enabled: bool = True
     poll_interval_s: int = 5
-    log_file: str = "~/.skcomms/logs/transport.log"
+    log_file: str = "~/.skcapstone/skcomms/logs/transport.log"
 
 
 class TransportConfig(BaseModel):
@@ -76,7 +76,7 @@ class RegistryConfig(BaseModel):
 class SKCommsConfig(BaseModel):
     """Top-level SKComms configuration.
 
-    Loaded from ~/.skcomms/config.yml. Provides defaults for
+    Loaded from ~/.skcapstone/skcomms/config.yml. Provides defaults for
     routing mode, encryption, signing, retries, and per-transport
     configuration.
     """
@@ -114,7 +114,7 @@ class SKCommsConfig(BaseModel):
             logger.warning("Failed to parse %s: %s — using defaults", path, exc)
             return cls()
 
-        skcomms_section = raw.get("skcomms", raw)
+        skcomms_section = raw.get("skcomms") or raw.get("skcomm") or raw
 
         transport_configs = {}
         for name, tconf in skcomms_section.get("transports", {}).items():
@@ -147,7 +147,7 @@ def load_config(config_path: Optional[str] = None) -> SKCommsConfig:
     """Load SKComms config from disk.
 
     Args:
-        config_path: Override config file location. Defaults to ~/.skcomms/config.yml.
+        config_path: Override config file location. Defaults to ~/.skcapstone/skcomms/config.yml.
 
     Returns:
         SKCommsConfig with loaded or default settings.

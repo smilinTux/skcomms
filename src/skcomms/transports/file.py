@@ -145,10 +145,10 @@ class FileTransport(Transport):
         self._outbox = (
             Path(outbox_path).expanduser()
             if outbox_path
-            else Path("~/.skcomms/outbox").expanduser()
+            else Path("~/.skcapstone/skcomms/outbox").expanduser()
         )
         self._inbox = (
-            Path(inbox_path).expanduser() if inbox_path else Path("~/.skcomms/inbox").expanduser()
+            Path(inbox_path).expanduser() if inbox_path else Path("~/.skcapstone/skcomms/inbox").expanduser()
         )
         self._archive_dir = (
             Path(archive_path).expanduser() if archive_path else self._inbox.parent / "archive"

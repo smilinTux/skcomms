@@ -430,13 +430,13 @@ def _test_file_transport_ping(drop_root: Path) -> bool:
 @main.command("init")
 @click.option("--agent", "-a", default=None, help="Agent name (defaults to resolved identity).")
 def init(agent: Optional[str]):
-    """Initialize the ~/.skcomms/ realm message tree.
+    """Initialize the ~/.skcapstone/skcomms/ realm message tree.
 
-    Creates ``~/.skcomms/<realm>/<operator>/<agent>/{outbox,inbox}`` derived
+    Creates ``~/.skcapstone/skcomms/<realm>/<operator>/<agent>/{outbox,inbox}`` derived
     from cluster.json + the resolved agent identity, plus a top-level
     ``.stignore`` so Syncthing ignores volatile/local files. Idempotent.
 
-    Honors the ``SKCOMMS_HOME`` env override (default ``~/.skcomms``).
+    Honors the ``SKCOMMS_HOME`` env override (default ``~/.skcapstone/skcomms``).
 
     Examples:
 
@@ -474,7 +474,7 @@ def send(
     """Send a signed Envelope v1 to a peer FQID.
 
     Builds an Envelope v1 from the resolved identity, signs it, and drops
-    it in the sender's outbox + the peer's inbox under ~/.skcomms.
+    it in the sender's outbox + the peer's inbox under ~/.skcapstone/skcomms.
 
     Examples:
 
@@ -510,7 +510,7 @@ def send(
 def inbox(agent: Optional[str], json_out: bool):
     """List + verify signed messages in this agent's inbox.
 
-    Reads SignedEnvelopes from ~/.skcomms/<realm>/<operator>/<agent>/inbox,
+    Reads SignedEnvelopes from ~/.skcapstone/skcomms/<realm>/<operator>/<agent>/inbox,
     verifying each signature against the sender's known public key.
     """
     from .mailbox import read_inbox
@@ -558,7 +558,7 @@ def inbox(agent: Optional[str], json_out: bool):
 def peers(ctx: click.Context, agent: Optional[str], json_out: bool):
     """Realm peers — list the message tree, or add/show connectivity records.
 
-    Run without a subcommand to list known peers in the ~/.skcomms realm
+    Run without a subcommand to list known peers in the ~/.skcapstone/skcomms realm
     tree (each <realm>/<operator>/<agent> dir other than this agent's, with
     its inbox message count). Use the ``add``/``show`` subcommands to manage
     the Syncthing-device + PGP-key bindings in ``peers.json`` (T8).
@@ -842,9 +842,9 @@ def registry_resolve(peer_fqid: str, json_out: bool):
 @click.option("--fingerprint", default=None, help="PGP fingerprint for signing.")
 @click.option("--force", "-f", is_flag=True, help="Overwrite existing config without prompt.")
 def init_config(name: Optional[str], fingerprint: Optional[str], force: bool):
-    """Initialize SKComms transport configuration (legacy ~/.skcomms/config.yml).
+    """Initialize SKComms transport configuration (legacy ~/.skcapstone/skcomms/config.yml).
 
-    Creates ~/.skcomms/config.yml with sensible defaults,
+    Creates ~/.skcapstone/skcomms/config.yml with sensible defaults,
     auto-detects Syncthing, tests file transport connectivity,
     and prints a setup summary.
 
@@ -957,7 +957,7 @@ def peer_group():
     """Peer directory — add, list, and remove peers.
 
     Maps friendly agent names to transport addresses.
-    Peers are stored in ~/.skcomms/peers/ and used by the router
+    Peers are stored in ~/.skcapstone/skcomms/peers/ and used by the router
     when resolving recipient names.
     """
 
@@ -1962,7 +1962,7 @@ def grants_group():
     """Manage held collection read-consent tokens.
 
     Accept tokens minted by peers and list the grants currently honored
-    in ``${SKCOMMS_HOME:-~/.skcomms}/recall_collections_consent.json``.
+    in ``${SKCOMMS_HOME:-~/.skcapstone/skcomms}/recall_collections_consent.json``.
     """
 
 
