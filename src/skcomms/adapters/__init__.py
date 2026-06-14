@@ -37,6 +37,13 @@ from .base import (
     ChannelAdapter,
 )
 from .discord import DiscordAdapter
+from .factory import (
+    BUILTIN_ADAPTERS,
+    build_adapter,
+    build_registry_from_config,
+    expand_env,
+)
+from .fake import FakeAdapter
 from .matrix import MatrixAdapter
 from .models import (
     ChannelMessage,
@@ -75,4 +82,10 @@ __all__ = [
     "SlackAdapter",
     "DiscordAdapter",
     "MatrixAdapter",
+    "FakeAdapter",
+    # Factory / config→registry plumbing
+    "BUILTIN_ADAPTERS",
+    "build_adapter",
+    "build_registry_from_config",
+    "expand_env",
 ]
