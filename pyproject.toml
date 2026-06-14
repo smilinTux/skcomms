@@ -116,7 +116,6 @@ dev = [
 skcomms = "skcomms.cli:main"
 skcomms-mcp = "skcomms.mcp_server:main"
 # Legacy aliases — keep working during transition
-skcomm-mcp = "skcomms.mcp_server:main"
 
 [project.urls]
 Homepage = "https://smilintux.org"

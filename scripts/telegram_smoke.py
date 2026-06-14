@@ -26,7 +26,7 @@ Usage::
 Creds (in priority order):
   1. Command-line flags --api-id / --api-hash
   2. Environment variables TELEGRAM_API_ID / TELEGRAM_API_HASH
-  3. ~/.skcomm/config.yml  adapters.telegram.api_id / api_hash
+  3. ~/.skcomms/config.yml  adapters.telegram.api_id / api_hash
 
 Session file:
   Default: ~/.skcapstone/agents/lumina/telegram.session
@@ -53,18 +53,18 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 def _load_config_yml() -> dict:
     """
-    Load ~/.skcomm/config.yml and return the adapters.telegram section.
+    Load ~/.skcomms/config.yml and return the adapters.telegram section.
     Returns an empty dict if the file does not exist or has no telegram block.
     """
-    config_path = Path("~/.skcomm/config.yml").expanduser()
+    config_path = Path("~/.skcomms/config.yml").expanduser()
     if not config_path.exists():
         return {}
     try:
         import yaml
 
         raw = yaml.safe_load(config_path.read_text()) or {}
-        # Support both top-level and nested under "skcomm:"
-        top = raw.get("skcomm", raw)
+        # Support both top-level and nested under "skcomms:"
+        top = raw.get("skcomms", raw)
         return top.get("adapters", {}).get("telegram", {})
     except Exception as exc:
         print(f"[warn] could not parse {config_path}: {exc}", file=sys.stderr)
@@ -100,7 +100,7 @@ def _resolve_creds(args: argparse.Namespace) -> tuple[str, str, str]:
             "Provide them via:\n"
             "  --api-id / --api-hash  flags\n"
             "  TELEGRAM_API_ID / TELEGRAM_API_HASH  environment variables\n"
-            "  ~/.skcomm/config.yml  adapters.telegram.api_id / api_hash\n",
+            "  ~/.skcomms/config.yml  adapters.telegram.api_id / api_hash\n",
             file=sys.stderr,
         )
         sys.exit(1)

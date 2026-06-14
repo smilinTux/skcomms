@@ -16,7 +16,7 @@ Usage::
 Creds (in priority order):
   1. --token flag
   2. DISCORD_BOT_TOKEN environment variable
-  3. ~/.skcomm/config.yml  adapters.discord.bot_token
+  3. ~/.skcomms/config.yml  adapters.discord.bot_token
 
 The bot must be:
   - Created at https://discord.com/developers/applications
@@ -42,17 +42,17 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 def _load_config_yml() -> dict:
     """
-    Load ~/.skcomm/config.yml and return the adapters.discord section.
+    Load ~/.skcomms/config.yml and return the adapters.discord section.
     Returns an empty dict if the file does not exist or has no discord block.
     """
-    config_path = Path("~/.skcomm/config.yml").expanduser()
+    config_path = Path("~/.skcomms/config.yml").expanduser()
     if not config_path.exists():
         return {}
     try:
         import yaml
 
         raw = yaml.safe_load(config_path.read_text()) or {}
-        top = raw.get("skcomm", raw)
+        top = raw.get("skcomms", raw)
         return top.get("adapters", {}).get("discord", {})
     except Exception as exc:
         print(f"[warn] could not parse {config_path}: {exc}", file=sys.stderr)
@@ -78,7 +78,7 @@ def _resolve_token(args: argparse.Namespace) -> str:
             "Provide it via:\n"
             "  --token  flag\n"
             "  DISCORD_BOT_TOKEN  environment variable\n"
-            "  ~/.skcomm/config.yml  adapters.discord.bot_token\n"
+            "  ~/.skcomms/config.yml  adapters.discord.bot_token\n"
             "\nSee docs/DISCORD_SETUP.md for how to create a bot and get a token.",
             file=sys.stderr,
         )

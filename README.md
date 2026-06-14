@@ -11,11 +11,11 @@ skcomms is the **Comms protocol capability** of the [SKWorld](https://skworld.io
 sovereign agent ecosystem. It is the *protocol over transport*: the layer that
 says who a message is from, who it's for, which realm it belongs to, and that it
 hasn't been tampered with. The bytes themselves are carried by
-[`skcomm`](https://github.com/smilinTux/skcomm) (singular, transport) — skcomms
+[`skcomms`](https://github.com/smilinTux/skcomms) (singular, transport) — skcomms
 (plural) is what those bytes *mean*.
 
-> **Canonical.** The `skcomm → skcomms` pivot is complete. `skcomms` is the in-use
-> package; the old `skcomm` is now a thin backward-compat transport shim. Build on
+> **Canonical.** The `skcomms → skcomms` pivot is complete. `skcomms` is the in-use
+> package; the old `skcomms` is now a thin backward-compat transport shim. Build on
 > `skcomms`. The realm layer (FQID addressing, signed Envelope v1, PGP TOFU,
 > cross-operator consent) is the canonical surface; the inherited transport
 > commands are still present and summarized at the end.
@@ -42,15 +42,15 @@ first contact (SSH host-key style TOFU) — is the real identity behind the hand
 
 ---
 
-## Why two repos? `skcomm` vs `skcomms`
+## Why two repos? `skcomms` vs `skcomms`
 
 | Concern | Repo | Layer |
 |---|---|---|
-| Carrying bytes between operators (Syncthing, IMAP, file, WebRTC, Nostr, …) | [`skcomm`](https://github.com/smilinTux/skcomm) | **Transport** |
+| Carrying bytes between operators (Syncthing, IMAP, file, WebRTC, Nostr, …) | [`skcomms`](https://github.com/smilinTux/skcomms) | **Transport** |
 | Defining what a message *is* — envelope schema, FQID identity, signing, realm routing, consent | `skcomms` (this repo) | **Protocol** |
 
 Split on 2026-04-26 so each layer moves at its own cadence and the dependency
-graph stays acyclic (`skcomms → skcomm`, never the reverse). The realm protocol
+graph stays acyclic (`skcomms → skcomms`, never the reverse). The realm protocol
 fixes the "two `jarvis`'s on the same realm" collision problem — disambiguation by
 PGP fingerprint, not by name.
 
@@ -91,13 +91,13 @@ component is the resolved self identity (via capauth). All paths honor the
 | **Realm registry** | multi-backend FQID resolver — sovereign Syncthing-shared file (default) + opt-in HTTPS + Tailscale | `registry.py` |
 | **Consent grants** | PGP-signed cross-operator memory-recall tokens that skmemory verifies offline | `grants.py` |
 | **skcapstone adapter** | default-on-by-presence: route alerts via `sk-alert`, register health sweep with `skscheduler` | `integration.py` |
-| **Transport layer** | inherited skcomm stack (Syncthing/file/Nostr/WebSocket/WebRTC/Tailscale, router, daemon, REST) | `core.py`, `transports/`, `router.py`, … |
+| **Transport layer** | inherited skcomms stack (Syncthing/file/Nostr/WebSocket/WebRTC/Tailscale, router, daemon, REST) | `core.py`, `transports/`, `router.py`, … |
 
 ---
 
 ## Where it lives in SKStack v2
 
-skcomms is a **Comms** capability. It sits *above* the transport layer (`skcomm`),
+skcomms is a **Comms** capability. It sits *above* the transport layer (`skcomms`),
 reads identity from **Core** (capauth, cluster.json), and feeds the message
 schema consumed by `skchat`. Its only hard dependencies are PGP (`pgpy`) and the
 filesystem; everything else — Syncthing transport, the skcapstone bus, the
@@ -107,7 +107,7 @@ scheduler — is reused when present and degrades gracefully when not.
 flowchart TD
     subgraph COMMS["Comms"]
       SKCOMMS["**skcomms**<br/>Envelope v1 · FQID routing · PGP signing · TOFU · consent"]
-      SKCOMM["skcomm<br/>(transport: Syncthing · file · WebRTC · Nostr …)"]
+      SKCOMMS["skcomms<br/>(transport: Syncthing · file · WebRTC · Nostr …)"]
       SKCHAT["skchat<br/>(chat app over the protocol)"]
     end
     subgraph CORE["Core (identity & trust)"]
@@ -123,7 +123,7 @@ flowchart TD
     CAPAUTH -->|"resolves FQID + signing key"| SKCOMMS
     CAP -->|"realm / operator (cluster.json)"| SKCOMMS
     SKCOMMS -->|"signed Envelope v1"| SKCHAT
-    SKCOMMS -->|"drops into realm tree, replicated by"| SKCOMM
+    SKCOMMS -->|"drops into realm tree, replicated by"| SKCOMMS
     SKCOMMS -->|"recall-consent tokens"| SKMEMORY
     SKCOMMS -. "alerts (optional)" .-> ALERT
     SKCOMMS -. "health sweep (optional)" .-> SCHED
@@ -147,14 +147,14 @@ lifecycle, the trust model, the registry resolution flow, and the source map.
 ## CLI reference
 
 The realm layer is the canonical surface. The older transport-config commands are
-the inherited skcomm layer and are summarized at the end.
+the inherited skcomms layer and are summarized at the end.
 
 ### Bootstrap
 
 | Command | What it does |
 |---|---|
 | `skcomms init [--agent <name>]` | Scaffold `~/.skcomms/<realm>/<operator>/<agent>/{outbox,inbox}` (from `cluster.json` + resolved identity) plus a top-level `.stignore`. Idempotent — never clobbers existing messages. |
-| `skcomms init-config [--name … --fingerprint … -f]` | **Legacy.** Write the old transport config `~/.skcomm/config.yml` (auto-detect Syncthing, test the file transport). Not the realm tree. |
+| `skcomms init-config [--name … --fingerprint … -f]` | **Legacy.** Write the old transport config `~/.skcomms/config.yml` (auto-detect Syncthing, test the file transport). Not the realm tree. |
 
 ### Realm messaging
 
@@ -192,9 +192,9 @@ operator/realm boundary; the consumer (skmemory) verifies it offline.
 | `skcomms grants accept <source>` | Verify + accept a peer's token (file path or `-` for stdin). Signature, granter TOFU, and expiry are checked, then it's merged idempotently into `recall_collections_consent.json` — the file skmemory reads. |
 | `skcomms grants list [--json-out]` | List the consent tokens currently held. |
 
-### Legacy transport layer (inherited skcomm)
+### Legacy transport layer (inherited skcomms)
 
-These predate the realm layer and operate on `~/.skcomm/` (transport config / peer
+These predate the realm layer and operate on `~/.skcomms/` (transport config / peer
 store) rather than the `~/.skcomms/` realm tree:
 
 - `skcomms send-transport <recipient> <message>` — route through all configured
@@ -230,7 +230,7 @@ severity.
 ## License
 
 **GPL-3.0-or-later** — see [`LICENSE`](LICENSE). Matches the rest of the smilinTux
-ecosystem (including `skcomm`, the transport library this depends on). Sovereign-AI
+ecosystem (including `skcomms`, the transport library this depends on). Sovereign-AI
 infra ships under copyleft so downstream forks stay open.
 
 ---
