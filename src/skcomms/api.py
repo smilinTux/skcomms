@@ -427,6 +427,12 @@ async def root():
     }
 
 
+@app.get("/health", tags=["health"])
+async def health():
+    """Liveness probe — alias so clients polling /health get 200 (not 404)."""
+    return {"status": "ok", "service": "SKComms API"}
+
+
 # ---------------------------------------------------------------------------
 # MCP tool relay — used by the consciousness-swipe browser extension.
 #
