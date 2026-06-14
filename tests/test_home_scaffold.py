@@ -130,3 +130,58 @@ class TestScaffold:
                 assert result["agent_dir"] == tmp_path / "home" / "douno" / "casey" / "opus"
         finally:
             cm._CLUSTER_LOOKUP = original
+
+    def test_agent_name_falls_back_to_agent_field_when_no_fqid(
+        self, monkeypatch, tmp_path, fixture_cluster
+    ):
+        """When the resolved identity has no fqid, _agent_name uses the agent
+        field (the realm-tree name still resolves, no crash)."""
+        monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "home"))
+        with patch(
+            "skcomms.home.resolve_self_identity",
+            return_value={"agent": "jarvis", "fingerprint": "Y"},  # no fqid
+        ):
+            from skcomms.home import scaffold
+
+            result = scaffold()
+            assert result["agent"] == "jarvis"
+            assert result["agent_dir"].name == "jarvis"
+
+
+# ---------------------------------------------------------------------------
+# peer_inbox — sender-side inbox path mapping for a recipient FQID
+# ---------------------------------------------------------------------------
+
+
+class TestPeerInbox:
+    def test_maps_fqid_to_realm_operator_agent_inbox(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "home"))
+        from skcomms.home import peer_inbox
+
+        # <agent>@<operator>.<realm> -> <home>/<realm>/<operator>/<agent>/inbox
+        path = peer_inbox("opus@casey.douno")
+        assert path == tmp_path / "home" / "douno" / "casey" / "opus" / "inbox"
+
+    def test_handles_multi_dot_realm(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "home"))
+        from skcomms.home import peer_inbox
+
+        # realm component keeps everything after the first '.' (rsplit on operator)
+        path = peer_inbox("lumina@chef.sk.world")
+        assert path == tmp_path / "home" / "sk.world" / "chef" / "lumina" / "inbox"
+
+    def test_rejects_fqid_without_at(self):
+        import pytest
+
+        from skcomms.home import peer_inbox
+
+        with pytest.raises(ValueError, match="invalid fqid"):
+            peer_inbox("not-a-fqid")
+
+    def test_rejects_fqid_without_realm_dot(self):
+        import pytest
+
+        from skcomms.home import peer_inbox
+
+        with pytest.raises(ValueError, match="invalid fqid"):
+            peer_inbox("opus@casey")  # no '.' in the operator.realm part

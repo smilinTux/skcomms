@@ -38,3 +38,19 @@ def test_expand_macros_is_single_pass_no_reexpansion():
     # a standalone "main" elsewhere DOES still expand
     assert expand_macros("ship and main", lex) == \
         "(rebase onto main then push) and (MAIN-BRANCH-REF)"
+
+
+def test_expand_macros_prefers_longest_match_first():
+    # The longer multi-word macro must win over a shorter prefix macro so the
+    # alternation regex doesn't greedily match the shorter form.
+    lex = MacroLexicon({"P0": "priority zero",
+                        "P0 down": "priority-zero outage"})
+    out = expand_macros("P0 down now", lex)
+    # "P0 down" (longest) matched as a unit, not "P0" + " down"
+    assert "(priority-zero outage)" in out
+    assert "(priority zero)" not in out
+
+
+def test_expand_macros_empty_lexicon_is_identity():
+    lex = MacroLexicon({})
+    assert expand_macros("anything at all", lex) == "anything at all"

@@ -67,6 +67,43 @@ def test_transport_metadata():
     assert t.category == TransportCategory.OFFLINE
 
 
+def test_budget_smaller_than_mtu_is_rejected():
+    # A budget that can't fit even one full LoRa frame would silently wedge the
+    # queue forever — the constructor must reject it up front.
+    bad = AirtimeBudget(max_bytes=framing.LORA_MTU - 1, window_s=3600)
+    with pytest.raises(ValueError, match="LoRa MTU"):
+        LoRaTransport(
+            identity=MeshIdentity.generate("a@x.y"), interface=None, budget=bad,
+        )
+
+
+def test_sync_send_returns_failure_pointing_at_async():
+    t = _transport("a@x.y", None)
+    result = t.send(b"x", "b@x.y")
+    assert result.success is False
+    assert "async" in result.error.lower()
+
+
+def test_is_available_false_without_running_iface():
+    t = _transport("a@x.y", None)
+    assert t.is_available() is False
+
+
+def test_identity_id_for_empty_recipient_is_broadcast():
+    from skcomms.transports.ble import gatt
+    t = _transport("a@x.y", None)
+    assert t.identity_id_for("") == gatt.BROADCAST_ID
+
+
+@pytest.mark.asyncio
+async def test_health_check_reports_unavailable_without_iface():
+    from skcomms.transport import TransportStatus
+    t = _transport("a@x.y", None)
+    h = t.health_check()
+    assert h.status == TransportStatus.UNAVAILABLE
+    assert h.transport_name == "lora"
+
+
 @pytest.mark.asyncio
 async def test_send_enforces_airtime_budget_on_send_path():
     # An over-budget multi-frame message must transmit only the frames that fit
