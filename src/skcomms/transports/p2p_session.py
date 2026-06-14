@@ -23,7 +23,7 @@ from typing import Awaitable, Callable, Optional
 
 logger = logging.getLogger("skcomms.p2p_session")
 
-CHANNEL_LABEL = "skcomm"
+CHANNEL_LABEL = "skcomms"
 
 
 class P2PSession:

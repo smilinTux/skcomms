@@ -1,5 +1,5 @@
 """
-SKComm envelope compression — reduce payload size before transport.
+SKComms envelope compression — reduce payload size before transport.
 
 Supports gzip (stdlib, always available) and zstd (optional, faster).
 Compression is transparent: the `compressed` flag on MessagePayload
@@ -9,7 +9,7 @@ The content string is compressed to base64-encoded binary, then
 decompressed back to the original string on the receive side.
 
 Usage:
-    from skcomm.compression import compress_payload, decompress_payload
+    from skcomms.compression import compress_payload, decompress_payload
 
     envelope = compress_payload(envelope, min_size=256)
     envelope = decompress_payload(envelope)
@@ -25,7 +25,7 @@ from typing import Optional
 
 from .models import MessageEnvelope, MessagePayload
 
-logger = logging.getLogger("skcomm.compression")
+logger = logging.getLogger("skcomms.compression")
 
 try:
     import zstandard as _zstd

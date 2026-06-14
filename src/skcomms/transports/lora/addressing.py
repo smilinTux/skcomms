@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 SK_CHANNEL = "skworld"
-_DEFAULT_PATH = Path.home() / ".skcomm" / "lora-nodes.json"
+_DEFAULT_PATH = Path.home() / ".skcomms" / "lora-nodes.json"
 
 
 class NodeMap:

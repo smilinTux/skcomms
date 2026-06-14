@@ -1,12 +1,12 @@
 """
-SKComm transport metrics — per-transport delivery stats and latency tracking.
+SKComms transport metrics — per-transport delivery stats and latency tracking.
 
 Tracks success/failure counts, average latency, error history,
-and uptime per transport. Persisted as JSON at ~/.skcomm/metrics.json
+and uptime per transport. Persisted as JSON at ~/.skcomms/metrics.json
 so stats survive restarts.
 
 Usage:
-    from skcomm.metrics import MetricsCollector
+    from skcomms.metrics import MetricsCollector
     mc = MetricsCollector()
     mc.record_send("syncthing", success=True, latency_ms=12.5)
     mc.record_send("nostr", success=False, error="relay timeout")
@@ -23,9 +23,9 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from .config import SKCOMM_HOME
+from .config import SKCOMMS_HOME
 
-logger = logging.getLogger("skcomm.metrics")
+logger = logging.getLogger("skcomms.metrics")
 
 METRICS_FILE = "metrics.json"
 MAX_ERRORS = 20
@@ -93,7 +93,7 @@ class MetricsCollector:
     """
 
     def __init__(self, metrics_path: Optional[Path] = None):
-        self._path = metrics_path or Path(SKCOMM_HOME).expanduser() / METRICS_FILE
+        self._path = metrics_path or Path(SKCOMMS_HOME).expanduser() / METRICS_FILE
         self._stats: dict[str, TransportStats] = {}
         self._load()
 

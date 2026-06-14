@@ -1,5 +1,5 @@
 """
-SKComm message models — the universal envelope format.
+SKComms message models — the universal envelope format.
 
 The envelope never changes. Only the delivery mechanism varies.
 Every message gets wrapped in an envelope with identity, routing,
@@ -103,14 +103,14 @@ URGENCY_PRIORITY: dict[str, int] = {
 
 
 class MessageEnvelope(BaseModel):
-    """The universal SKComm message envelope.
+    """The universal SKComms message envelope.
 
     Every message — text, file, seed, FEB, command — gets wrapped
     in this envelope before touching any transport. The transport
     never sees inside. The envelope is the contract.
 
     Args:
-        skcomm_version: Protocol version for forward compatibility.
+        skcomms_version: Protocol version for forward compatibility.
         envelope_id: UUID v4 for deduplication across transports.
         sender: PGP fingerprint or agent name of the sender.
         recipient: PGP fingerprint or agent name of the recipient.
@@ -119,7 +119,7 @@ class MessageEnvelope(BaseModel):
         metadata: Threading, urgency, and delivery tracking.
     """
 
-    skcomm_version: str = "1.0.0"
+    skcomms_version: str = "1.0.0"
     envelope_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     sender: str
     recipient: str

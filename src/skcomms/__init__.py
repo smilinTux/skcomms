@@ -3,9 +3,9 @@
 Multi-channel transport (Syncthing/file/websocket/WebRTC/Nostr/Tailscale/...)
 unified under FQID ``<agent>@<operator>.<realm>`` sovereign addressing.
 
-Transport layer (from skcomm, now canonical here):
-    from skcomms import SKComm
-    from skcomms.core import SKComm
+Transport layer (from skcomms, now canonical here):
+    from skcomms import SKComms
+    from skcomms.core import SKComms
     from skcomms.models import MessageEnvelope
 
 FQID / realm layer (pre-alpha stubs, implementations landing in coord tasks):
@@ -17,7 +17,7 @@ FQID / realm layer (pre-alpha stubs, implementations landing in coord tasks):
 
 __version__ = "0.1.3"
 
-from .core import SKComm
+from .core import SKComms, SKComm
 from .crypto import EnvelopeCrypto, KeyStore
 from .models import (
     MessageEnvelope,
@@ -33,7 +33,8 @@ from .transport import HealthStatus, SendResult, Transport, TransportError, Tran
 
 __all__ = [
     # Transport layer
-    "SKComm",
+    "SKComms",
+    "SKComm",  # deprecated alias
     "MessageEnvelope",
     "MessageMetadata",
     "MessagePayload",

@@ -11,7 +11,7 @@ so the adapter is fully unit-testable without any live credentials.  The
 production path would use `slack_sdk`; the injectable protocol covers only the
 calls this adapter actually makes.
 
-Config block in ``~/.skcomm/config.yml``::
+Config block in ``~/.skcomms/config.yml``::
 
     adapters:
       slack:
@@ -23,7 +23,7 @@ Config block in ``~/.skcomm/config.yml``::
           sktechops:
             channel_id: "C0123456789"
             agent_fqid: "lumina@skworld.io"
-        identity_store: "~/.skcomm/adapters/slack-ids.yaml"
+        identity_store: "~/.skcomms/adapters/slack-ids.yaml"
 
 Scopes required (Bot Token)
 ---------------------------
@@ -157,7 +157,7 @@ class SlackAdapter(ChannelAdapter):
         self._poll_s: float = config.get("poll_interval_s", 1)
         self._channels: dict[str, dict] = config.get("channels", {})
         self._id_store_path: str = config.get(
-            "identity_store", "~/.skcomm/adapters/slack-ids.yaml"
+            "identity_store", "~/.skcomms/adapters/slack-ids.yaml"
         )
 
         # --- State ---

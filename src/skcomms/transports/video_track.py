@@ -14,7 +14,7 @@ Usage:
     await frame_queue.put(bgr_numpy_array)
 
 Dependencies (optional extra):
-    pip install 'skcomm[webrtc]'  →  aiortc>=1.9.0, av
+    pip install 'skcomms[webrtc]'  →  aiortc>=1.9.0, av
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from typing import Optional
 
 import numpy as np
 
-logger = logging.getLogger("skcomm.transports.video_track")
+logger = logging.getLogger("skcomms.transports.video_track")
 
 # RTP video clock rate (standard, do not change)
 VIDEO_CLOCK_RATE = 90000

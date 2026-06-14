@@ -18,7 +18,7 @@ def test_health():
 
 def test_relays_signal_between_two_peers():
     c = TestClient(app)
-    room = "skcomm-test-room"
+    room = "skcomms-test-room"
     a_fp, b_fp = "A" * 40, "B" * 40
     with c.websocket_connect(f"/webrtc/ws?room={room}&peer={a_fp}") as wa, \
          c.websocket_connect(f"/webrtc/ws?room={room}&peer={b_fp}") as wb:

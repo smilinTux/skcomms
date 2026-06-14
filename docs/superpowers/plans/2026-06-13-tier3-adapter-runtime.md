@@ -12,7 +12,7 @@ Live bridging to real TG/Discord/Slack stays GATED on Chef's creds.
 **Architecture:** Mirror `core.py`'s `BUILTIN_TRANSPORTS` pattern. A factory maps
 `adapter_type → constructor`, expands `${ENV_VAR}` placeholders in config values, and
 constructs the right adapter (handling the heterogeneous constructor shapes). A builder
-reads the `adapters:` block of `~/.skcomm/config.yml`, builds each **enabled** adapter,
+reads the `adapters:` block of `~/.skcomms/config.yml`, builds each **enabled** adapter,
 and **skips** adapters whose required token is missing/empty (so it never crashes without
 creds — the GATED-friendly behaviour). A `FakeAdapter` implements the ABC with no network
 so the registry + lifecycle are CI-testable.

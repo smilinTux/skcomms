@@ -1,5 +1,5 @@
 """
-SKComm pub/sub engine — lightweight sovereign event distribution.
+SKComms pub/sub engine — lightweight sovereign event distribution.
 
 In-process publish/subscribe broker that enables real-time event
 distribution across sovereign agents at 100+ node scale. No external
@@ -38,7 +38,7 @@ from typing import Any, Callable, Optional
 
 from pydantic import BaseModel, Field
 
-logger = logging.getLogger("skcomm.pubsub")
+logger = logging.getLogger("skcomms.pubsub")
 
 # ---------------------------------------------------------------------------
 # Predefined sovereign topics (documentation anchor — not enforced)
@@ -176,8 +176,8 @@ class PubSubBroker:
     patterns. Suitable for 100+ concurrent subscribers.
 
     The broker runs entirely in-process. For cross-node delivery use
-    :class:`~skcomm.pubsub_transport.TransportBridge` to wire the broker
-    to SKComm transports.
+    :class:`~skcomms.pubsub_transport.TransportBridge` to wire the broker
+    to SKComms transports.
 
     Args:
         name: Optional human-readable label for this broker instance.

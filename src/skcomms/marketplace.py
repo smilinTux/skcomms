@@ -5,11 +5,11 @@ Skills are published as Nostr kind 30078 parameterized-replaceable events
 (NIP-78 application-specific data). Each skill manifest is a JSON payload
 with metadata, tags, and install instructions.
 
-Local registry at ~/.skcomm/skills/ tracks installed skills as YAML files.
+Local registry at ~/.skcomms/skills/ tracks installed skills as YAML files.
 
 Usage:
-    from skcomm.marketplace import SkillManifest, SkillRegistry
-    from skcomm.marketplace import publish_skill, search_skills
+    from skcomms.marketplace import SkillManifest, SkillRegistry
+    from skcomms.marketplace import publish_skill, search_skills
 """
 
 from __future__ import annotations
@@ -22,9 +22,9 @@ from typing import Optional
 import yaml
 from pydantic import BaseModel, Field
 
-from .config import SKCOMM_HOME
+from .config import SKCOMMS_HOME
 
-logger = logging.getLogger("skcomm.marketplace")
+logger = logging.getLogger("skcomms.marketplace")
 
 SKILLS_DIR_NAME = "skills"
 NOSTR_SKILL_KIND = 30078
@@ -111,7 +111,7 @@ class SkillManifest(BaseModel):
 
 
 class SkillRegistry:
-    """Local registry of installed skills at ~/.skcomm/skills/.
+    """Local registry of installed skills at ~/.skcomms/skills/.
 
     Each installed skill is stored as a YAML manifest file.
 
@@ -120,7 +120,7 @@ class SkillRegistry:
     """
 
     def __init__(self, skills_dir: Optional[Path] = None):
-        self._dir = skills_dir or Path(SKCOMM_HOME).expanduser() / SKILLS_DIR_NAME
+        self._dir = skills_dir or Path(SKCOMMS_HOME).expanduser() / SKILLS_DIR_NAME
         self._dir.mkdir(parents=True, exist_ok=True)
 
     @property
@@ -234,7 +234,7 @@ def publish_skill(
         return None
 
     if not NOSTR_AVAILABLE:
-        logger.error("Nostr crypto deps missing — install skcomm[nostr]")
+        logger.error("Nostr crypto deps missing — install skcomms[nostr]")
         return None
 
     secret = bytes.fromhex(private_key_hex)
@@ -306,7 +306,7 @@ def search_skills(
         return []
 
     if not NOSTR_AVAILABLE:
-        logger.error("Nostr crypto deps missing — install skcomm[nostr]")
+        logger.error("Nostr crypto deps missing — install skcomms[nostr]")
         return []
 
     filters: dict = {

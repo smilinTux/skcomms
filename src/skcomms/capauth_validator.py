@@ -15,7 +15,7 @@ The detached PGP signature covers the UTF-8 string::
 A ±300-second window is accepted to tolerate clock skew while preventing
 replay attacks. The signer's public key is resolved from:
 
-1. ``~/.skcomm/keys/<FINGERPRINT>.asc`` — SKComm per-agent keystore
+1. ``~/.skcomms/keys/<FINGERPRINT>.asc`` — SKComms per-agent keystore
 2. ``gpg --export --armor <FINGERPRINT>`` — system GPG keyring
 
 **Remote validation** is available by setting ``capauth_url`` to a
@@ -25,7 +25,7 @@ validator falls back to local PGP verification.
 **Dev-mode** (``require_auth=False``): a plain 40-hex fingerprint with no
 timestamp or signature is accepted. This bypasses ALL cryptographic
 guarantees and should only be used in isolated development environments.
-Set ``SKCOMM_DEV_AUTH=1`` as a reminder to yourself that auth is disabled.
+Set ``SKCOMMS_DEV_AUTH=1`` as a reminder to yourself that auth is disabled.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ def _find_pubkey_by_fingerprint(
 
     Reconciles the WebRTC SDP-verify key resolution with the mailbox/TOFU layer:
     local agents keep their keypair under ``~/.skcapstone/agents/<a>/capauth/identity``
-    (the path fixed 2026-06-11), which the legacy ``~/.skcomm/keys`` + gpg lookup
+    (the path fixed 2026-06-11), which the legacy ``~/.skcomms/keys`` + gpg lookup
     never searched.
 
     Args:
@@ -79,7 +79,7 @@ def _find_pubkey_by_fingerprint(
                 return str(key)
     return None
 
-logger = logging.getLogger("skcomm.capauth_validator")
+logger = logging.getLogger("skcomms.capauth_validator")
 
 # PGP fingerprint: 40 hex characters
 _FINGERPRINT_RE = re.compile(r"^[0-9A-Fa-f]{40}$")
@@ -98,7 +98,7 @@ class CapAuthValidator:
       the token signature. Set ``capauth_url`` to enable.
     - **Local PGP** (default): verifies the detached PGP signature embedded
       in the token against the signer's public key. Requires ``pgpy`` and
-      either ``~/.skcomm/keys/<FINGERPRINT>.asc`` or GPG keyring.
+      either ``~/.skcomms/keys/<FINGERPRINT>.asc`` or GPG keyring.
     - **Dev mode** (no auth): ``require_auth=False`` accepts a plain
       40-hex fingerprint with no signature. **Never use in production.**
 
@@ -155,12 +155,12 @@ class CapAuthValidator:
 
         A ±300-second window is accepted to tolerate clock skew while
         preventing replay attacks. The signer's public key is loaded from
-        ``~/.skcomm/keys/<FINGERPRINT>.asc`` or the system GPG keyring.
+        ``~/.skcomms/keys/<FINGERPRINT>.asc`` or the system GPG keyring.
 
         **Dev-mode shortcut** — when ``require_auth=False`` a plain
         40-hex fingerprint (no dots) is accepted without any signature.
         This is useful during local development when agents haven't
-        exchanged keys yet. Set ``SKCOMM_DEV_AUTH=1`` in the environment
+        exchanged keys yet. Set ``SKCOMMS_DEV_AUTH=1`` in the environment
         as a visible reminder that authentication is disabled.
 
         .. warning::
@@ -259,7 +259,7 @@ class CapAuthValidator:
         except ImportError:
             logger.warning(
                 "pgpy not installed — skipping PGP signature check. "
-                "Install skcomm[crypto] for full CapAuth PGP verification."
+                "Install skcomms[crypto] for full CapAuth PGP verification."
             )
             # Without pgpy we cannot verify; in strict mode this is a hard
             # failure. In permissive mode we pass the fingerprint through
@@ -275,7 +275,7 @@ class CapAuthValidator:
 
         Search order:
 
-        1. ``~/.skcomm/keys/<FINGERPRINT>.asc`` — SKComm per-agent keystore
+        1. ``~/.skcomms/keys/<FINGERPRINT>.asc`` — SKComms per-agent keystore
         2. ``gpg --export --armor <FINGERPRINT>`` — system GPG keyring
 
         Args:
@@ -288,8 +288,8 @@ class CapAuthValidator:
 
         import pgpy  # type: ignore[import]
 
-        # 1. SKComm local key store
-        key_path = Path.home() / ".skcomm" / "keys" / f"{fingerprint}.asc"
+        # 1. SKComms local key store
+        key_path = Path.home() / ".skcomms" / "keys" / f"{fingerprint}.asc"
         if key_path.exists():
             try:
                 key, _ = pgpy.PGPKey.from_file(str(key_path))
@@ -301,7 +301,7 @@ class CapAuthValidator:
         # 2. Per-agent CapAuth identity dirs + skcomms peers store, matched by
         #    fingerprint. Reconciles the WebRTC verify path with the mailbox/TOFU
         #    layer (2026-06-11) so a *local* agent's signed SDP (e.g. opus↔lumina)
-        #    verifies — those keys live under capauth/identity, not ~/.skcomm/keys.
+        #    verifies — those keys live under capauth/identity, not ~/.skcomms/keys.
         armor = _find_pubkey_by_fingerprint(fingerprint)
         if armor:
             try:
@@ -397,7 +397,7 @@ class CapAuthValidator:
         except ImportError:
             logger.warning(
                 "pgpy not installed — cannot verify SDP signature. "
-                "Install skcomm[crypto] for full CapAuth PGP verification."
+                "Install skcomms[crypto] for full CapAuth PGP verification."
             )
             return False
         except Exception as exc:

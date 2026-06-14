@@ -1,5 +1,5 @@
 """
-SKComm delivery acknowledgment tracker.
+SKComms delivery acknowledgment tracker.
 
 When a message is sent with ack_requested=True, the sender
 records it as "pending ACK." When the receiver processes the
@@ -10,7 +10,7 @@ resolved as "confirmed."
 Pending ACKs that exceed the timeout are marked "timed_out"
 and can be retried or escalated.
 
-Persistence: pending ACKs are stored as JSON in ~/.skcomm/acks/
+Persistence: pending ACKs are stored as JSON in ~/.skcomms/acks/
 so they survive process restarts.
 """
 
@@ -24,10 +24,10 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from .config import SKCOMM_HOME
+from .config import SKCOMMS_HOME
 from .models import MessageEnvelope
 
-logger = logging.getLogger("skcomm.ack")
+logger = logging.getLogger("skcomms.ack")
 
 ACKS_DIR_NAME = "acks"
 ACK_SUFFIX = ".ack.json"
@@ -88,7 +88,7 @@ class AckTracker:
         acks_dir: Optional[Path] = None,
         default_timeout: int = DEFAULT_ACK_TIMEOUT,
     ):
-        self._dir = acks_dir or Path(SKCOMM_HOME).expanduser() / ACKS_DIR_NAME
+        self._dir = acks_dir or Path(SKCOMMS_HOME).expanduser() / ACKS_DIR_NAME
         self._dir.mkdir(parents=True, exist_ok=True)
         self._default_timeout = default_timeout
 

@@ -1,13 +1,13 @@
 """
-SKComm CLI — sovereign agent messaging from the command line.
+SKComms CLI — sovereign agent messaging from the command line.
 
 Send, receive, and manage messages across all transports
 from any terminal. Works standalone or alongside the daemon.
 
 Usage:
-    skcomm send lumina "Hello from the terminal"
-    skcomm receive
-    skcomm status
+    skcomms send lumina "Hello from the terminal"
+    skcomms receive
+    skcomms status
 """
 
 from __future__ import annotations
@@ -33,9 +33,9 @@ except ImportError:
     console = None  # type: ignore[assignment]
 
 from . import __version__
-from .config import SKCOMM_HOME
+from .config import SKCOMMS_HOME
 
-_HOME = SKCOMM_HOME
+_HOME = SKCOMMS_HOME
 
 
 def _print(msg: str) -> None:
@@ -47,9 +47,9 @@ def _print(msg: str) -> None:
 
 
 @click.group()
-@click.version_option(version=__version__, prog_name="skcomm")
+@click.version_option(version=__version__, prog_name="skcomms")
 def main():
-    """SKComm — Sovereign Agent Communication.
+    """SKComms — Sovereign Agent Communication.
 
     Transport-agnostic encrypted messaging.
     One message. Many paths. Always delivered.
@@ -91,14 +91,14 @@ def send(
 
     Examples:
 
-        skcomm send lumina "Sync complete on desktop"
+        skcomms send lumina "Sync complete on desktop"
 
-        skcomm send opus "Need review" --urgency high
+        skcomms send opus "Need review" --urgency high
     """
-    from .core import SKComm
+    from .core import SKComms
     from .models import RoutingMode, Urgency
 
-    comm = SKComm.from_config(config)
+    comm = SKComms.from_config(config)
     mode_enum = RoutingMode(mode) if mode else None
     urgency_enum = Urgency(urgency)
 
@@ -134,9 +134,9 @@ def receive(config: Optional[str], json_out: bool):
     Polls every configured transport, deduplicates, and
     displays received messages.
     """
-    from .core import SKComm
+    from .core import SKComms
 
-    comm = SKComm.from_config(config)
+    comm = SKComms.from_config(config)
     envelopes = comm.receive()
 
     if not envelopes:
@@ -201,15 +201,15 @@ def daemon(config: Optional[str], interval: int, all_agents: bool):
 
     \b
     Examples:
-        skcomm daemon                    # Poll every 5s for current agent
-        skcomm daemon --all-agents       # Poll for all agents
-        skcomm daemon -i 10 --all-agents # Poll every 10s for all agents
+        skcomms daemon                    # Poll every 5s for current agent
+        skcomms daemon --all-agents       # Poll for all agents
+        skcomms daemon -i 10 --all-agents # Poll every 10s for all agents
     """
     import signal
     import time
 
     from .config import load_config
-    from .core import SKComm
+    from .core import SKComms
 
     cfg = load_config(config)
 
@@ -219,7 +219,7 @@ def daemon(config: Optional[str], interval: int, all_agents: bool):
             if tname == "syncthing":
                 tconf.settings["agents"] = "auto"
 
-    comm = SKComm.from_config(config)
+    comm = SKComms.from_config(config)
 
     # Re-configure syncthing transport if --all-agents was used
     if all_agents:
@@ -235,7 +235,7 @@ def daemon(config: Optional[str], interval: int, all_agents: bool):
             agents_info = f" (scanning for: {', '.join(transport._local_names)})"
             break
 
-    _print("\n  [bold]SKComm daemon started[/]")
+    _print("\n  [bold]SKComms daemon started[/]")
     _print(f"  Identity: [cyan]{agent_name}[/]{agents_info}")
     _print(f"  Poll interval: {interval}s")
     _print("  Press Ctrl+C to stop.\n")
@@ -272,10 +272,10 @@ def daemon(config: Optional[str], interval: int, all_agents: bool):
 @click.option("--config", "-c", default=None, help="Config file path.")
 @click.option("--json-out", is_flag=True, help="Output as JSON.")
 def status(config: Optional[str], json_out: bool):
-    """Show SKComm status and transport health."""
-    from .core import SKComm
+    """Show SKComms status and transport health."""
+    from .core import SKComms
 
-    comm = SKComm.from_config(config)
+    comm = SKComms.from_config(config)
     st = comm.status()
 
     if json_out:
@@ -293,7 +293,7 @@ def status(config: Optional[str], json_out: bool):
                 f"Encrypt: {'[green]yes[/]' if st['encrypt'] else '[red]no[/]'}\n"
                 f"Sign: {'[green]yes[/]' if st['sign'] else '[red]no[/]'}\n"
                 f"Transports: [bold]{st['transport_count']}[/]",
-                title="SKComm",
+                title="SKComms",
                 border_style="bright_blue",
             )
         )
@@ -341,9 +341,9 @@ def _detect_syncthing() -> Optional[str]:
     candidates = [
         Path("~/.skcapstone/sync/comms").expanduser(),
         Path("~/.skcapstone/comms").expanduser(),
-        Path("~/Sync/skcomm").expanduser(),
+        Path("~/Sync/skcomms").expanduser(),
         Path("~/Sync/comms").expanduser(),
-        Path("~/.local/share/syncthing/skcomm").expanduser(),
+        Path("~/.local/share/syncthing/skcomms").expanduser(),
     ]
     for path in candidates:
         if path.exists():
@@ -417,7 +417,7 @@ def _test_file_transport_ping(drop_root: Path) -> bool:
     """
     import time
 
-    probe = drop_root / "inbox" / f".skcomm_probe_{int(time.time())}.tmp"
+    probe = drop_root / "inbox" / f".skcomms_probe_{int(time.time())}.tmp"
     try:
         probe.write_text("ping")
         result = probe.exists() and probe.read_text() == "ping"
@@ -842,19 +842,19 @@ def registry_resolve(peer_fqid: str, json_out: bool):
 @click.option("--fingerprint", default=None, help="PGP fingerprint for signing.")
 @click.option("--force", "-f", is_flag=True, help="Overwrite existing config without prompt.")
 def init_config(name: Optional[str], fingerprint: Optional[str], force: bool):
-    """Initialize SKComm transport configuration (legacy ~/.skcomm/config.yml).
+    """Initialize SKComms transport configuration (legacy ~/.skcomms/config.yml).
 
-    Creates ~/.skcomm/config.yml with sensible defaults,
+    Creates ~/.skcomms/config.yml with sensible defaults,
     auto-detects Syncthing, tests file transport connectivity,
     and prints a setup summary.
 
     Examples:
 
-        skcomm init
+        skcomms init
 
-        skcomm init --name jarvis
+        skcomms init --name jarvis
 
-        skcomm init --name jarvis --fingerprint ABC123 --force
+        skcomms init --name jarvis --fingerprint ABC123 --force
     """
     import yaml
 
@@ -875,7 +875,7 @@ def init_config(name: Optional[str], fingerprint: Optional[str], force: bool):
         default_name = os.environ.get("USER", "agent")
         name = click.prompt("Agent name", default=default_name)
 
-    _print(f"\n  [bold]Initializing SKComm for [cyan]{name}[/]...[/]\n")
+    _print(f"\n  [bold]Initializing SKComms for [cyan]{name}[/]...[/]\n")
 
     # Detect Syncthing
     comms_root = _detect_syncthing()
@@ -904,7 +904,7 @@ def init_config(name: Optional[str], fingerprint: Optional[str], force: bool):
     _check_disk_space_warning(Path(comms_root))
 
     config = {
-        "skcomm": {
+        "skcomms": {
             "version": "1.0.0",
             "identity": {"name": name},
             "defaults": {
@@ -935,20 +935,20 @@ def init_config(name: Optional[str], fingerprint: Optional[str], force: bool):
     }
 
     if fingerprint:
-        config["skcomm"]["identity"]["fingerprint"] = fingerprint
+        config["skcomms"]["identity"]["fingerprint"] = fingerprint
 
     config_path.write_text(yaml.dump(config, default_flow_style=False))
     _print(f"  [green]✓[/] Config written: [dim]{config_path}[/]")
 
     # Summary
-    _print("\n  [bold green]SKComm ready![/]")
+    _print("\n  [bold green]SKComms ready![/]")
     _print(f"  Identity:   [bold cyan]{name}[/]")
     if fingerprint:
         _print(f"  Fingerprint: [dim]{fingerprint}[/]")
     _print("  Transports: syncthing (priority 1), file (priority 2)")
     _print(f"  Config:     [dim]{config_path}[/]")
-    _print("  API:        [dim]skcomm serve[/] (port 9384)")
-    _print("  Send test:  [dim]skcomm send <peer> 'hello'[/]")
+    _print("  API:        [dim]skcomms serve[/] (port 9384)")
+    _print("  Send test:  [dim]skcomms send <peer> 'hello'[/]")
     _print("")
 
 
@@ -957,7 +957,7 @@ def peer_group():
     """Peer directory — add, list, and remove peers.
 
     Maps friendly agent names to transport addresses.
-    Peers are stored in ~/.skcomm/peers/ and used by the router
+    Peers are stored in ~/.skcomms/peers/ and used by the router
     when resolving recipient names.
     """
 
@@ -984,11 +984,11 @@ def peer_add(name: str, address: str, transport: str, fingerprint: Optional[str]
 
     Examples:
 
-        skcomm peer add lumina ~/.skcapstone/comms --transport syncthing
+        skcomms peer add lumina ~/.skcapstone/comms --transport syncthing
 
-        skcomm peer add opus /mnt/shared/inbox --transport file
+        skcomms peer add opus /mnt/shared/inbox --transport file
 
-        skcomm peer add hal9000 abc123...def --transport nostr
+        skcomms peer add hal9000 abc123...def --transport nostr
     """
     from .discovery import PeerInfo, PeerStore, PeerTransport
 
@@ -1024,7 +1024,7 @@ def peer_remove(name: str):
 
     Examples:
 
-        skcomm peer remove lumina
+        skcomms peer remove lumina
     """
     from .discovery import PeerStore
 
@@ -1041,7 +1041,7 @@ def peer_remove(name: str):
 def peer_list(json_out: bool):
     """List all peers in the directory.
 
-    Shows peers stored via `skcomm peer add` or discovered
+    Shows peers stored via `skcomms peer add` or discovered
     automatically, with transport endpoints and last-seen times.
     """
     from .discovery import PeerStore
@@ -1062,7 +1062,7 @@ def peer_list(json_out: bool):
 
     if not all_peers:
         _print("\n  [dim]No peers in directory.[/]")
-        _print("  [dim]Run [bold]skcomm peer add <name> <address>[/] to add one.[/]\n")
+        _print("  [dim]Run [bold]skcomms peer add <name> <address>[/] to add one.[/]\n")
         return
 
     _print(f"\n  [bold]{len(all_peers)}[/] peer(s):\n")
@@ -1109,11 +1109,11 @@ def peer_fetch(name: str, url: Optional[str], no_save: bool):
 
     Examples:
 
-        skcomm peer fetch lumina
+        skcomms peer fetch lumina
 
-        skcomm peer fetch opus --url https://custom.example/did.json
+        skcomms peer fetch opus --url https://custom.example/did.json
 
-        skcomm peer fetch jarvis --url file:///path/to/did.json
+        skcomms peer fetch jarvis --url file:///path/to/did.json
     """
     from .key_exchange import KeyExchangeError, fetch_peer_from_did
 
@@ -1148,11 +1148,11 @@ def peer_export(file_path: Optional[str], no_transports: bool):
 
     Examples:
 
-        skcomm peer export
+        skcomms peer export
 
-        skcomm peer export --file my-identity.json
+        skcomms peer export --file my-identity.json
 
-        skcomm peer export | scp - user@host:~/peer-bundle.json
+        skcomms peer export | scp - user@host:~/peer-bundle.json
     """
     from .key_exchange import KeyExchangeError, export_peer_bundle
 
@@ -1181,7 +1181,7 @@ def peer_export(file_path: Optional[str], no_transports: bool):
 def peer_import(source: str, no_gpg: bool, yes: bool):
     """Import a peer from a bundle file.
 
-    Reads a JSON peer bundle (from `skcomm peer export`) and adds
+    Reads a JSON peer bundle (from `skcomms peer export`) and adds
     the peer to the local store. Also imports their public key to
     the GPG keyring for encrypted messaging.
 
@@ -1189,11 +1189,11 @@ def peer_import(source: str, no_gpg: bool, yes: bool):
 
     Examples:
 
-        skcomm peer import peer-bundle.json
+        skcomms peer import peer-bundle.json
 
-        skcomm peer import https://example.com/bundle.json
+        skcomms peer import https://example.com/bundle.json
 
-        cat bundle.json | skcomm peer import -
+        cat bundle.json | skcomms peer import -
     """
     import urllib.request
 
@@ -1253,7 +1253,7 @@ def peer_import(source: str, no_gpg: bool, yes: bool):
 def peers_transport(config: Optional[str], json_out: bool):
     """List known peers from the transport peer store (legacy).
 
-    Shows all peers discovered via `skcomm discover` or added
+    Shows all peers discovered via `skcomms discover` or added
     manually, with their transport endpoints and last-seen times.
     """
     from .discovery import PeerStore
@@ -1274,7 +1274,7 @@ def peers_transport(config: Optional[str], json_out: bool):
 
     if not all_peers:
         _print("\n  [dim]No peers in store.[/]")
-        _print("  [dim]Run [bold]skcomm discover[/] to scan for peers.[/]\n")
+        _print("  [dim]Run [bold]skcomms discover[/] to scan for peers.[/]\n")
         return
 
     _print(f"\n  [bold]{len(all_peers)}[/] peer(s):\n")
@@ -1320,11 +1320,11 @@ def discover(config: Optional[str], save: bool, mdns: bool, json_out: bool):
 
     Examples:
 
-        skcomm discover
+        skcomms discover
 
-        skcomm discover --mdns
+        skcomms discover --mdns
 
-        skcomm discover --json-out
+        skcomms discover --json-out
     """
     from .discovery import PeerStore, discover_all
 
@@ -1392,13 +1392,13 @@ def heartbeat_group(ctx: click.Context, config: Optional[str], emit: bool, json_
 
     Examples:
 
-        skcomm heartbeat
+        skcomms heartbeat
 
-        skcomm heartbeat publish --node-id jarvis-desktop
+        skcomms heartbeat publish --node-id jarvis-desktop
 
-        skcomm heartbeat status --node-id jarvis-desktop
+        skcomms heartbeat status --node-id jarvis-desktop
 
-        skcomm heartbeat nodes
+        skcomms heartbeat nodes
     """
     if ctx.invoked_subcommand is not None:
         return
@@ -1499,7 +1499,7 @@ def heartbeat_group(ctx: click.Context, config: Optional[str], emit: bool, json_
     help="Override Syncthing sync root (default: ~/.skcapstone/sync).",
 )
 @click.option("--state", default="active", help="Node state (active/idle/busy).")
-@click.option("--skcomm-status", default="online", help="SKComm connectivity state.")
+@click.option("--skcomms-status", default="online", help="SKComms connectivity state.")
 @click.option("--ttl", default=120, help="Heartbeat TTL in seconds.")
 @click.option("--json-out", is_flag=True, help="Print the written JSON.")
 def heartbeat_publish(
@@ -1508,7 +1508,7 @@ def heartbeat_publish(
     capability: tuple,
     sync_root: Optional[str],
     state: str,
-    skcomm_status: str,
+    skcomms_status: str,
     ttl: int,
     json_out: bool,
 ):
@@ -1520,11 +1520,11 @@ def heartbeat_publish(
 
     Examples:
 
-        skcomm heartbeat publish --node-id jarvis-desktop \\
+        skcomms heartbeat publish --node-id jarvis-desktop \\
             --agent-name jarvis \\
             --capability code --capability gpu
 
-        skcomm heartbeat publish --node-id lumina-laptop --ttl 60
+        skcomms heartbeat publish --node-id lumina-laptop --ttl 60
     """
     from .heartbeat import HeartbeatConfig, HeartbeatPublisher
 
@@ -1536,7 +1536,7 @@ def heartbeat_publish(
         sync_root=(
             Path(sync_root).expanduser() if sync_root else Path("~/.skcapstone/sync").expanduser()
         ),
-        skcomm_status=skcomm_status,
+        skcomms_status=skcomms_status,
     )
 
     publisher = HeartbeatPublisher(config=cfg, state=state)
@@ -1571,9 +1571,9 @@ def heartbeat_status(node_id: str, sync_root: Optional[str], json_out: bool):
 
     Examples:
 
-        skcomm heartbeat status jarvis-desktop
+        skcomms heartbeat status jarvis-desktop
 
-        skcomm heartbeat status lumina-laptop --json-out
+        skcomms heartbeat status lumina-laptop --json-out
     """
     from .heartbeat import NodeHeartbeatMonitor
 
@@ -1594,7 +1594,7 @@ def heartbeat_status(node_id: str, sync_root: Optional[str], json_out: bool):
     _print(f"\n  Node:     [bold cyan]{hb.node_id}[/]")
     _print(f"  Agent:    {hb.agent_name or '-'}")
     _print(f"  State:    [{state_color}]{hb.state}[/]{'  [red][EXPIRED][/]' if expired else ''}")
-    _print(f"  SKComm:   {hb.skcomm_status}")
+    _print(f"  SKComms:   {hb.skcomms_status}")
     _print(f"  Timestamp: {hb.timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')}")
     _print(f"  TTL:       {hb.ttl_seconds}s")
 
@@ -1636,11 +1636,11 @@ def heartbeat_nodes(
 
     Examples:
 
-        skcomm heartbeat nodes
+        skcomms heartbeat nodes
 
-        skcomm heartbeat nodes --capability gpu
+        skcomms heartbeat nodes --capability gpu
 
-        skcomm heartbeat nodes --all --json-out
+        skcomms heartbeat nodes --all --json-out
     """
     from .heartbeat import NodeHeartbeatMonitor
 
@@ -1742,7 +1742,7 @@ def skill_list(json_out: bool):
 
     if not skills:
         _print("\n  [dim]No skills installed.[/]")
-        _print("  [dim]Run [bold]skcomm skill search[/] to browse the marketplace.[/]\n")
+        _print("  [dim]Run [bold]skcomms skill search[/] to browse the marketplace.[/]\n")
         return
 
     _print(f"\n  [bold]{len(skills)}[/] skill(s) installed:\n")
@@ -1776,11 +1776,11 @@ def skill_search(query: Optional[str], relay: tuple, json_out: bool):
 
     Examples:
 
-        skcomm skill search
+        skcomms skill search
 
-        skcomm skill search security
+        skcomms skill search security
 
-        skcomm skill search email --json-out
+        skcomms skill search email --json-out
     """
     from .marketplace import search_skills
 
@@ -1838,9 +1838,9 @@ def skill_publish(manifest_path: str, key: Optional[str], relay: tuple):
 
     Examples:
 
-        skcomm skill publish skill.yml --key $NOSTR_KEY
+        skcomms skill publish skill.yml --key $NOSTR_KEY
 
-        NOSTR_PRIVATE_KEY=abc... skcomm skill publish skill.yml
+        NOSTR_PRIVATE_KEY=abc... skcomms skill publish skill.yml
     """
     from .marketplace import SkillManifest, publish_skill
 
@@ -1872,7 +1872,7 @@ def skill_install(name: str, relay: tuple):
 
     Examples:
 
-        skcomm skill install email-prescreening
+        skcomms skill install email-prescreening
     """
     from .marketplace import SkillRegistry, search_skills
 
@@ -2118,10 +2118,10 @@ def queue_drain(config: Optional[str]):
     Retries each ready envelope through the configured transports.
     Successfully delivered envelopes are removed from the queue.
     """
-    from .core import SKComm
+    from .core import SKComms
     from .queue import MessageQueue
 
-    comm = SKComm.from_config(config)
+    comm = SKComms.from_config(config)
     q = MessageQueue()
 
     if q.size == 0:
@@ -2183,33 +2183,33 @@ def queue_purge(expired: bool, yes: bool):
 @click.option("--port", "-p", default=9384, help="Port to bind to.")
 @click.option("--reload", is_flag=True, help="Enable auto-reload (dev mode).")
 def serve(host: str, port: int, reload: bool):
-    """Start the SKComm REST API server.
+    """Start the SKComms REST API server.
 
-    Runs a FastAPI server that wraps the SKComm Python API
+    Runs a FastAPI server that wraps the SKComms Python API
     and exposes HTTP endpoints for Flutter/desktop clients.
 
     Examples:
 
-        skcomm serve
+        skcomms serve
 
-        skcomm serve --port 8080
+        skcomms serve --port 8080
 
-        skcomm serve --reload  # Dev mode with auto-reload
+        skcomms serve --reload  # Dev mode with auto-reload
     """
     try:
         import uvicorn
     except ImportError:
         _print("\n  [red]Error:[/] uvicorn not installed.")
-        _print("  Install with: [cyan]pip install skcomm[api][/]\n")
+        _print("  Install with: [cyan]pip install skcomms[api][/]\n")
         raise SystemExit(1)
 
-    _print("\n  [green]Starting SKComm API server[/]")
+    _print("\n  [green]Starting SKComms API server[/]")
     _print(f"  Host: [cyan]{host}[/]")
     _print(f"  Port: [cyan]{port}[/]")
     _print(f"  Docs: [cyan]http://{host}:{port}/docs[/]\n")
 
     uvicorn.run(
-        "skcomm.api:app",
+        "skcomms.api:app",
         host=host,
         port=port,
         reload=reload,
@@ -2228,11 +2228,11 @@ def stats_cmd(json_out: bool, reset: bool):
 
     Examples:
 
-        skcomm stats
+        skcomms stats
 
-        skcomm stats --json-out
+        skcomms stats --json-out
 
-        skcomm stats --reset
+        skcomms stats --reset
     """
     from .metrics import MetricsCollector
 
@@ -2338,11 +2338,11 @@ def pubsub_group():
 
     Examples:
 
-        skcomm pubsub listen agent.*
+        skcomms pubsub listen agent.*
 
-        skcomm pubsub publish memory.stored '{\"content\": \"hello\"}'
+        skcomms pubsub publish memory.stored '{\"content\": \"hello\"}'
 
-        skcomm pubsub topics
+        skcomms pubsub topics
     """
 
 
@@ -2359,11 +2359,11 @@ def pubsub_listen(topic: str, timeout: int, json_out: bool, count: int):
 
     Examples:
 
-        skcomm pubsub listen agent.*
+        skcomms pubsub listen agent.*
 
-        skcomm pubsub listen coord.# --timeout 30
+        skcomms pubsub listen coord.# --timeout 30
 
-        skcomm pubsub listen memory.stored --count 5 --json-out
+        skcomms pubsub listen memory.stored --count 5 --json-out
     """
     import signal
     import time
@@ -2431,11 +2431,11 @@ def pubsub_publish(topic: str, payload_json: str, sender: Optional[str], config:
 
     Examples:
 
-        skcomm pubsub publish agent.heartbeat '{\"state\": \"active\"}'
+        skcomms pubsub publish agent.heartbeat '{\"state\": \"active\"}'
 
-        skcomm pubsub publish memory.stored '{\"content\": \"hello world\"}'
+        skcomms pubsub publish memory.stored '{\"content\": \"hello world\"}'
 
-        skcomm pubsub publish coord.task.created '{\"task_id\": \"abc-123\"}' --sender opus
+        skcomms pubsub publish coord.task.created '{\"task_id\": \"abc-123\"}' --sender opus
     """
     import json as _json
 
@@ -2480,9 +2480,9 @@ def pubsub_topics(pattern: Optional[str]):
 
     Examples:
 
-        skcomm pubsub topics
+        skcomms pubsub topics
 
-        skcomm pubsub topics --pattern agent.*
+        skcomms pubsub topics --pattern agent.*
     """
     import fnmatch
 

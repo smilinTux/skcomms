@@ -16,7 +16,7 @@ Usage:
     await audio_queue.put(pcm_bytes)  # 16-bit signed, mono
 
 Dependencies (optional extra):
-    pip install 'skcomm[webrtc]'  →  aiortc>=1.9.0, av
+    pip install 'skcomms[webrtc]'  →  aiortc>=1.9.0, av
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ from typing import Optional
 
 import numpy as np
 
-logger = logging.getLogger("skcomm.transports.audio_track")
+logger = logging.getLogger("skcomms.transports.audio_track")
 
 # Opus operates at 48kHz natively
 OUTPUT_SAMPLE_RATE = 48000

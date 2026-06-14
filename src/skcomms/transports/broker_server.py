@@ -8,8 +8,8 @@ Run:
     uvicorn skcomms.transports.broker_server:app --host 0.0.0.0 --port 9384
     # or: python -m skcomms.transports.broker_server   (defaults to 127.0.0.1:9384)
 
-Auth: by default the broker is anonymous (``SKCOMM_BROKER_REQUIRE_AUTH`` unset). Set
-``SKCOMM_BROKER_REQUIRE_AUTH=1`` to require a CapAuth bearer token per connection.
+Auth: by default the broker is anonymous (``SKCOMMS_BROKER_REQUIRE_AUTH`` unset). Set
+``SKCOMMS_BROKER_REQUIRE_AUTH=1`` to require a CapAuth bearer token per connection.
 The endpoint path is ``/webrtc/ws?room=<room>&peer=<fingerprint>`` — matching
 ``DEFAULT_SIGNALING_URL`` (``wss://localhost:9384/webrtc/ws``).
 """
@@ -22,7 +22,7 @@ from fastapi import FastAPI, WebSocket
 
 from ..signaling import SignalingBroker, signaling_ws_endpoint
 
-_require_auth = os.getenv("SKCOMM_BROKER_REQUIRE_AUTH", "").lower() in ("1", "true", "yes")
+_require_auth = os.getenv("SKCOMMS_BROKER_REQUIRE_AUTH", "").lower() in ("1", "true", "yes")
 
 app = FastAPI(title="skcomms-signaling-broker")
 broker = SignalingBroker(require_auth=_require_auth)
@@ -41,8 +41,8 @@ async def webrtc_ws(ws: WebSocket, room: str, peer: str) -> None:
 def main() -> None:  # pragma: no cover - thin runner
     import uvicorn
 
-    host = os.getenv("SKCOMM_BROKER_HOST", "127.0.0.1")
-    port = int(os.getenv("SKCOMM_BROKER_PORT", "9384"))
+    host = os.getenv("SKCOMMS_BROKER_HOST", "127.0.0.1")
+    port = int(os.getenv("SKCOMMS_BROKER_PORT", "9384"))
     uvicorn.run(app, host=host, port=port, log_level="warning")
 
 

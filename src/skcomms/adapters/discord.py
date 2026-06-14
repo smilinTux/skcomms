@@ -10,7 +10,7 @@ The Discord client is **injectable** (pass ``discord_client`` to the
 constructor) so the adapter is fully unit-testable without any live
 credentials.
 
-Config block in ``~/.skcomm/config.yml``::
+Config block in ``~/.skcomms/config.yml``::
 
     adapters:
       discord:
@@ -24,7 +24,7 @@ Config block in ``~/.skcomm/config.yml``::
               general:
                 channel_id: "9876543210"
                 agent_fqid: "lumina@skworld.io"
-        identity_store: "~/.skcomm/adapters/discord-ids.yaml"
+        identity_store: "~/.skcomms/adapters/discord-ids.yaml"
 
 Intents required (Gateway privileged intents)
 ---------------------------------------------
@@ -373,7 +373,7 @@ class DiscordAdapter(ChannelAdapter):
         self._poll_s: float = config.get("poll_interval_s", 1)
         self._guilds: dict[str, dict] = config.get("guilds", {})
         self._id_store_path: str = config.get(
-            "identity_store", "~/.skcomm/adapters/discord-ids.yaml"
+            "identity_store", "~/.skcomms/adapters/discord-ids.yaml"
         )
 
         # --- State ---

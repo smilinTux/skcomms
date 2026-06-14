@@ -39,7 +39,7 @@ from ..transport import (
     TransportStatus,
 )
 
-logger = logging.getLogger("skcomm.transports.file")
+logger = logging.getLogger("skcomms.transports.file")
 
 ENVELOPE_SUFFIX = ".skc.json"
 
@@ -145,10 +145,10 @@ class FileTransport(Transport):
         self._outbox = (
             Path(outbox_path).expanduser()
             if outbox_path
-            else Path("~/.skcomm/outbox").expanduser()
+            else Path("~/.skcomms/outbox").expanduser()
         )
         self._inbox = (
-            Path(inbox_path).expanduser() if inbox_path else Path("~/.skcomm/inbox").expanduser()
+            Path(inbox_path).expanduser() if inbox_path else Path("~/.skcomms/inbox").expanduser()
         )
         self._archive_dir = (
             Path(archive_path).expanduser() if archive_path else self._inbox.parent / "archive"
@@ -483,7 +483,7 @@ class FileTransport(Transport):
                 )
 
             envelope = {
-                "skcomm_version": "1.0.0",
+                "skcomms_version": "1.0.0",
                 "envelope_id": uuid.uuid4().hex,
                 "type": "file_chunk",
                 "transfer_id": state.transfer_id,

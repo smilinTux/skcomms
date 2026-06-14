@@ -2,7 +2,7 @@
 
 Establishes direct peer-to-peer data channels using WebRTC. A background
 asyncio loop (in its own daemon thread) manages peer connections and the
-signaling WebSocket connection to the SKComm signaling broker.
+signaling WebSocket connection to the SKComms signaling broker.
 
 Incoming messages are buffered in a thread-safe queue. Outgoing messages
 are bridged from the synchronous Transport API into the async loop via
@@ -21,7 +21,7 @@ Security:
   compromised (see plan sec. "Security by architecture").
 
 Dependencies (optional extra):
-    pip install 'skcomm[webrtc]'   →  aiortc>=1.9.0, websockets>=12.0
+    pip install 'skcomms[webrtc]'   →  aiortc>=1.9.0, websockets>=12.0
 """
 
 from __future__ import annotations
@@ -44,10 +44,10 @@ from ..transport import (
     TransportStatus,
 )
 
-logger = logging.getLogger("skcomm.transports.webrtc")
+logger = logging.getLogger("skcomms.transports.webrtc")
 
-DEFAULT_SIGNALING_URL = os.environ.get("SKCOMM_SIGNALING_URL", "wss://localhost:9384/webrtc/ws")
-CHANNEL_NAME = "skcomm"
+DEFAULT_SIGNALING_URL = os.environ.get("SKCOMMS_SIGNALING_URL", "wss://localhost:9384/webrtc/ws")
+CHANNEL_NAME = "skcomms"
 ICE_GATHER_TIMEOUT = 30.0  # seconds to wait for ICE gathering
 RECV_TIMEOUT = 1.0  # seconds for signaling recv poll
 SEND_TIMEOUT = 5.0  # seconds for send future.result()
@@ -61,7 +61,7 @@ class PeerConnection:
     Attributes:
         peer_fingerprint: PGP fingerprint of the remote peer.
         pc: aiortc RTCPeerConnection instance.
-        channel: The "skcomm" ordered reliable RTCDataChannel, or None.
+        channel: The "skcomms" ordered reliable RTCDataChannel, or None.
         connected: True when the data channel is open and ready to send.
         negotiating: True while SDP/ICE negotiation is in progress.
         pending: Envelope bytes queued before the channel opened.
@@ -78,8 +78,8 @@ class PeerConnection:
 class WebRTCTransport(Transport):
     """P2P transport using WebRTC data channels via aiortc.
 
-    Opens direct peer-to-peer data channels to other SKComm agents and
-    browser clients. Uses the SKComm signaling broker (Phase 2) for SDP/ICE
+    Opens direct peer-to-peer data channels to other SKComms agents and
+    browser clients. Uses the SKComms signaling broker (Phase 2) for SDP/ICE
     exchange. Falls back gracefully to lower-priority transports during the
     ~3s ICE negotiation window.
 
@@ -111,9 +111,9 @@ class WebRTCTransport(Transport):
         """Initialize the WebRTC transport.
 
         Args:
-            signaling_url: WebSocket URL of the SKComm signaling broker.
+            signaling_url: WebSocket URL of the SKComms signaling broker.
                 Defaults to ``wss://localhost:9384/webrtc/ws``.
-                Override with the ``SKCOMM_SIGNALING_URL`` environment variable.
+                Override with the ``SKCOMMS_SIGNALING_URL`` environment variable.
             stun_servers: STUN server URLs (default: Google public STUN).
             turn_server: TURN relay URL (e.g. ``turn:turn.skworld.io:3478``).
             turn_username: Static TURN username (for static credentials).
@@ -378,7 +378,7 @@ class WebRTCTransport(Transport):
         self._running = True
         self._loop_thread = threading.Thread(
             target=self._run_loop,
-            name="skcomm-webrtc",
+            name="skcomms-webrtc",
             daemon=True,
         )
         self._loop_thread.start()
@@ -454,7 +454,7 @@ class WebRTCTransport(Transport):
         try:
             import websockets
         except ImportError:
-            msg = "websockets not installed — pip install 'skcomm[webrtc]'"
+            msg = "websockets not installed — pip install 'skcomms[webrtc]'"
             self._signaling_error = msg
             logger.error(msg)
             self._running = False
@@ -553,7 +553,7 @@ class WebRTCTransport(Transport):
         try:
             from aiortc import RTCPeerConnection, RTCSessionDescription  # noqa: F401
         except ImportError:
-            logger.error("aiortc not installed — pip install 'skcomm[webrtc]'")
+            logger.error("aiortc not installed — pip install 'skcomms[webrtc]'")
             return
 
         peer: Optional[PeerConnection] = None
@@ -603,7 +603,7 @@ class WebRTCTransport(Transport):
         try:
             from aiortc import RTCPeerConnection, RTCSessionDescription  # noqa: F401
         except ImportError:
-            logger.error("aiortc not installed — pip install 'skcomm[webrtc]'")
+            logger.error("aiortc not installed — pip install 'skcomms[webrtc]'")
             return
 
         try:
@@ -1029,11 +1029,11 @@ class WebRTCTransport(Transport):
         """Generate the signaling room ID for this agent.
 
         Returns:
-            Room ID string: ``"skcomm-"`` + first 16 chars of fingerprint.
+            Room ID string: ``"skcomms-"`` + first 16 chars of fingerprint.
         """
         if self._agent_fingerprint:
-            return f"skcomm-{self._agent_fingerprint[:16]}"
-        return f"skcomm-{self._agent_name}"
+            return f"skcomms-{self._agent_fingerprint[:16]}"
+        return f"skcomms-{self._agent_name}"
 
     # ──────────────────────────────────────────────────────────────────────
     # Helpers
@@ -1068,10 +1068,10 @@ def create_transport(
     priority: int = 1,
     **kwargs,
 ) -> WebRTCTransport:
-    """Factory function called by the SKComm router transport loader.
+    """Factory function called by the SKComms router transport loader.
 
     Args:
-        signaling_url: WebSocket URL of the SKComm signaling broker.
+        signaling_url: WebSocket URL of the SKComms signaling broker.
         stun_servers: List of STUN server URLs.
         turn_server: TURN relay URL for fallback (e.g. ``turn:turn.skworld.io:3478``).
         turn_secret: HMAC-SHA1 secret for time-limited TURN credentials.

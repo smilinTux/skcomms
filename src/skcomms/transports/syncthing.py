@@ -45,7 +45,7 @@ from ..transport import (
     TransportStatus,
 )
 
-logger = logging.getLogger("skcomm.transports.syncthing")
+logger = logging.getLogger("skcomms.transports.syncthing")
 
 ENVELOPE_SUFFIX = ".skc.json"
 LOCK_SUFFIX = ".skc.lock"
@@ -149,7 +149,7 @@ class SyncthingTransport(Transport):
     def _set_identity(self, name: str) -> None:
         """Set the local identity name for outbox scanning.
 
-        Called by the core SKComm engine so the transport knows which
+        Called by the core SKComms engine so the transport knows which
         outbox/{name}/ subdirectories contain messages for this agent.
 
         Args:

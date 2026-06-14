@@ -1,5 +1,5 @@
 """
-SKComm router — the brain that picks how to deliver.
+SKComms router — the brain that picks how to deliver.
 
 Decides which transport(s) to use based on routing mode,
 transport priority, health status, and peer configuration.
@@ -26,7 +26,7 @@ from .transport import (
     TransportError,
 )
 
-logger = logging.getLogger("skcomm.router")
+logger = logging.getLogger("skcomms.router")
 
 # Failure tracking defaults
 FAILURE_THRESHOLD = 3  # consecutive failures before cooldown
@@ -79,7 +79,7 @@ class Router:
         # Retry queue
         self._queue_lock = threading.Lock()
         self._retry_thread = threading.Thread(
-            target=self._retry_worker, daemon=True, name="skcomm-retry"
+            target=self._retry_worker, daemon=True, name="skcomms-retry"
         )
         self._retry_thread.start()
 

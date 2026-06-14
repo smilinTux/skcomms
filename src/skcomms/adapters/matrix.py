@@ -24,7 +24,7 @@ using a simple bidirectional in-memory store backed by a YAML file:
 
 Room ids (``!opaque:server``) map to skcomms ``room_id`` 1:1.
 
-Config block in ``~/.skcomm/config.yml``::
+Config block in ``~/.skcomms/config.yml``::
 
     adapters:
       matrix:
@@ -37,7 +37,7 @@ Config block in ``~/.skcomm/config.yml``::
           skworld_general:
             room_id: "!opaque1234:skworld.io"
             agent_fqid: "lumina@skworld.io"
-        identity_store: "~/.skcomm/adapters/matrix-ids.yaml"
+        identity_store: "~/.skcomms/adapters/matrix-ids.yaml"
 
 Appservice mode (additional keys)::
 
@@ -201,7 +201,7 @@ class MatrixAdapter(ChannelAdapter):
         self._appservice: bool = config.get("appservice", False)
         self._appservice_token: str = config.get("appservice_token", "")
         self._id_store_path: str = config.get(
-            "identity_store", "~/.skcomm/adapters/matrix-ids.yaml"
+            "identity_store", "~/.skcomms/adapters/matrix-ids.yaml"
         )
 
         # --- State ---

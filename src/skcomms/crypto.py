@@ -1,5 +1,5 @@
 """
-SKComm envelope encryption — PGP encrypt and sign via CapAuth.
+SKComms envelope encryption — PGP encrypt and sign via CapAuth.
 
 Provides a middleware layer that encrypts envelope payloads before
 transport and decrypts them on receive. Uses PGPy for crypto
@@ -21,11 +21,11 @@ from typing import Optional
 
 from .models import MessageEnvelope, MessagePayload
 
-logger = logging.getLogger("skcomm.crypto")
+logger = logging.getLogger("skcomms.crypto")
 
 
 class EnvelopeCrypto:
-    """PGP encryption and signing engine for SKComm envelopes.
+    """PGP encryption and signing engine for SKComms envelopes.
 
     Loads keys from CapAuth sovereign profiles. Encrypt/sign operations
     are applied to the envelope payload content before it touches any
@@ -275,7 +275,7 @@ class KeyStore:
     """Manages peer public keys for encryption and verification.
 
     Stores ASCII-armored public keys indexed by agent name or fingerprint.
-    Loads from ~/.skcomm/peers/ directory if available.
+    Loads from ~/.skcomms/peers/ directory if available.
 
     Args:
         peers_dir: Path to the peers directory.
@@ -283,7 +283,7 @@ class KeyStore:
 
     def __init__(self, peers_dir: Optional[Path] = None) -> None:
         self._keys: dict[str, str] = {}
-        self._peers_dir = peers_dir or Path.home() / ".skcomm" / "peers"
+        self._peers_dir = peers_dir or Path.home() / ".skcomms" / "peers"
         self._loaded = False
 
     def _ensure_loaded(self) -> None:

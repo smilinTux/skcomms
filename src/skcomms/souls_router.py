@@ -28,7 +28,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
-logger = logging.getLogger("skcomm.souls")
+logger = logging.getLogger("skcomms.souls")
 
 souls_router = APIRouter(prefix="/api/v1/souls", tags=["souls"])
 
@@ -458,7 +458,7 @@ async def install_library(request: InstallLibraryRequest):
     """User-triggered install of soul blueprints from local repo path or GitHub.
 
     This is called when the user clicks 'Load Soul Library' in the extension.
-    The SKComm daemon (running locally) does the file copy — not the extension.
+    The SKComms daemon (running locally) does the file copy — not the extension.
     This keeps the Chrome Web Store happy (no remote code in the extension).
     """
     root = _get_root()
@@ -524,7 +524,7 @@ async def _install_from_github(library: Path) -> dict:
     try:
         req = urllib.request.Request(
             index_url,
-            headers={"Accept": "application/vnd.github+json", "User-Agent": "skcomm-souls/1.0"},
+            headers={"Accept": "application/vnd.github+json", "User-Agent": "skcomms-souls/1.0"},
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
             tree_data = json.loads(resp.read().decode())

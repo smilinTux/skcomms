@@ -20,7 +20,7 @@ Availability:
 
 Peer IP discovery (in order of precedence):
     1. Manual: ``register_peer_ip(name, ip)`` at runtime
-    2. Peer store: ``~/.skcomm/peers/<name>.yml`` → ``transports[].settings.tailscale_ip``
+    2. Peer store: ``~/.skcomms/peers/<name>.yml`` → ``transports[].settings.tailscale_ip``
     3. Auto-detect: ``tailscale status --json`` hostname/DNS matching
 """
 
@@ -44,7 +44,7 @@ from ..transport import (
     TransportStatus,
 )
 
-logger = logging.getLogger("skcomm.transports.tailscale")
+logger = logging.getLogger("skcomms.transports.tailscale")
 
 LISTEN_PORT = 9385  # TCP port for incoming Tailscale envelopes
 HEADER_SIZE = 4  # bytes for the big-endian uint32 length prefix
@@ -278,7 +278,7 @@ class TailscaleTransport(Transport):
             self._running = True
             self._server_thread = threading.Thread(
                 target=self._listen_loop,
-                name="skcomm-tailscale-listener",
+                name="skcomms-tailscale-listener",
                 daemon=True,
             )
             self._server_thread.start()
@@ -492,7 +492,7 @@ class TailscaleTransport(Transport):
         return None
 
     def _peer_ip_from_store(self, recipient: str) -> Optional[str]:
-        """Look up the Tailscale IP from the SKComm peer store.
+        """Look up the Tailscale IP from the SKComms peer store.
 
         The peer YAML should contain::
 
@@ -616,7 +616,7 @@ def create_transport(
     priority: int = 2,
     **kwargs,
 ) -> TailscaleTransport:
-    """Factory function called by the SKComm router transport loader.
+    """Factory function called by the SKComms router transport loader.
 
     Args:
         listen_port: TCP port for the inbound listener thread.

@@ -1,5 +1,5 @@
 """
-SKComm — the sovereign communication engine.
+SKComms — the sovereign communication engine.
 
 High-level interface that wraps the router, transports, and
 envelope creation into a clean send/receive API.
@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from .config import SKCommConfig, load_config
+from .config import SKCommsConfig, load_config
 from .discovery import PeerStore
 from .models import (
     MessageEnvelope,
@@ -32,7 +32,7 @@ from .router import Router
 from .transport import DeliveryReport, Transport
 from . import integration as _integration
 
-logger = logging.getLogger("skcomm.core")
+logger = logging.getLogger("skcomms.core")
 
 
 class MessagePriorityQueue:
@@ -105,11 +105,11 @@ class RetryQueue:
     to ``skcapstone`` tooling for dashboard / coordination use.
 
     This queue complements (not replaces) the heavier
-    :class:`~skcomm.outbox.PersistentOutbox` — it is optimised for fast
+    :class:`~skcomms.outbox.PersistentOutbox` — it is optimised for fast
     transient failures that resolve within a minute.
 
     Args:
-        router: The SKComm Router used for retry delivery.
+        router: The SKComms Router used for retry delivery.
         queue_path: Override the default JSONL path (useful in tests).
     """
 
@@ -175,7 +175,7 @@ class RetryQueue:
         self._thread = threading.Thread(
             target=self._retry_loop,
             daemon=True,
-            name="skcomm-retry-queue",
+            name="skcomms-retry-queue",
         )
         self._thread.start()
         logger.debug("RetryQueue worker started")
@@ -318,18 +318,18 @@ class RetryQueue:
             return False
 
 
-# Mapping of transport name to module path within skcomm.transports
+# Mapping of transport name to module path within skcomms.transports
 BUILTIN_TRANSPORTS: dict[str, str] = {
-    "file": "skcomm.transports.file",
-    "syncthing": "skcomm.transports.syncthing",
-    "nostr": "skcomm.transports.nostr",
-    "websocket": "skcomm.transports.websocket",
-    "tailscale": "skcomm.transports.tailscale",
-    "webrtc": "skcomm.transports.webrtc",
+    "file": "skcomms.transports.file",
+    "syncthing": "skcomms.transports.syncthing",
+    "nostr": "skcomms.transports.nostr",
+    "websocket": "skcomms.transports.websocket",
+    "tailscale": "skcomms.transports.tailscale",
+    "webrtc": "skcomms.transports.webrtc",
 }
 
 
-class SKComm:
+class SKComms:
     """The sovereign communication engine.
 
     Wraps envelope creation, transport routing, and message
@@ -337,12 +337,12 @@ class SKComm:
     all outbound envelopes via CapAuth PGP keys.
 
     Usage:
-        comm = SKComm.from_config("~/.skcomm/config.yml")
+        comm = SKComms.from_config("~/.skcomms/config.yml")
         comm.send("lumina", "Hello from Opus")
         messages = comm.receive()
 
     Args:
-        config: SKCommConfig instance with all settings.
+        config: SKCommsConfig instance with all settings.
         router: Optional pre-configured Router.
         crypto: Optional EnvelopeCrypto for PGP encrypt/sign.
         keystore: Optional KeyStore for peer public keys.
@@ -350,12 +350,12 @@ class SKComm:
 
     def __init__(
         self,
-        config: Optional[SKCommConfig] = None,
+        config: Optional[SKCommsConfig] = None,
         router: Optional[Router] = None,
         crypto: Optional["EnvelopeCrypto"] = None,
         keystore: Optional["KeyStore"] = None,
     ):
-        self._config = config or SKCommConfig()
+        self._config = config or SKCommsConfig()
         self._router = router or Router(default_mode=self._config.default_mode)
         self._identity = self._config.identity.name
         self._crypto = crypto
@@ -369,18 +369,18 @@ class SKComm:
         self._retry_queue = RetryQueue(router=self._router)
 
     @classmethod
-    def from_config(cls, config_path: Optional[str] = None) -> SKComm:
-        """Create an SKComm instance from a YAML config file.
+    def from_config(cls, config_path: Optional[str] = None) -> SKComms:
+        """Create an SKComms instance from a YAML config file.
 
         Loads the config, discovers and registers configured transports.
         Auto-initializes CapAuth encryption if keys are available and
         config enables encrypt/sign.
 
         Args:
-            config_path: Path to config file. Defaults to ~/.skcomm/config.yml.
+            config_path: Path to config file. Defaults to ~/.skcomms/config.yml.
 
         Returns:
-            Configured SKComm instance ready to send and receive.
+            Configured SKComms instance ready to send and receive.
         """
         config = load_config(config_path)
         router = Router(default_mode=config.default_mode)
@@ -407,7 +407,7 @@ class SKComm:
         instance._retry_queue.start()
         crypto_status = "enabled" if crypto else "disabled"
         logger.info(
-            "SKComm initialized as '%s' with %d transports, crypto %s",
+            "SKComms initialized as '%s' with %d transports, crypto %s",
             config.identity.name,
             len(router.transports),
             crypto_status,
@@ -537,7 +537,7 @@ class SKComm:
     def _resolve_peer_transports(self, recipient: str) -> list[str]:
         """Look up the preferred transports for a recipient from the peer store.
 
-        Checks ~/.skcomm/peers/<name>.yml for a list of configured transports.
+        Checks ~/.skcomms/peers/<name>.yml for a list of configured transports.
         Returns transport names the router should prefer for this recipient.
 
         Args:
@@ -687,7 +687,7 @@ class SKComm:
         return decompress_payload(envelope)
 
     def status(self) -> dict:
-        """Get the current status of SKComm.
+        """Get the current status of SKComms.
 
         Returns:
             Dict with identity, transport health, crypto state, and config summary.
@@ -712,6 +712,10 @@ class SKComm:
         }
 
 
+# Deprecated alias — external code may still `from skcomms.core import SKComm`.
+SKComm = SKComms
+
+
 def _init_crypto():
     """Initialize CapAuth-based encryption from the local profile.
 
@@ -725,7 +729,7 @@ def _init_crypto():
         keystore = KeyStore()
         return crypto, keystore
     except ImportError:
-        logger.debug("skcomm.crypto not available")
+        logger.debug("skcomms.crypto not available")
         return None, None
     except Exception as exc:
         logger.debug("Crypto init failed: %s", exc)

@@ -1,12 +1,12 @@
 """
-SKComm message queue — persistent outbox with retry and expiry.
+SKComms message queue — persistent outbox with retry and expiry.
 
 When all transports are down, envelopes are queued to disk as JSON
 files. A drain loop retries delivery with exponential backoff and
 removes expired messages that exceed their TTL.
 
 Queue layout:
-    ~/.skcomm/queue/
+    ~/.skcomms/queue/
     ├── {envelope_id}.skc.json       # Envelope bytes
     └── {envelope_id}.skc.meta.json  # Retry state and metadata
 
@@ -24,9 +24,9 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from .config import SKCOMM_HOME
+from .config import SKCOMMS_HOME
 
-logger = logging.getLogger("skcomm.queue")
+logger = logging.getLogger("skcomms.queue")
 
 QUEUE_DIR_NAME = "queue"
 ENVELOPE_SUFFIX = ".skc.json"
@@ -116,11 +116,11 @@ class MessageQueue:
     TTL-based expiry, and crash-safe operation.
 
     Args:
-        queue_dir: Directory for queue files. Defaults to ~/.skcomm/queue/.
+        queue_dir: Directory for queue files. Defaults to ~/.skcomms/queue/.
     """
 
     def __init__(self, queue_dir: Optional[Path] = None):
-        self._dir = queue_dir or Path(SKCOMM_HOME).expanduser() / QUEUE_DIR_NAME
+        self._dir = queue_dir or Path(SKCOMMS_HOME).expanduser() / QUEUE_DIR_NAME
         self._dir.mkdir(parents=True, exist_ok=True)
 
     @property

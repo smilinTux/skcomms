@@ -2,7 +2,7 @@
 AdapterRegistry — manages live channel adapters and routes messages (Batch C1/C3).
 
 One registry per skcomms hub instance.  Loaded at daemon startup from the
-adapter config block in ``~/.skcomm/config.yml`` (or the skcomms stack's
+adapter config block in ``~/.skcomms/config.yml`` (or the skcomms stack's
 environment).
 
 Key responsibilities:

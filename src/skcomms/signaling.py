@@ -1,10 +1,10 @@
-"""WebRTC signaling broker for SKComm.
+"""WebRTC signaling broker for SKComms.
 
 Implements a WebSocket-based SDP/ICE relay broker compatible with the
 weblink signaling protocol. All connections are authenticated via CapAuth
 PGP bearer tokens. Room IDs are derived from CapAuth PGP fingerprints:
 
-    room = "skcomm-" + fingerprint[:16]
+    room = "skcomms-" + fingerprint[:16]
 
 Signal wire protocol (relay only — no media ever passes through):
 
@@ -36,7 +36,7 @@ from .capauth_validator import CapAuthValidator
 if TYPE_CHECKING:
     from fastapi import WebSocket
 
-logger = logging.getLogger("skcomm.signaling")
+logger = logging.getLogger("skcomms.signaling")
 
 # Rate limiting defaults
 MAX_MESSAGES_PER_MINUTE = 60  # Per-peer message rate limit
@@ -52,7 +52,7 @@ class WebRTCRoom:
     inspecting or modifying the cryptographic content.
 
     Args:
-        room_id: Unique room identifier (e.g. ``skcomm-CCBE9306410CF8CD``).
+        room_id: Unique room identifier (e.g. ``skcomms-CCBE9306410CF8CD``).
     """
 
     def __init__(self, room_id: str) -> None:
@@ -350,7 +350,7 @@ class SignalingBroker:
 
         Args:
             ws: The accepted WebSocket connection.
-            room_id: Room to join (e.g. ``"skcomm-CCBE9306410CF8CD"``).
+            room_id: Room to join (e.g. ``"skcomms-CCBE9306410CF8CD"``).
             peer_id: Authenticated PGP fingerprint of this peer.
         """
         room = self.get_or_create_room(room_id)

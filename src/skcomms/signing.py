@@ -1,4 +1,4 @@
-"""SKComm envelope signing -- PGP authenticity for every message.
+"""SKComms envelope signing -- PGP authenticity for every message.
 
 Every outbound envelope gets PGP-signed by the sender's CapAuth key.
 Receivers verify the signature against the sender's known public key
@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 from .envelope import Envelope, SignedEnvelope
 from .models import MessageEnvelope
 
-logger = logging.getLogger("skcomm.signing")
+logger = logging.getLogger("skcomms.signing")
 
 
 # ---------------------------------------------------------------------------

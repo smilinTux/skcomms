@@ -21,7 +21,7 @@ bot, and wiring it into `DiscordAdapter`.
    token** — you will only see it once.  Store it as `DISCORD_BOT_TOKEN`.
 
 > **Never** commit the token to git.  Store it in an env var or in
-> `~/.skcomm/config.yml` under `adapters.discord.bot_token`.
+> `~/.skcomms/config.yml` under `adapters.discord.bot_token`.
 
 ---
 
@@ -79,10 +79,10 @@ export DISCORD_BOT_TOKEN="Bot MTEx...your_token"
 
 The `Bot ` prefix is optional — `discord.py` handles it either way.
 
-**Option B — `~/.skcomm/config.yml`:**
+**Option B — `~/.skcomms/config.yml`:**
 
 ```yaml
-skcomm:
+skcomms:
   adapters:
     discord:
       enabled: true
@@ -95,7 +95,7 @@ skcomm:
             general:
               channel_id: "9876543210987654321"
               agent_fqid: "lumina@skworld.io"
-      identity_store: "~/.skcomm/adapters/discord-ids.yaml"
+      identity_store: "~/.skcomms/adapters/discord-ids.yaml"
 ```
 
 Obtain `guild_id` and `channel_id` from Discord: right-click a server/channel

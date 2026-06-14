@@ -1,13 +1,13 @@
 """
 WebSocket transport — real-time messaging for browser/mobile clients.
 
-Maintains a persistent WebSocket connection to a SKComm relay server.
+Maintains a persistent WebSocket connection to a SKComms relay server.
 Authenticates with a CapAuth bearer token. Incoming messages are buffered
 in a thread-safe queue; outgoing messages are written directly on the
 open connection.
 
 Protocol:
-    - Client connects to ws(s)://server/skcomm/ws?agent=<name>
+    - Client connects to ws(s)://server/skcomms/ws?agent=<name>
     - Authorization: Bearer <capauth_token> header on handshake
     - Messages exchanged as raw envelope bytes (JSON)
     - Heartbeat: periodic ping frames at configurable interval
@@ -36,9 +36,9 @@ from ..transport import (
     TransportStatus,
 )
 
-logger = logging.getLogger("skcomm.transports.websocket")
+logger = logging.getLogger("skcomms.transports.websocket")
 
-DEFAULT_URL = "ws://localhost:8765/skcomm/ws"
+DEFAULT_URL = "ws://localhost:8765/skcomms/ws"
 HEARTBEAT_INTERVAL = 30  # seconds between heartbeat pings
 RECV_TIMEOUT = 1.0  # seconds for recv timeout (to check _running)
 RECONNECT_DELAY_MIN = 2  # seconds initial backoff
@@ -49,7 +49,7 @@ CONNECT_SETTLE_TIME = 0.2  # seconds to wait after starting recv thread
 class WebSocketTransport(Transport):
     """Real-time transport over a persistent WebSocket connection.
 
-    Connects to a SKComm relay server. Authenticates via a CapAuth bearer
+    Connects to a SKComms relay server. Authenticates via a CapAuth bearer
     token in the HTTP upgrade headers. A background daemon thread maintains
     the connection, buffers incoming envelopes, and sends heartbeat pings.
 
@@ -76,7 +76,7 @@ class WebSocketTransport(Transport):
         """Initialize the WebSocket transport.
 
         Args:
-            url: WebSocket server URL. Defaults to ws://localhost:8765/skcomm/ws.
+            url: WebSocket server URL. Defaults to ws://localhost:8765/skcomms/ws.
             token: CapAuth bearer token sent in the Authorization header.
             agent_name: This agent's name, appended as ?agent= query param.
             priority: Transport priority for routing (lower = higher priority).
@@ -303,7 +303,7 @@ class WebSocketTransport(Transport):
         self._running = True
         self._recv_thread = threading.Thread(
             target=self._receiver_loop,
-            name="skcomm-ws-receiver",
+            name="skcomms-ws-receiver",
             daemon=True,
         )
         self._recv_thread.start()
@@ -377,7 +377,7 @@ class WebSocketTransport(Transport):
         try:
             import websockets.sync.client as ws_sync
         except ImportError:
-            self._connect_error = "websockets package not installed — pip install 'skcomm[nostr]'"
+            self._connect_error = "websockets package not installed — pip install 'skcomms[nostr]'"
             logger.error(self._connect_error)
             self._running = False
             return

@@ -8,7 +8,7 @@ vs. reliable message delivery).
 
 Architecture:
     This runs on the GPU server (192.168.0.100) alongside MuseTalk and TTS.
-    The browser connects via the SKComm signaling broker (/webrtc/ws), and
+    The browser connects via the SKComms signaling broker (/webrtc/ws), and
     media flows directly via ICE (LAN direct or TURN relay).
 
     GPU Server                          Browser
@@ -45,7 +45,7 @@ Usage:
     await session.stop()
 
 Dependencies (optional extra):
-    pip install 'skcomm[webrtc]'  →  aiortc>=1.9.0, av, websockets>=12.0
+    pip install 'skcomms[webrtc]'  →  aiortc>=1.9.0, av, websockets>=12.0
 """
 
 from __future__ import annotations
@@ -65,11 +65,11 @@ import numpy as np
 from .audio_track import TTSAudioTrack
 from .video_track import MuseTalkVideoTrack
 
-logger = logging.getLogger("skcomm.transports.webrtc_media")
+logger = logging.getLogger("skcomms.transports.webrtc_media")
 
 # Defaults
-DEFAULT_SIGNALING_URL = os.environ.get("SKCOMM_SIGNALING_URL", "wss://localhost:9384/webrtc/ws")
-DEFAULT_TURN_SERVER = os.environ.get("SKCOMM_TURN_SERVER", "turn:turn.skworld.io:3478")
+DEFAULT_SIGNALING_URL = os.environ.get("SKCOMMS_SIGNALING_URL", "wss://localhost:9384/webrtc/ws")
+DEFAULT_TURN_SERVER = os.environ.get("SKCOMMS_TURN_SERVER", "turn:turn.skworld.io:3478")
 DEFAULT_STUN_SERVERS = ["stun:stun.l.google.com:19302"]
 
 # Video settings
@@ -86,7 +86,7 @@ class FaceTimeSession:
     """Manages a single FaceTime avatar streaming session over WebRTC.
 
     Creates an RTCPeerConnection with video, audio, and data channel tracks.
-    Handles signaling via the SKComm WebSocket broker and ICE negotiation.
+    Handles signaling via the SKComms WebSocket broker and ICE negotiation.
 
     The session can be in one of these states:
         - IDLE: Created but not started
@@ -120,7 +120,7 @@ class FaceTimeSession:
         Args:
             agent_name: Agent name (e.g., "lumina").
             portrait_path: Path to the agent's portrait image for idle frame.
-            signaling_url: SKComm signaling broker WebSocket URL.
+            signaling_url: SKComms signaling broker WebSocket URL.
             stun_servers: STUN server URLs.
             turn_server: TURN relay URL.
             turn_secret: HMAC-SHA1 secret for TURN credentials.
@@ -139,7 +139,7 @@ class FaceTimeSession:
         self._signaling_url = signaling_url or DEFAULT_SIGNALING_URL
         self._stun_servers = stun_servers or DEFAULT_STUN_SERVERS
         self._turn_server = turn_server or DEFAULT_TURN_SERVER
-        self._turn_secret = turn_secret or os.environ.get("SKCOMM_TURN_SECRET")
+        self._turn_secret = turn_secret or os.environ.get("SKCOMMS_TURN_SECRET")
         self._agent_fingerprint = agent_fingerprint
         self._token = token
         self._portrait_path = portrait_path
@@ -216,7 +216,7 @@ class FaceTimeSession:
         await self._set_bandwidth(audio_sender, max_bitrate=48_000)
 
         # Create data channel for captions and control
-        self._channel = self._pc.createDataChannel("skcomm", ordered=True)
+        self._channel = self._pc.createDataChannel("skcomms", ordered=True)
         self._channel.on("open", self._on_channel_open)
         self._channel.on("message", self._on_channel_message)
 
@@ -349,7 +349,7 @@ class FaceTimeSession:
     # ──────────────────────────────────────────────────────────────────
 
     async def _connect_signaling(self) -> None:
-        """Connect to the SKComm signaling broker and listen for peers."""
+        """Connect to the SKComms signaling broker and listen for peers."""
         import websockets
 
         room_id = f"facetime-{self.agent_name}"
@@ -491,7 +491,7 @@ class FaceTimeSession:
         logger.info("ICE connection state: %s", state)
 
     def _on_channel_open(self) -> None:
-        logger.info("Data channel 'skcomm' opened")
+        logger.info("Data channel 'skcomms' opened")
 
     def _on_channel_message(self, message: str) -> None:
         """Handle control messages from the browser via data channel."""

@@ -1,13 +1,13 @@
 """
 Nostr transport — NIP-17 encrypted DMs over Nostr relays.
 
-Uses NIP-59 gift wrapping for metadata protection. SKComm
+Uses NIP-59 gift wrapping for metadata protection. SKComms
 envelopes are base64-encoded, encrypted with NIP-44 v2,
 sealed (kind 13), and gift-wrapped (kind 1059) before
 being published to relay servers.
 
 Recipients poll relays for gift-wrapped events, unwrap to
-recover the original SKComm envelope bytes.
+recover the original SKComms envelope bytes.
 
 Crypto stack:
     BIP-340 Schnorr signatures (secp256k1 via cryptography)
@@ -37,7 +37,7 @@ from ..transport import (
     TransportStatus,
 )
 
-logger = logging.getLogger("skcomm.transports.nostr")
+logger = logging.getLogger("skcomms.transports.nostr")
 
 _MISSING: list[str] = []
 
@@ -532,13 +532,13 @@ def _query_relay(relay_url: str, filters: dict, timeout: float = 5.0) -> list[di
 class NostrTransport(Transport):
     """NIP-17 encrypted DM transport over Nostr relays.
 
-    Sends SKComm envelopes as gift-wrapped encrypted DMs
+    Sends SKComms envelopes as gift-wrapped encrypted DMs
     and polls relays for inbound messages. Uses ephemeral
     keys for gift wrapping to hide sender metadata.
 
     The recipient identifier should be a 64-char hex Nostr
     x-only public key. Map agent names to Nostr pubkeys
-    in the SKComm config.
+    in the SKComms config.
 
     Attributes:
         name: Always "nostr".
@@ -684,7 +684,7 @@ class NostrTransport(Transport):
         """Poll configured relays for incoming gift-wrapped DMs.
 
         Returns:
-            List of raw SKComm envelope bytes extracted from DMs.
+            List of raw SKComms envelope bytes extracted from DMs.
         """
         if not self.is_available():
             return []
@@ -772,9 +772,9 @@ class NostrTransport(Transport):
             return False
         metadata = json.dumps(
             {
-                "name": f"skcomm-{self._pubkey_hex[:8]}",
-                "about": "SKComm sovereign agent",
-                "skcomm_pgp": fingerprint,
+                "name": f"skcomms-{self._pubkey_hex[:8]}",
+                "about": "SKComms sovereign agent",
+                "skcomms_pgp": fingerprint,
             }
         )
         event = _make_event(self._pubkey_hex, 0, metadata, [])

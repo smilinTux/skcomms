@@ -18,7 +18,7 @@ from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
-logger = logging.getLogger("skcomm.household")
+logger = logging.getLogger("skcomms.household")
 
 household_router = APIRouter(prefix="/api/v1/household", tags=["household"])
 

@@ -1,5 +1,5 @@
 """
-SKComm heartbeat protocol — alive/dead detection across the mesh.
+SKComms heartbeat protocol — alive/dead detection across the mesh.
 
 v1: Each agent periodically writes a lightweight heartbeat file to the
 shared comms directory. Syncthing propagates it to all peers. Any
@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 
 from . import integration as _integration
 
-logger = logging.getLogger("skcomm.heartbeat")
+logger = logging.getLogger("skcomms.heartbeat")
 
 # ---------------------------------------------------------------------------
 # v1 constants (kept for backward compatibility)
@@ -125,7 +125,7 @@ class HeartbeatConfig(BaseModel):
         publish_interval_seconds: How often to write the heartbeat file.
         ttl_seconds: How long peers should consider this heartbeat valid.
         sync_root: Root of the Syncthing-shared directory.
-        skcomm_status: Reported skcomm connectivity state.
+        skcomms_status: Reported skcomms connectivity state.
         version: Heartbeat schema version.
     """
 
@@ -135,7 +135,7 @@ class HeartbeatConfig(BaseModel):
     publish_interval_seconds: int = 60
     ttl_seconds: int = 120
     sync_root: Path = Field(default_factory=lambda: Path(V2_SYNC_ROOT).expanduser())
-    skcomm_status: str = "online"
+    skcomms_status: str = "online"
     version: str = "0.1.0"
 
 
@@ -170,7 +170,7 @@ class NodeHeartbeat(BaseModel):
         resources: System resource snapshot.
         claimed_tasks: Task IDs currently claimed by this node.
         loaded_models: AI models currently loaded.
-        skcomm_status: skcomm connectivity state.
+        skcomms_status: skcomms connectivity state.
         version: Heartbeat schema version.
     """
 
@@ -183,7 +183,7 @@ class NodeHeartbeat(BaseModel):
     resources: NodeResources = Field(default_factory=NodeResources)
     claimed_tasks: list[str] = Field(default_factory=list)
     loaded_models: list[str] = Field(default_factory=list)
-    skcomm_status: str = "online"
+    skcomms_status: str = "online"
     version: str = "0.1.0"
 
     def is_expired(self, now: Optional[datetime] = None) -> bool:
@@ -370,7 +370,7 @@ class HeartbeatPublisher:
             resources=resources,
             claimed_tasks=claimed,
             loaded_models=list(self._loaded_models),
-            skcomm_status=self._cfg.skcomm_status,
+            skcomms_status=self._cfg.skcomms_status,
             version=self._cfg.version,
         )
 

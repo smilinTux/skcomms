@@ -1,34 +1,34 @@
 """
-SKComm MCP Server — expose messaging tools to AI agents via Model Context Protocol.
+SKComms MCP Server — expose messaging tools to AI agents via Model Context Protocol.
 
 Tool-agnostic: works with Cursor, Claude Code CLI, Claude Desktop,
 Windsurf, Aider, Cline, or any MCP client that speaks stdio.
 
 Tools:
-    send_message      — Send a P2P message via SKComm
+    send_message      — Send a P2P message via SKComms
     receive_messages  — Check inbox for new messages
     get_peers         — List known peers and their online status
-    get_status        — Get SKComm daemon health
+    get_status        — Get SKComms daemon health
     update_presence   — Set this node's presence state
 
 Invocation (all equivalent):
-    python -m skcomm.mcp_server          # direct module
-    bash skcomm/scripts/mcp-serve.sh     # portable launcher
+    python -m skcomms.mcp_server          # direct module
+    bash skcomms/scripts/mcp-serve.sh     # portable launcher
 
 Client configuration — use the launcher script for all clients:
 
     Cursor (.cursor/mcp.json):
-        {"mcpServers": {"skcomm": {
-            "command": "bash", "args": ["skcomm/scripts/mcp-serve.sh"]}}}
+        {"mcpServers": {"skcomms": {
+            "command": "bash", "args": ["skcomms/scripts/mcp-serve.sh"]}}}
 
     Claude Code CLI (.mcp.json at repo root, or `claude mcp add`):
-        {"mcpServers": {"skcomm": {
-            "command": "bash", "args": ["skcomm/scripts/mcp-serve.sh"]}}}
+        {"mcpServers": {"skcomms": {
+            "command": "bash", "args": ["skcomms/scripts/mcp-serve.sh"]}}}
 
     Claude Desktop:
-        {"mcpServers": {"skcomm": {
+        {"mcpServers": {"skcomms": {
             "command": "bash",
-            "args": ["/absolute/path/to/skcomm/scripts/mcp-serve.sh"]}}}
+            "args": ["/absolute/path/to/skcomms/scripts/mcp-serve.sh"]}}}
 """
 
 from __future__ import annotations
@@ -45,23 +45,23 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
-logger = logging.getLogger("skcomm.mcp")
+logger = logging.getLogger("skcomms.mcp")
 
-server = Server("skcomm")
+server = Server("skcomms")
 
 # ---------------------------------------------------------------------------
 # Config helpers
 # ---------------------------------------------------------------------------
 
 _DEFAULT_PORT = 9384
-_CONFIG_PATH = Path("~/.skcomm/config.yaml")
-_CONFIG_PATH_ALT = Path("~/.skcomm/config.yml")
+_CONFIG_PATH = Path("~/.skcomms/config.yaml")
+_CONFIG_PATH_ALT = Path("~/.skcomms/config.yml")
 
 
 def _load_api_port() -> int:
-    """Discover the SKComm API port from config or return the default.
+    """Discover the SKComms API port from config or return the default.
 
-    Checks ~/.skcomm/config.yaml (and .yml) for an ``api.port`` key.
+    Checks ~/.skcomms/config.yaml (and .yml) for an ``api.port`` key.
     Falls back to 9384 if the config is absent or the key is missing.
 
     Returns:
@@ -72,8 +72,8 @@ def _load_api_port() -> int:
         if path.exists():
             try:
                 raw = yaml.safe_load(path.read_text()) or {}
-                skcomm = raw.get("skcomm", raw)
-                return int(skcomm.get("api", {}).get("port", _DEFAULT_PORT))
+                skcomms = raw.get("skcomms", raw)
+                return int(skcomms.get("api", {}).get("port", _DEFAULT_PORT))
             except Exception as e:
                 logger.warning("mcp_server.py: %s", e)
                 pass
@@ -81,7 +81,7 @@ def _load_api_port() -> int:
 
 
 def _api_base() -> str:
-    """Return the base URL for the local SKComm daemon REST API.
+    """Return the base URL for the local SKComms daemon REST API.
 
     Returns:
         str: Base URL, e.g. ``http://127.0.0.1:9384``.
@@ -124,7 +124,7 @@ def _error_response(message: str) -> list[TextContent]:
 
 
 async def _get(path: str, params: Optional[dict] = None) -> dict | list:
-    """Perform a GET request against the local SKComm daemon.
+    """Perform a GET request against the local SKComms daemon.
 
     Args:
         path (str): URL path, e.g. ``/api/v1/status``.
@@ -143,7 +143,7 @@ async def _get(path: str, params: Optional[dict] = None) -> dict | list:
 
 
 async def _post(path: str, body: dict) -> dict | list:
-    """Perform a POST request against the local SKComm daemon.
+    """Perform a POST request against the local SKComms daemon.
 
     Args:
         path (str): URL path, e.g. ``/api/v1/send``.
@@ -168,12 +168,12 @@ async def _post(path: str, body: dict) -> dict | list:
 
 @server.list_tools()
 async def list_tools() -> list[Tool]:
-    """Register all SKComm tools with the MCP server."""
+    """Register all SKComms tools with the MCP server."""
     return [
         Tool(
             name="send_message",
             description=(
-                "Send a P2P message to another agent via SKComm. "
+                "Send a P2P message to another agent via SKComms. "
                 "Routes through available transports (Syncthing, file, Nostr). "
                 "Returns delivery status and the assigned envelope ID."
             ),
@@ -200,7 +200,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="receive_messages",
             description=(
-                "Check inbox for new incoming messages across all SKComm transports. "
+                "Check inbox for new incoming messages across all SKComms transports. "
                 "Optionally filter by sender peer ID and cap the result count."
             ),
             inputSchema={
@@ -233,7 +233,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="get_status",
             description=(
-                "Get the health of the local SKComm daemon: identity, "
+                "Get the health of the local SKComms daemon: identity, "
                 "transport statuses, encryption state, and message counts."
             ),
             inputSchema={
@@ -302,7 +302,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
 
 async def _handle_send_message(args: dict) -> list[TextContent]:
-    """Send a P2P message via the SKComm daemon REST API.
+    """Send a P2P message via the SKComms daemon REST API.
 
     Args:
         args (dict): Must contain ``to`` and ``content``; optionally ``urgency``.
@@ -338,14 +338,14 @@ async def _handle_send_message(args: dict) -> list[TextContent]:
         )
     except httpx.ConnectError:
         return _error_response(
-            f"Cannot reach SKComm daemon at {_api_base()}. Is it running? Start with: skcomm serve"
+            f"Cannot reach SKComms daemon at {_api_base()}. Is it running? Start with: skcomms serve"
         )
     except httpx.HTTPStatusError as exc:
-        return _error_response(f"SKComm API error {exc.response.status_code}: {exc.response.text}")
+        return _error_response(f"SKComms API error {exc.response.status_code}: {exc.response.text}")
 
 
 async def _handle_receive_messages(args: dict) -> list[TextContent]:
-    """Check inbox for new messages via the SKComm daemon REST API.
+    """Check inbox for new messages via the SKComms daemon REST API.
 
     Args:
         args (dict): Optionally contains ``from_peer`` (str) and ``limit`` (int).
@@ -360,10 +360,10 @@ async def _handle_receive_messages(args: dict) -> list[TextContent]:
         envelopes: list = await _get("/api/v1/inbox")
     except httpx.ConnectError:
         return _error_response(
-            f"Cannot reach SKComm daemon at {_api_base()}. Is it running? Start with: skcomm serve"
+            f"Cannot reach SKComms daemon at {_api_base()}. Is it running? Start with: skcomms serve"
         )
     except httpx.HTTPStatusError as exc:
-        return _error_response(f"SKComm API error {exc.response.status_code}: {exc.response.text}")
+        return _error_response(f"SKComms API error {exc.response.status_code}: {exc.response.text}")
 
     messages = []
     for env in envelopes:
@@ -390,7 +390,7 @@ async def _handle_receive_messages(args: dict) -> list[TextContent]:
 
 
 async def _handle_get_peers(_args: dict) -> list[TextContent]:
-    """List known peers from the SKComm peer directory.
+    """List known peers from the SKComms peer directory.
 
     Args:
         _args (dict): Unused; no parameters required.
@@ -402,10 +402,10 @@ async def _handle_get_peers(_args: dict) -> list[TextContent]:
         peers: list = await _get("/api/v1/peers")
     except httpx.ConnectError:
         return _error_response(
-            f"Cannot reach SKComm daemon at {_api_base()}. Is it running? Start with: skcomm serve"
+            f"Cannot reach SKComms daemon at {_api_base()}. Is it running? Start with: skcomms serve"
         )
     except httpx.HTTPStatusError as exc:
-        return _error_response(f"SKComm API error {exc.response.status_code}: {exc.response.text}")
+        return _error_response(f"SKComms API error {exc.response.status_code}: {exc.response.text}")
 
     peer_list = [
         {
@@ -422,7 +422,7 @@ async def _handle_get_peers(_args: dict) -> list[TextContent]:
 
 
 async def _handle_get_status(_args: dict) -> list[TextContent]:
-    """Get the SKComm daemon health status.
+    """Get the SKComms daemon health status.
 
     Args:
         _args (dict): Unused; no parameters required.
@@ -437,18 +437,18 @@ async def _handle_get_status(_args: dict) -> list[TextContent]:
             {
                 "daemon": "offline",
                 "error": (
-                    f"Cannot reach SKComm daemon at {_api_base()}. Start with: skcomm serve"
+                    f"Cannot reach SKComms daemon at {_api_base()}. Start with: skcomms serve"
                 ),
             }
         )
     except httpx.HTTPStatusError as exc:
-        return _error_response(f"SKComm API error {exc.response.status_code}: {exc.response.text}")
+        return _error_response(f"SKComms API error {exc.response.status_code}: {exc.response.text}")
 
     return _json_response(status)
 
 
 async def _handle_update_presence(args: dict) -> list[TextContent]:
-    """Set this node's presence state via the SKComm daemon REST API.
+    """Set this node's presence state via the SKComms daemon REST API.
 
     Args:
         args (dict): Must contain ``status`` — one of online/away/busy/dnd.
@@ -479,10 +479,10 @@ async def _handle_update_presence(args: dict) -> list[TextContent]:
         )
     except httpx.ConnectError:
         return _error_response(
-            f"Cannot reach SKComm daemon at {_api_base()}. Is it running? Start with: skcomm serve"
+            f"Cannot reach SKComms daemon at {_api_base()}. Is it running? Start with: skcomms serve"
         )
     except httpx.HTTPStatusError as exc:
-        return _error_response(f"SKComm API error {exc.response.status_code}: {exc.response.text}")
+        return _error_response(f"SKComms API error {exc.response.status_code}: {exc.response.text}")
 
 
 # ═══════════════════════════════════════════════════════════
@@ -491,7 +491,7 @@ async def _handle_update_presence(args: dict) -> list[TextContent]:
 
 
 def main() -> None:
-    """Run the SKComm MCP server on stdio transport."""
+    """Run the SKComms MCP server on stdio transport."""
     logging.basicConfig(level=logging.WARNING, format="%(name)s: %(message)s")
     asyncio.run(_run_server())
 

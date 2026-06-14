@@ -1,12 +1,12 @@
 """
-SKComm rate limiter — token bucket throttling per transport and per peer.
+SKComms rate limiter — token bucket throttling per transport and per peer.
 
 Prevents transport abuse, respects relay API limits, and protects
 the mesh from runaway send loops. Each transport and peer combination
 gets its own token bucket that refills at a configurable rate.
 
 Usage:
-    from skcomm.ratelimit import RateLimiter
+    from skcomms.ratelimit import RateLimiter
 
     rl = RateLimiter()
     if rl.allow("nostr", "lumina"):
@@ -23,7 +23,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-logger = logging.getLogger("skcomm.ratelimit")
+logger = logging.getLogger("skcomms.ratelimit")
 
 DEFAULT_CAPACITY = 30
 DEFAULT_REFILL_RATE = 1.0

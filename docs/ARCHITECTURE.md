@@ -25,7 +25,7 @@ flowchart TD
       REG["registry + peers<br/>(discovery + wiring)"]
       GRANT["grants<br/>(cross-operator consent)"]
     end
-    subgraph TRANS["skcomm — transport (dependency)"]
+    subgraph TRANS["skcomms — transport (dependency)"]
       ST["Syncthing"]
       FILE["file"]
       WRTC["WebRTC"]
@@ -38,7 +38,7 @@ flowchart TD
 The protocol writes signed envelope files into a directory tree; a transport
 (by default Syncthing) replicates that tree to the peer. The protocol never
 "calls" the transport — it only depends on the tree being mirrored. This
-indirection is what keeps the dependency graph acyclic (`skcomms → skcomm`) and
+indirection is what keeps the dependency graph acyclic (`skcomms → skcomms`) and
 lets either layer evolve independently.
 
 ---
@@ -143,7 +143,7 @@ bytes — a cheap tamper pre-check before the expensive PGP verify).
 
 > A legacy transport-level `MessageEnvelope` (`models.py`) and
 > `LegacySignedEnvelope` are retained for backward compatibility with the
-> inherited skcomm stack; Envelope v1 is the canonical layer above it.
+> inherited skcomms stack; Envelope v1 is the canonical layer above it.
 
 ---
 
@@ -316,7 +316,7 @@ this is a hard dependency — `skcapstone` lives in the optional extra.
 | `integration.py` | optional skcapstone adapter — sk-alert + skscheduler, default-on by presence |
 | `cli.py` | the `skcomms` CLI — realm commands + inherited transport commands |
 | `mcp_server.py` | MCP server entrypoint (`skcomms-mcp`) |
-| `core.py`, `router.py`, `transport.py`, `transports/` | **inherited skcomm transport stack** (Syncthing/file/Nostr/WebSocket/WebRTC/Tailscale, routing modes) |
+| `core.py`, `router.py`, `transport.py`, `transports/` | **inherited skcomms transport stack** (Syncthing/file/Nostr/WebSocket/WebRTC/Tailscale, routing modes) |
 | `models.py` | legacy transport `MessageEnvelope` + routing/urgency enums |
 | `heartbeat.py`, `discovery.py`, `key_exchange.py`, `peers`-transport, `pubsub*`, `queue.py`, `marketplace.py`, `api.py`, `metrics.py`, `ratelimit.py`, `ack.py`, `compression.py`, `signaling.py`, `*_router.py` | inherited transport-layer services (node beacons, DID exchange, pub/sub, dead-letter queue, REST API, …) |
 
@@ -328,7 +328,7 @@ this is a hard dependency — `skcapstone` lives in the optional extra.
 flowchart TD
     subgraph COMMS["Comms"]
       SKCOMMS["**skcomms**<br/>protocol: Envelope v1 · FQID · PGP · TOFU · consent"]
-      SKCOMM["skcomm<br/>transport (Syncthing · file · WebRTC · Nostr …)"]
+      SKCOMMS["skcomms<br/>transport (Syncthing · file · WebRTC · Nostr …)"]
       SKCHAT["skchat<br/>chat app over the protocol"]
     end
     subgraph CORE["Core"]
@@ -344,7 +344,7 @@ flowchart TD
     CAPAUTH -->|"FQID + signing key"| SKCOMMS
     CAP -->|"realm / operator"| SKCOMMS
     SKCOMMS -->|"signed Envelope v1"| SKCHAT
-    SKCOMMS -->|"realm tree replicated by"| SKCOMM
+    SKCOMMS -->|"realm tree replicated by"| SKCOMMS
     SKCOMMS -->|"recall-consent tokens"| SKMEMORY
     SKCOMMS -. "alerts (optional)" .-> ALERT
     SKCOMMS -. "health sweep (optional)" .-> SCHED
@@ -352,7 +352,7 @@ flowchart TD
 
 skcomms is the **Comms protocol** sub-layer: it defines what a message is, how it
 carries sovereign identity, and how realms route to each other without a central
-authority. `capauth` (Core) gives it identity; `skcomm` (Comms transport) carries
+authority. `capauth` (Core) gives it identity; `skcomms` (Comms transport) carries
 the bytes; `skchat` consumes the schema; `skmemory` (Core) consumes its consent
 grants; the skcapstone platform primitives (`sk-alert`, `skscheduler`) are reused
 when present and gracefully absent otherwise.

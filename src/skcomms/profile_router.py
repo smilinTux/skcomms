@@ -5,7 +5,7 @@ Exposes agent identity, memories, trust, soul, journal, coordination,
 storage stats, and housekeeping via authenticated REST endpoints.
 All endpoints require CapAuth bearer token authentication.
 
-Mount in the SKComm FastAPI app:
+Mount in the SKComms FastAPI app:
 
     from .profile_router import profile_router
     app.include_router(profile_router)
@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 
 from .capauth_validator import CapAuthValidator
 
-logger = logging.getLogger("skcomm.profile")
+logger = logging.getLogger("skcomms.profile")
 
 profile_router = APIRouter(prefix="/api/v1/profile", tags=["profile"])
 
@@ -88,7 +88,7 @@ async def require_auth(
 
 _SKCAPSTONE_HOME: Optional[Path] = None
 _SKMEMORY_HOME: Optional[Path] = None
-_SKCOMM_HOME: Optional[Path] = None
+_SKCOMMS_HOME: Optional[Path] = None
 
 
 def _agent_home() -> Path:
@@ -109,12 +109,12 @@ def _skmemory_home() -> Path:
     return _SKMEMORY_HOME
 
 
-def _skcomm_home() -> Path:
-    """Resolve the skcomm home directory."""
-    global _SKCOMM_HOME
-    if _SKCOMM_HOME is None:
-        _SKCOMM_HOME = Path("~/.skcomm").expanduser()
-    return _SKCOMM_HOME
+def _skcomms_home() -> Path:
+    """Resolve the skcomms home directory."""
+    global _SKCOMMS_HOME
+    if _SKCOMMS_HOME is None:
+        _SKCOMMS_HOME = Path("~/.skcomms").expanduser()
+    return _SKCOMMS_HOME
 
 
 # ---------------------------------------------------------------------------
@@ -463,7 +463,7 @@ async def get_storage(fingerprint: str = Depends(require_auth)):
     dirs = {
         "skcapstone": _agent_home(),
         "skmemory": _skmemory_home(),
-        "skcomm": _skcomm_home(),
+        "skcomms": _skcomms_home(),
         "capauth": Path("~/.capauth").expanduser(),
     }
 
@@ -484,7 +484,7 @@ async def get_storage(fingerprint: str = Depends(require_auth)):
 
     # Breakdown of known bloat directories
     bloat: dict[str, Any] = {}
-    acks_dir = _skcomm_home() / "acks"
+    acks_dir = _skcomms_home() / "acks"
     if acks_dir.is_dir():
         ack_size = _dir_size_bytes(acks_dir)
         ack_count = sum(1 for f in acks_dir.iterdir() if f.is_file())
@@ -529,7 +529,7 @@ async def trigger_housekeeping(
 
         results = run_housekeeping(
             skcapstone_home=_agent_home(),
-            skcomm_home=_skcomm_home(),
+            skcomms_home=_skcomms_home(),
             dry_run=dry_run,
         )
         return results

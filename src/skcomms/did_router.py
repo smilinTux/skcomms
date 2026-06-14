@@ -1,5 +1,5 @@
 """
-DID (Decentralized Identity) API router for SKComm.
+DID (Decentralized Identity) API router for SKComms.
 
 Exposes W3C DID documents at three tiers and provides peer DID resolution,
 challenge-response verification, and on-disk publishing.
@@ -30,7 +30,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-logger = logging.getLogger("skcomm.did")
+logger = logging.getLogger("skcomms.did")
 
 # Single router with no prefix — routes carry their full paths.
 did_router = APIRouter(tags=["did"])
@@ -89,8 +89,8 @@ def _skcapstone_home() -> Path:
     return Path(os.environ.get("SKCAPSTONE_HOME", str(Path.home() / ".skcapstone")))
 
 
-def _skcomm_home() -> Path:
-    return Path(os.environ.get("SKCOMM_HOME", str(Path.home() / ".skcomm")))
+def _skcomms_home() -> Path:
+    return Path(os.environ.get("SKCOMMS_HOME", str(Path.home() / ".skcomms")))
 
 
 def _tailnet_params() -> tuple[str, str]:
@@ -276,7 +276,7 @@ async def did_publish(fingerprint: str = Depends(_require_capauth)) -> JSONRespo
     """Generate all DID tiers and write files to disk.
 
     Writes:
-      ``~/.skcomm/well-known/did.json``   → Tier 2 (mesh)
+      ``~/.skcomms/well-known/did.json``   → Tier 2 (mesh)
       ``~/.skcapstone/did/key.json``       → Tier 1 (did:key)
       ``~/.skcapstone/did/public.json``    → Tier 3 (public)
       ``~/.skcapstone/did/did_key.txt``    → plain did:key string
@@ -303,7 +303,7 @@ async def did_publish(fingerprint: str = Depends(_require_capauth)) -> JSONRespo
                 errors.append(f"{path}: {exc}")
 
         _write(
-            _skcomm_home() / "well-known" / "did.json",
+            _skcomms_home() / "well-known" / "did.json",
             json.dumps(docs[DIDTier.WEB_MESH], indent=2),
         )
         did_dir = _skcapstone_home() / "did"

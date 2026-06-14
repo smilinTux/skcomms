@@ -1,5 +1,5 @@
 """
-SKComm transport layer — pluggable delivery mechanisms.
+SKComms transport layer — pluggable delivery mechanisms.
 
 Each transport is a pluggable module that knows how to send and
 receive raw envelope bytes. The transport never sees inside the
@@ -18,7 +18,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-logger = logging.getLogger("skcomm.transport")
+logger = logging.getLogger("skcomms.transport")
 
 
 class TransportStatus(str, Enum):
@@ -80,7 +80,7 @@ class TransportError(Exception):
 
 
 class Transport(ABC):
-    """Abstract base class for all SKComm transports.
+    """Abstract base class for all SKComms transports.
 
     Every transport must implement five methods:
     - configure: load transport-specific settings

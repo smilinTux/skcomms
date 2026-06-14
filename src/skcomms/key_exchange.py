@@ -1,4 +1,4 @@
-"""Key exchange for SKComm peer onboarding.
+"""Key exchange for SKComms peer onboarding.
 
 Two modes:
     Public  — Fetch a peer's identity from their published DID on skworld.io
@@ -29,7 +29,7 @@ from typing import Any, Optional
 
 from .discovery import PeerInfo, PeerStore, PeerTransport
 
-logger = logging.getLogger("skcomm.key_exchange")
+logger = logging.getLogger("skcomms.key_exchange")
 
 BUNDLE_VERSION = "1.0"
 SKWORLD_DID_BASE = "https://ws.weblink.skworld.io/agents"
@@ -50,7 +50,7 @@ def fetch_peer_from_did(
 
     Args:
         name_or_url: Agent slug (e.g. "lumina") or full DID document URL.
-        peers_dir: Directory to save peer files (default ~/.skcomm/peers).
+        peers_dir: Directory to save peer files (default ~/.skcomms/peers).
         save: Whether to persist the peer to disk.
 
     Returns:
@@ -239,7 +239,7 @@ def export_peer_bundle(
 ) -> dict:
     """Export own identity as a peer bundle for direct exchange.
 
-    Reads from the local CapAuth profile and skcomm config.
+    Reads from the local CapAuth profile and skcomms config.
 
     Returns:
         dict with bundle format suitable for JSON serialization.
@@ -287,7 +287,7 @@ def export_peer_bundle(
         did_key = did_key_path.read_text(encoding="utf-8").strip()
 
     bundle: dict[str, Any] = {
-        "skcomm_peer_bundle": BUNDLE_VERSION,
+        "skcomms_peer_bundle": BUNDLE_VERSION,
         "name": name,
         "fingerprint": fingerprint,
         "email": email or "",
@@ -312,7 +312,7 @@ def import_peer_bundle(
 
     Args:
         bundle: Parsed peer bundle dict.
-        peers_dir: Directory for peer files (default ~/.skcomm/peers).
+        peers_dir: Directory for peer files (default ~/.skcomms/peers).
         gpg_import: Whether to import the public key to GPG keyring.
 
     Returns:
@@ -321,9 +321,9 @@ def import_peer_bundle(
     Raises:
         KeyExchangeError: If bundle is invalid.
     """
-    version = bundle.get("skcomm_peer_bundle")
+    version = bundle.get("skcomms_peer_bundle")
     if not version:
-        raise KeyExchangeError("Invalid bundle: missing 'skcomm_peer_bundle' version field")
+        raise KeyExchangeError("Invalid bundle: missing 'skcomms_peer_bundle' version field")
 
     name = bundle.get("name", "").strip()
     if not name:
@@ -350,7 +350,7 @@ def import_peer_bundle(
         # Default transports
         transports = [
             PeerTransport(transport="syncthing", settings={"comms_root": "~/.skcapstone/comms"}),
-            PeerTransport(transport="file", settings={"inbox_path": "~/.skcomm/inbox"}),
+            PeerTransport(transport="file", settings={"inbox_path": "~/.skcomms/inbox"}),
         ]
 
     peer = PeerInfo(
@@ -490,8 +490,8 @@ def _get_email_from_key(armor: str) -> Optional[str]:
 
 
 def _get_local_transports() -> list[dict]:
-    """Read local skcomm config and return transport info suitable for bundle."""
-    config_path = Path.home() / ".skcomm" / "config.yml"
+    """Read local skcomms config and return transport info suitable for bundle."""
+    config_path = Path.home() / ".skcomms" / "config.yml"
     if not config_path.exists():
         return []
 
@@ -499,8 +499,8 @@ def _get_local_transports() -> list[dict]:
         import yaml
 
         config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-        skcomm = config.get("skcomm", config)
-        transports_cfg = skcomm.get("transports", {})
+        skcomms = config.get("skcomms", config)
+        transports_cfg = skcomms.get("transports", {})
         result = []
         for name, tcfg in transports_cfg.items():
             if isinstance(tcfg, dict) and tcfg.get("enabled", True):
@@ -522,7 +522,7 @@ def _get_local_transports() -> list[dict]:
 
 
 def _default_peers_dir() -> Path:
-    return Path(os.environ.get("SKCOMM_HOME", str(Path.home() / ".skcomm"))) / "peers"
+    return Path(os.environ.get("SKCOMMS_HOME", str(Path.home() / ".skcomms"))) / "peers"
 
 
 def _safe_filename(name: str) -> str:

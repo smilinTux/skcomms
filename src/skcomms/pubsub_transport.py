@@ -1,12 +1,12 @@
 """
-SKComm pub/sub transport bridge — cross-node event forwarding.
+SKComms pub/sub transport bridge — cross-node event forwarding.
 
-Connects the in-process PubSubBroker to SKComm transports so that
+Connects the in-process PubSubBroker to SKComms transports so that
 published messages can propagate to remote agents across the mesh.
 
 Architecture:
     Local publish  → PubSubBroker → TransportBridge.on_local_message()
-                                  → SKComm.send() (if topic is exported)
+                                  → SKComms.send() (if topic is exported)
     Remote receive → TransportBridge.inject_envelope() → broker.publish()
 
 The bridge is intentionally lightweight:
@@ -18,12 +18,12 @@ The bridge is intentionally lightweight:
 
 Usage::
 
-    from skcomm.pubsub import PubSubBroker
-    from skcomm.pubsub_transport import TransportBridge
-    from skcomm.core import SKComm
+    from skcomms.pubsub import PubSubBroker
+    from skcomms.pubsub_transport import TransportBridge
+    from skcomms.core import SKComms
 
     broker = PubSubBroker()
-    comm   = SKComm.from_config()
+    comm   = SKComms.from_config()
 
     bridge = TransportBridge(
         broker=broker,
@@ -33,7 +33,7 @@ Usage::
     )
     bridge.start()
 
-    # Now any publish to "agent.heartbeat" will be forwarded via SKComm
+    # Now any publish to "agent.heartbeat" will be forwarded via SKComms
     broker.publish("agent.heartbeat", {"state": "active"}, sender="opus")
 """
 
@@ -46,23 +46,23 @@ from typing import Any, Optional
 
 from .pubsub import PubSubBroker, PubSubMessage, _pattern_to_regex
 
-logger = logging.getLogger("skcomm.pubsub_transport")
+logger = logging.getLogger("skcomms.pubsub_transport")
 
-# SKComm message type tag used to identify pub/sub envelopes
+# SKComms message type tag used to identify pub/sub envelopes
 PUBSUB_CONTENT_TYPE_TAG = "pubsub"
 
 
 class TransportBridge:
-    """Bridges a local PubSubBroker to SKComm transports for remote delivery.
+    """Bridges a local PubSubBroker to SKComms transports for remote delivery.
 
     Listens to a set of export topic patterns on the local broker and
-    forwards matching messages to a list of remote agents via SKComm.
+    forwards matching messages to a list of remote agents via SKComms.
     Also provides :meth:`inject_envelope` to push inbound envelopes
     (received from transports) back into the local broker.
 
     Args:
-        broker: The local :class:`~skcomm.pubsub.PubSubBroker` to connect.
-        comm: An initialised :class:`~skcomm.core.SKComm` instance used
+        broker: The local :class:`~skcomms.pubsub.PubSubBroker` to connect.
+        comm: An initialised :class:`~skcomms.core.SKComms` instance used
             for outbound delivery. If ``None``, the bridge operates in
             local-only mode (inject still works; forward is a no-op).
         export_patterns: Topic patterns whose messages should be forwarded
@@ -150,8 +150,8 @@ class TransportBridge:
     def _on_local_message(self, msg: PubSubMessage) -> None:
         """Callback invoked by the broker when a matching message is published.
 
-        Serialises the :class:`~skcomm.pubsub.PubSubMessage` and sends
-        it to all configured remote agents via SKComm.
+        Serialises the :class:`~skcomms.pubsub.PubSubMessage` and sends
+        it to all configured remote agents via SKComms.
 
         Args:
             msg: The published message from the local broker.
@@ -184,15 +184,15 @@ class TransportBridge:
     # ------------------------------------------------------------------
 
     def inject_envelope(self, envelope: Any) -> bool:
-        """Parse an inbound SKComm envelope and inject it into the local broker.
+        """Parse an inbound SKComms envelope and inject it into the local broker.
 
         Expects the envelope payload content to be a JSON-serialised
-        :class:`~skcomm.pubsub.PubSubMessage`. If the content cannot be
+        :class:`~skcomms.pubsub.PubSubMessage`. If the content cannot be
         parsed, the envelope is silently skipped.
 
         Args:
-            envelope: A :class:`~skcomm.models.MessageEnvelope` received
-                from any SKComm transport.
+            envelope: A :class:`~skcomms.models.MessageEnvelope` received
+                from any SKComms transport.
 
         Returns:
             True if the message was successfully injected; False otherwise.

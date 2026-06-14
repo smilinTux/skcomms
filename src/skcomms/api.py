@@ -1,14 +1,14 @@
 """
-SKComm REST API — FastAPI server wrapping the SKComm Python API.
+SKComms REST API — FastAPI server wrapping the SKComms Python API.
 
 Provides HTTP endpoints for Flutter/desktop clients to send and receive
-messages through SKComm without requiring Python bindings.
+messages through SKComms without requiring Python bindings.
 
 Run standalone:
-    uvicorn skcomm.api:app --host 127.0.0.1 --port 9384
+    uvicorn skcomms.api:app --host 127.0.0.1 --port 9384
 
 Run from CLI:
-    skcomm serve --host 127.0.0.1 --port 9384
+    skcomms serve --host 127.0.0.1 --port 9384
 """
 
 from __future__ import annotations
@@ -27,17 +27,17 @@ from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from .capauth_validator import CapAuthValidator
-from .core import SKComm
+from .core import SKComms
 from .discovery import PeerInfo, PeerStore
 from .heartbeat import HeartbeatConfig, HeartbeatPublisher
 from .models import MessageEnvelope, MessageType, RoutingMode, Urgency
 from .outbox import PersistentOutbox
 from .signaling import SignalingBroker, signaling_ws_endpoint
 
-logger = logging.getLogger("skcomm.api")
+logger = logging.getLogger("skcomms.api")
 
-# Global SKComm instance (initialized on startup)
-_skcomm: Optional[SKComm] = None
+# Global SKComms instance (initialized on startup)
+_skcomms: Optional[SKComms] = None
 
 # Global WebRTC signaling broker (initialized on startup)
 _broker: Optional[SignalingBroker] = None
@@ -49,7 +49,7 @@ _chat_history = None
 def _get_chat_history():
     """Lazily import and return a ChatHistory instance backed by SKMemory.
 
-    Imports skchat at call time so the skcomm API can still start if skchat
+    Imports skchat at call time so the skcomms API can still start if skchat
     is not installed.  The instance is cached after the first successful init.
 
     Returns:
@@ -68,41 +68,41 @@ def _get_chat_history():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage SKComm lifecycle on server startup/shutdown."""
-    global _skcomm, _broker
-    logger.info("Starting SKComm API server...")
+    """Manage SKComms lifecycle on server startup/shutdown."""
+    global _skcomms, _broker
+    logger.info("Starting SKComms API server...")
     try:
-        _skcomm = SKComm.from_config()
+        _skcomms = SKComms.from_config()
         logger.info(
-            "SKComm initialized as '%s' with %d transports",
-            _skcomm.identity,
-            len(_skcomm.router.transports),
+            "SKComms initialized as '%s' with %d transports",
+            _skcomms.identity,
+            len(_skcomms.router.transports),
         )
     except Exception:
-        logger.exception("Failed to initialize SKComm")
+        logger.exception("Failed to initialize SKComms")
         raise
 
     # Initialize the WebRTC signaling broker.
     # require_auth=True (default) enforces PGP token verification on every
     # WebSocket upgrade. To disable auth during local development set
-    # SKCOMM_DEV_AUTH=1 in the environment — this flips require_auth=False
+    # SKCOMMS_DEV_AUTH=1 in the environment — this flips require_auth=False
     # which accepts plain 40-hex fingerprints with no signature check.
     import os as _os
     import sys as _sys
 
-    # SECURITY: SKCOMM_DEV_AUTH disables CapAuth PGP signature verification
+    # SECURITY: SKCOMMS_DEV_AUTH disables CapAuth PGP signature verification
     # on WebSocket signaling connections. This means ANY 40-hex string is
     # accepted as a valid fingerprint with NO cryptographic proof of identity.
     # An attacker on the same network can impersonate any agent.
     # Accepted values: "1", "true", "yes", "i_know_what_im_doing"
     # This MUST NEVER be set in production deployments.
-    dev_auth_val = _os.environ.get("SKCOMM_DEV_AUTH", "").lower()
+    dev_auth_val = _os.environ.get("SKCOMMS_DEV_AUTH", "").lower()
     dev_auth = dev_auth_val in {"1", "true", "yes", "i_know_what_im_doing"}
     if dev_auth:
         _dev_banner = (
             "\n"
             "========================================================\n"
-            "  WARNING: SKCOMM_DEV_AUTH is SET -- AUTH DISABLED\n"
+            "  WARNING: SKCOMMS_DEV_AUTH is SET -- AUTH DISABLED\n"
             "\n"
             "  CapAuth PGP signature verification is OFF.\n"
             "  Any 40-hex string is accepted as a valid fingerprint.\n"
@@ -113,7 +113,7 @@ async def lifespan(app: FastAPI):
         )
         print(_dev_banner, file=_sys.stderr, flush=True)
         logger.warning(
-            "WebRTC signaling: SKCOMM_DEV_AUTH=%s -- CapAuth signature check DISABLED. "
+            "WebRTC signaling: SKCOMMS_DEV_AUTH=%s -- CapAuth signature check DISABLED. "
             "Do NOT use in production.",
             dev_auth_val,
         )
@@ -124,13 +124,13 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    logger.info("Shutting down SKComm API server...")
-    _skcomm = None
+    logger.info("Shutting down SKComms API server...")
+    _skcomms = None
     _broker = None
 
 
 app = FastAPI(
-    title="SKComm API",
+    title="SKComms API",
     description="Transport-agnostic encrypted communication for sovereign AI",
     version="0.1.0",
     lifespan=lifespan,
@@ -172,31 +172,31 @@ class _PrivateNetworkAccessMiddleware(BaseHTTPMiddleware):
 app.add_middleware(_PrivateNetworkAccessMiddleware)
 
 
-def get_skcomm() -> SKComm:
-    """Get or create the global SKComm instance.
+def get_skcomms() -> SKComms:
+    """Get or create the global SKComms instance.
 
     Returns:
-        Configured SKComm instance.
+        Configured SKComms instance.
 
     Raises:
-        HTTPException: If SKComm initialization fails.
+        HTTPException: If SKComms initialization fails.
     """
-    global _skcomm
-    if _skcomm is None:
+    global _skcomms
+    if _skcomms is None:
         try:
-            _skcomm = SKComm.from_config()
+            _skcomms = SKComms.from_config()
             logger.info(
-                "SKComm initialized as '%s' with %d transports",
-                _skcomm.identity,
-                len(_skcomm.router.transports),
+                "SKComms initialized as '%s' with %d transports",
+                _skcomms.identity,
+                len(_skcomms.router.transports),
             )
         except Exception as exc:
-            logger.exception("Failed to initialize SKComm")
+            logger.exception("Failed to initialize SKComms")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to initialize SKComm: {exc}",
+                detail=f"Failed to initialize SKComms: {exc}",
             ) from exc
-    return _skcomm
+    return _skcomms
 
 
 # Peer name: alphanumeric, hyphens, underscores. 1-64 chars.
@@ -284,7 +284,7 @@ class SendMessageRequest(BaseModel):
     message: str = Field(
         ...,
         description="The message content (plaintext)",
-        examples=["Hello from the SKComm API!"],
+        examples=["Hello from the SKComms API!"],
     )
     message_type: MessageType = Field(
         default=MessageType.TEXT,
@@ -390,7 +390,7 @@ class PeerAddRequest(BaseModel):
     name: str = Field(..., description="Friendly agent name (e.g. 'lumina')")
     address: str = Field(
         ...,
-        description="Transport address or URI (e.g. syncthing folder path, skcomm://...)",
+        description="Transport address or URI (e.g. syncthing folder path, skcomms://...)",
     )
     transport: str = Field(
         default="syncthing",
@@ -413,7 +413,7 @@ class PresenceRequest(BaseModel):
     message: Optional[str] = Field(
         default=None,
         description="Optional status message",
-        examples=["Working on SKComm API"],
+        examples=["Working on SKComms API"],
     )
 
 
@@ -421,7 +421,7 @@ class PresenceRequest(BaseModel):
 async def root():
     """Root endpoint — health check."""
     return {
-        "service": "SKComm API",
+        "service": "SKComms API",
         "version": "0.1.0",
         "status": "running",
     }
@@ -485,12 +485,12 @@ async def mcp_tool_call(req: _MCPToolCallRequest):
 
 @app.get("/api/v1/status", tags=["status"])
 async def get_status():
-    """Get the current status of SKComm.
+    """Get the current status of SKComms.
 
     Returns:
         Dict with identity, transport health, crypto state, and config summary.
     """
-    comm = get_skcomm()
+    comm = get_skcomms()
     return comm.status()
 
 
@@ -514,7 +514,7 @@ async def send_message(request: SendMessageRequest):
     Raises:
         HTTPException: If message sending fails completely.
     """
-    comm = get_skcomm()
+    comm = get_skcomms()
 
     try:
         report = comm.send(
@@ -565,7 +565,7 @@ async def get_inbox():
     Returns:
         List of received MessageEnvelope objects.
     """
-    comm = get_skcomm()
+    comm = get_skcomms()
 
     try:
         envelopes = comm.receive()
@@ -1185,7 +1185,7 @@ async def get_agents():
     Note:
         This requires the crypto/keystore feature to be enabled.
     """
-    comm = get_skcomm()
+    comm = get_skcomms()
     status_info = comm.status()
 
     known_peers = status_info.get("crypto", {}).get("known_peers", [])
@@ -1210,7 +1210,7 @@ async def get_peers():
     """Get the peer directory.
 
     Returns all peers stored in the local peer registry
-    (~/.skcomm/peers/ YAML files) plus any peers from the peer store.
+    (~/.skcomms/peers/ YAML files) plus any peers from the peer store.
 
     Returns:
         List of PeerResponse objects with transport addresses.
@@ -1338,9 +1338,9 @@ async def remove_peer(name: str):
 def _get_broker() -> SignalingBroker:
     """Get or lazily create the global SignalingBroker.
 
-    Auth is controlled by the ``SKCOMM_DEV_AUTH`` environment variable:
+    Auth is controlled by the ``SKCOMMS_DEV_AUTH`` environment variable:
     unset (default) -> ``require_auth=True`` (PGP verification enforced).
-    ``SKCOMM_DEV_AUTH=1`` or ``SKCOMM_DEV_AUTH=I_KNOW_WHAT_IM_DOING``
+    ``SKCOMMS_DEV_AUTH=1`` or ``SKCOMMS_DEV_AUTH=I_KNOW_WHAT_IM_DOING``
     -> ``require_auth=False`` (dev mode, no sig check).
 
     Returns:
@@ -1350,7 +1350,7 @@ def _get_broker() -> SignalingBroker:
     if _broker is None:
         import os as _os
 
-        dev_auth_val = _os.environ.get("SKCOMM_DEV_AUTH", "").lower()
+        dev_auth_val = _os.environ.get("SKCOMMS_DEV_AUTH", "").lower()
         dev_auth = dev_auth_val in {"1", "true", "yes", "i_know_what_im_doing"}
         _broker = SignalingBroker(validator=CapAuthValidator(require_auth=not dev_auth))
     return _broker
@@ -1366,10 +1366,10 @@ async def webrtc_signaling(
 
     Authenticates the connection via ``Authorization: Bearer <capauth_token>``.
     Relays SDP offers/answers and ICE candidates between peers in the same room.
-    Compatible with the Weblink wire protocol and the SKComm Python transport.
+    Compatible with the Weblink wire protocol and the SKComms Python transport.
 
     Query params:
-        room: Signaling room ID (e.g. ``skcomm-CCBE9306410CF8CD``).
+        room: Signaling room ID (e.g. ``skcomms-CCBE9306410CF8CD``).
         peer: Claimed peer fingerprint (overridden by authenticated fingerprint).
 
     Headers:
@@ -1402,18 +1402,18 @@ async def get_ice_config():
     stun_servers = ["stun:stun.l.google.com:19302", "stun:stun.skworld.io:3478"]
     turn_servers = []
 
-    turn_secret = os.environ.get("SKCOMM_TURN_SECRET")
-    turn_url = os.environ.get("SKCOMM_TURN_URL", "turn:turn.skworld.io:3478")
+    turn_secret = os.environ.get("SKCOMMS_TURN_SECRET")
+    turn_url = os.environ.get("SKCOMMS_TURN_URL", "turn:turn.skworld.io:3478")
 
     if not turn_secret:
         logger.warning(
-            "SKCOMM_TURN_SECRET not set — TURN relay disabled, WebRTC may fail behind NAT"
+            "SKCOMMS_TURN_SECRET not set — TURN relay disabled, WebRTC may fail behind NAT"
         )
 
     if turn_secret:
         ttl = 86400
         timestamp = int(_time.time()) + ttl
-        username = f"{timestamp}:skcomm"
+        username = f"{timestamp}:skcomms"
         credential = base64.b64encode(
             hmac.new(
                 key=turn_secret.encode(),
@@ -1839,7 +1839,7 @@ async def update_presence(request: PresenceRequest):
     1. Writes a v2 heartbeat file to the sync mesh so Syncthing peers
        pick it up automatically (HeartbeatPublisher).
     2. Sends a HEARTBEAT envelope to every peer in the peer registry
-       via skcomm.send(), using LOW urgency so it doesn't block
+       via skcomms.send(), using LOW urgency so it doesn't block
        higher-priority traffic.
 
     Args:
@@ -1849,7 +1849,7 @@ async def update_presence(request: PresenceRequest):
         Confirmation dict with updated status, heartbeat path, and
         per-peer delivery results.
     """
-    comm = get_skcomm()
+    comm = get_skcomms()
 
     presence_content = f"status:{request.status}"
     if request.message:
@@ -1861,7 +1861,7 @@ async def update_presence(request: PresenceRequest):
         hb_config = HeartbeatConfig(
             node_id=comm.identity,
             agent_name=comm.identity,
-            skcomm_status=request.status,
+            skcomms_status=request.status,
         )
         publisher = HeartbeatPublisher(config=hb_config, state=request.status)
         written = publisher.publish()
@@ -1870,7 +1870,7 @@ async def update_presence(request: PresenceRequest):
     except Exception as exc:
         logger.warning("Heartbeat publish failed: %s", exc)
 
-    # Phase 2: send HEARTBEAT envelope to all known peers via SKComm
+    # Phase 2: send HEARTBEAT envelope to all known peers via SKComms
     peer_results: list[dict] = []
     peer_errors: list[dict] = []
     try:

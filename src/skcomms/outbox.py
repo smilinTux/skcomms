@@ -1,6 +1,6 @@
 """Persistent outbox -- queue failed messages and auto-retry.
 
-When SKComm fails to deliver a message (all transports down, network
+When SKComms fails to deliver a message (all transports down, network
 issues, relay rejection), the outbox saves it to disk and retries
 with exponential backoff. Messages that exhaust retries move to a
 dead letter queue for manual review.
@@ -9,7 +9,7 @@ The outbox is filesystem-based: one JSON file per queued message.
 No database needed. Works offline. Survives daemon restarts.
 
 Layout:
-    ~/.skcomm/outbox/
+    ~/.skcomms/outbox/
     ├── pending/          # messages awaiting retry
     │   └── {id}.json
     └── dead/             # permanently failed messages
@@ -27,9 +27,9 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, Field
 
-logger = logging.getLogger("skcomm.outbox")
+logger = logging.getLogger("skcomms.outbox")
 
-DEFAULT_OUTBOX_DIR = "~/.skcomm/outbox"
+DEFAULT_OUTBOX_DIR = "~/.skcomms/outbox"
 DEFAULT_MAX_RETRIES = 10
 DEFAULT_BASE_BACKOFF = 5
 
@@ -38,7 +38,7 @@ class OutboxEntry(BaseModel):
     """A queued message awaiting delivery.
 
     Attributes:
-        envelope_id: The SKComm envelope ID.
+        envelope_id: The SKComms envelope ID.
         recipient: Target agent/peer.
         envelope_json: Full serialized envelope (JSON string).
         created_at: When the message was first queued.
@@ -71,7 +71,7 @@ class PersistentOutbox:
         outbox_dir: Root directory for the outbox.
         max_retries: Default max retries per message.
         base_backoff: Base backoff in seconds (doubled each retry).
-        router: Optional SKComm Router for retry delivery.
+        router: Optional SKComms Router for retry delivery.
     """
 
     def __init__(
@@ -260,7 +260,7 @@ class PersistentOutbox:
         self._stop_event = threading.Event()
         self._retry_interval = interval
         self._retry_thread = threading.Thread(
-            target=self._retry_loop, daemon=True, name="skcomm-outbox-retry"
+            target=self._retry_loop, daemon=True, name="skcomms-outbox-retry"
         )
         self._retry_thread.start()
         logger.info("Outbox retry worker started (interval=%ds)", interval)

@@ -2,7 +2,7 @@
 
 Reconciles the SDP-verify key path with the mailbox/TOFU layer (2026-06-11) so a
 local agent's signed SDP (opus↔lumina) verifies — those keys live under
-capauth/identity, which the legacy ~/.skcomm/keys + gpg lookup never searched.
+capauth/identity, which the legacy ~/.skcomms/keys + gpg lookup never searched.
 """
 import pgpy
 import pytest

@@ -1,5 +1,5 @@
 """
-SKComm peer discovery — find agents on the network and mesh.
+SKComms peer discovery — find agents on the network and mesh.
 
 Discovery sources (tried in order):
     1. Syncthing comms directories (always available)
@@ -7,7 +7,7 @@ Discovery sources (tried in order):
     3. Nostr relay metadata queries (if nostr deps installed)
     4. mDNS/Zeroconf LAN announcements (if zeroconf installed)
 
-Discovered peers are persisted as YAML files in ~/.skcomm/peers/
+Discovered peers are persisted as YAML files in ~/.skcomms/peers/
 and used by the Router to resolve agent names to transport configs.
 """
 
@@ -23,15 +23,15 @@ from typing import Optional
 import yaml
 from pydantic import BaseModel, Field
 
-from .config import SKCOMM_HOME
+from .config import SKCOMMS_HOME
 
-logger = logging.getLogger("skcomm.discovery")
+logger = logging.getLogger("skcomms.discovery")
 
 PEERS_DIR_NAME = "peers"
 ENVELOPE_SUFFIX = ".skc.json"
 
 # mDNS service type for LAN discovery
-MDNS_SERVICE_TYPE = "_skcomm._tcp.local."
+MDNS_SERVICE_TYPE = "_skcomms._tcp.local."
 MDNS_SERVICE_PORT = 22067
 
 
@@ -114,7 +114,7 @@ class PeerInfo(BaseModel):
 
 
 class PeerStore:
-    """Persistent peer registry at ~/.skcomm/peers/.
+    """Persistent peer registry at ~/.skcomms/peers/.
 
     Each peer is stored as a YAML file named {name}.yml.
 
@@ -123,7 +123,7 @@ class PeerStore:
     """
 
     def __init__(self, peers_dir: Optional[Path] = None):
-        self._dir = peers_dir or Path(SKCOMM_HOME).expanduser() / PEERS_DIR_NAME
+        self._dir = peers_dir or Path(SKCOMMS_HOME).expanduser() / PEERS_DIR_NAME
         self._dir.mkdir(parents=True, exist_ok=True)
 
     @property
@@ -288,14 +288,14 @@ def discover_file_transport(
     Extracts sender/recipient from envelope JSON files.
 
     Args:
-        inbox_path: File transport inbox (default ~/.skcomm/inbox).
-        outbox_path: File transport outbox (default ~/.skcomm/outbox).
+        inbox_path: File transport inbox (default ~/.skcomms/inbox).
+        outbox_path: File transport outbox (default ~/.skcomms/outbox).
 
     Returns:
         List of discovered PeerInfo.
     """
-    inbox = inbox_path or Path(SKCOMM_HOME).expanduser() / "inbox"
-    outbox = outbox_path or Path(SKCOMM_HOME).expanduser() / "outbox"
+    inbox = inbox_path or Path(SKCOMMS_HOME).expanduser() / "inbox"
+    outbox = outbox_path or Path(SKCOMMS_HOME).expanduser() / "outbox"
     peers: dict[str, PeerInfo] = {}
 
     for directory in [inbox, outbox]:
@@ -320,7 +320,7 @@ def discover_file_transport(
 
 
 def discover_mdns(timeout: float = 3.0) -> list[PeerInfo]:
-    """Scan the local network for SKComm agents via mDNS.
+    """Scan the local network for SKComms agents via mDNS.
 
     Requires the `zeroconf` package. Returns empty list if not installed.
 
