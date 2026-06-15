@@ -8,6 +8,7 @@ Follows the same pattern as skcapstone's config.yaml.
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -153,4 +154,21 @@ def load_config(config_path: Optional[str] = None) -> SKCommsConfig:
         SKCommsConfig with loaded or default settings.
     """
     path = Path(config_path) if config_path else Path(SKCOMMS_HOME) / "config.yml"
-    return SKCommsConfig.from_yaml(path)
+    config = SKCommsConfig.from_yaml(path)
+
+    # The skcomms config home is a single shared path, so every agent loads the
+    # same config.yml and would inherit its (historically 'lumina') identity —
+    # making non-lumina agents transmit as 'lumina' and collide on the wire.
+    # Honor the framework's per-agent selector so each agent transmits as
+    # itself. SKAGENT is the primary selector (see skcapstone agent resolution);
+    # SKCAPSTONE_AGENT is the documented fallback.
+    agent = (os.environ.get("SKAGENT") or os.environ.get("SKCAPSTONE_AGENT") or "").strip()
+    if agent and config.identity.name != agent:
+        logger.info(
+            "skcomms identity overridden '%s' -> '%s' from SKAGENT",
+            config.identity.name,
+            agent,
+        )
+        config.identity.name = agent
+
+    return config
