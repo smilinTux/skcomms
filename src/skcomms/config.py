@@ -144,6 +144,40 @@ class SKCommsConfig(BaseModel):
         )
 
 
+def load_adapters_block(config_path: Optional[str] = None) -> dict:
+    """Return the raw ``adapters:`` block from the skcomms config file.
+
+    The channel-adapter registry (see :mod:`skcomms.adapters.factory`) consumes a
+    raw config dict shaped as ``{"adapters": {...}}`` rather than the validated
+    :class:`SKCommsConfig` model.  This helper reads just that block from the
+    same ``config.yml`` the daemon already loads, honoring the
+    ``skcomms``/``skcomm`` section wrapper.
+
+    Args:
+        config_path: Override config file location. Defaults to
+            ``~/.skcapstone/skcomms/config.yml``.
+
+    Returns:
+        A dict ``{"adapters": {...}}``.  When the file is missing, unparseable,
+        or has no ``adapters:`` block, ``{"adapters": {}}`` is returned so
+        callers can build an empty registry without special-casing absence.
+    """
+    path = Path(config_path) if config_path else Path(SKCOMMS_HOME) / "config.yml"
+    path = path.expanduser()
+    if not path.exists():
+        return {"adapters": {}}
+
+    try:
+        raw = yaml.safe_load(path.read_text()) or {}
+    except yaml.YAMLError as exc:
+        logger.warning("Failed to parse %s for adapters: %s", path, exc)
+        return {"adapters": {}}
+
+    section = raw.get("skcomms") or raw.get("skcomm") or raw
+    adapters = section.get("adapters") if isinstance(section, dict) else None
+    return {"adapters": adapters if isinstance(adapters, dict) else {}}
+
+
 def load_config(config_path: Optional[str] = None) -> SKCommsConfig:
     """Load SKComms config from disk.
 
