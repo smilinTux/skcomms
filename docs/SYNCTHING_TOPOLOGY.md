@@ -228,6 +228,23 @@ replicated tree. Note that the atomic JSON writers used elsewhere (e.g.
 > share a subtree, copy the same `.stignore` into that folder root (or set the
 > patterns in the Syncthing folder's *Ignore Patterns*).
 
+### 5.1 Keeping outboxes bounded (recipient guard + self-trim, v0.1.6)
+
+The `SyncthingTransport` (the legacy per-peer `outbox/<peer>/` layer) validates
+every recipient name before creating a directory (`_validate_peer_name`): a
+name with a glob metacharacter (`* ? [ ]`), path separator, `..`, NUL, or that
+is empty is rejected with a `ValueError`. This exists because a v1
+`recipient="*"` presence broadcast was once written verbatim as a literal
+`outbox/*/` directory, where ~256k stale envelopes accumulated until a
+Framework 13 laptop overheated. A literal `*` recipient can no longer create a
+directory.
+
+As a second layer, `SyncthingTransport.prune_outbox(max_age_hours=48.0)`
+deletes delivered envelope files older than the threshold and removes emptied
+peer dirs. It is **not** run automatically on send — call it from a periodic
+maintenance task. The authoritative pruner remains skcapstone housekeeping;
+`prune_outbox` is a conservative library-level safety valve.
+
 ---
 
 ## 6. Worked example — `chef.skworld` ↔ `casey.douno`

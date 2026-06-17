@@ -50,6 +50,64 @@ logger = logging.getLogger("skcomms.transports.syncthing")
 ENVELOPE_SUFFIX = ".skc.json"
 LOCK_SUFFIX = ".skc.lock"
 
+# Characters that must never appear in a peer/recipient name because they would
+# create a dangerous or junk outbox/inbox subdirectory. Glob metacharacters are
+# the headline offenders: a v1 ``recipient="*"`` (a presence broadcast) was once
+# written verbatim as a literal ``outbox/*/`` directory, and ~256k stale
+# broadcast envelopes accumulated inside it — a Framework 13 laptop overheated
+# churning the resulting filesystem. Validating the name at the boundary where
+# the directory is actually created makes that class of bug impossible.
+_GLOB_METACHARS = ("*", "?", "[", "]")
+_PATH_SEPARATORS = ("/", "\\")
+
+
+def _validate_peer_name(name: str) -> str:
+    """Validate a recipient/peer name before it becomes a directory.
+
+    The Syncthing transport derives an ``outbox/<peer>/`` (and
+    ``inbox/<peer>/``) directory directly from a recipient name. A name that
+    contains glob metacharacters, path separators, traversal, or a NUL byte —
+    or that is empty/whitespace — would create a dangerous or junk directory.
+    The literal-``*`` broadcast directory that filled a disk and overheated a
+    laptop in v1 is the canonical example this guard prevents.
+
+    Args:
+        name: The candidate recipient/peer name.
+
+    Returns:
+        str: The validated name (stripped of surrounding whitespace), safe to
+        use as a single path component.
+
+    Raises:
+        ValueError: If *name* is empty/whitespace-only, contains a glob
+            metacharacter (``* ? [ ]``), a path separator (``/`` or ``\\``),
+            path traversal (``..``), or a NUL byte. The message names the
+            offending value.
+    """
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError(f"invalid peer name: {name!r} (empty or whitespace-only)")
+
+    stripped = name.strip()
+
+    if "\x00" in stripped:
+        raise ValueError(f"invalid peer name: {name!r} (contains NUL byte)")
+
+    for meta in _GLOB_METACHARS:
+        if meta in stripped:
+            raise ValueError(
+                f"invalid peer name: {name!r} (contains glob metacharacter {meta!r}); "
+                "broadcast/wildcard recipients are not valid directory names"
+            )
+
+    for sep in _PATH_SEPARATORS:
+        if sep in stripped:
+            raise ValueError(f"invalid peer name: {name!r} (contains path separator {sep!r})")
+
+    if ".." in stripped:
+        raise ValueError(f"invalid peer name: {name!r} (contains path traversal '..')")
+
+    return stripped
+
 
 class SyncthingTransport(Transport):
     """File-based transport using Syncthing for P2P propagation.
@@ -204,16 +262,28 @@ class SyncthingTransport(Transport):
 
         Args:
             envelope_bytes: Serialized MessageEnvelope bytes.
-            recipient: Recipient agent name (used as subdirectory name).
+            recipient: Recipient agent name (used as subdirectory name). Must be
+                a valid single path component — see :func:`_validate_peer_name`.
 
         Returns:
             SendResult with success/failure and timing.
+
+        Raises:
+            ValueError: If *recipient* is not a valid directory name (empty,
+                glob metacharacter, path separator, traversal, or NUL). This is
+                deliberately raised — never swallowed into a failed SendResult —
+                so a literal-``*`` broadcast recipient can never create an
+                ``outbox/*/`` directory (the v1 disk-fill / overheat bug).
         """
         start = time.monotonic()
         envelope_id = self._extract_id(envelope_bytes)
 
+        # Validate BEFORE any directory is created. A bad name (e.g. "*") raises
+        # rather than silently producing a junk outbox subdir.
+        safe_recipient = _validate_peer_name(recipient)
+
         try:
-            peer_outbox = self._outbox / recipient
+            peer_outbox = self._outbox / safe_recipient
             peer_outbox.mkdir(parents=True, exist_ok=True)
 
             filename = f"{envelope_id}{ENVELOPE_SUFFIX}"
@@ -268,18 +338,27 @@ class SyncthingTransport(Transport):
         self._ensure_dirs()
         received: list[bytes] = []
 
-        # Collect directories to scan: all inbox peer dirs + matching outbox dirs
+        # Collect directories to scan: all inbox peer dirs + matching outbox dirs.
+        # Skip any subdir whose name is not a valid peer name (e.g. a stray
+        # ``*`` directory left over from a v1 broadcast bug) — defense in depth
+        # so junk dirs are never treated as a peer mailbox.
         scan_dirs: list[Path] = []
 
         if self._inbox.exists():
-            scan_dirs.extend(d for d in self._inbox.iterdir() if d.is_dir())
+            scan_dirs.extend(
+                d for d in self._inbox.iterdir() if d.is_dir() and self._is_valid_peer_dir(d)
+            )
 
         # Also scan outbox/{local_name}/ for messages arriving via
         # bidirectional Syncthing sync.
         if self._local_names and self._outbox.exists():
             lower_names = {n.lower() for n in self._local_names}
             for outbox_dir in self._outbox.iterdir():
-                if outbox_dir.is_dir() and outbox_dir.name.lower() in lower_names:
+                if (
+                    outbox_dir.is_dir()
+                    and self._is_valid_peer_dir(outbox_dir)
+                    and outbox_dir.name.lower() in lower_names
+                ):
                     scan_dirs.append(outbox_dir)
 
         for peer_dir in scan_dirs:
@@ -447,6 +526,81 @@ class SyncthingTransport(Transport):
             if peer_dir.is_dir():
                 files.extend(sorted(peer_dir.glob(f"*{ENVELOPE_SUFFIX}")))
         return files
+
+    @staticmethod
+    def _is_valid_peer_dir(path: Path) -> bool:
+        """Return True if *path*'s name is a valid peer directory name.
+
+        Used to skip junk subdirectories (e.g. a stray ``*`` directory from a
+        v1 broadcast bug) when scanning outbox/inbox for inbound envelopes.
+
+        Args:
+            path: A candidate peer directory.
+
+        Returns:
+            bool: True if the directory name passes :func:`_validate_peer_name`.
+        """
+        try:
+            _validate_peer_name(path.name)
+            return True
+        except ValueError:
+            logger.warning("Skipping invalid peer directory: %s", path)
+            return False
+
+    def prune_outbox(self, max_age_hours: float = 48.0) -> int:
+        """Delete stale envelope files from the outbox (self-trim safety valve).
+
+        Removes ``*.skc.json`` files under ``outbox/<peer>/`` whose modification
+        time is older than *max_age_hours*, then removes any peer directory left
+        empty. This is a conservative, library-level guard against the outbox
+        growing without bound when external housekeeping is not running — the
+        authoritative pruner remains skcapstone housekeeping. It is **not**
+        called automatically on every send (too aggressive); call it from a
+        periodic maintenance task or daemon loop instead.
+
+        Once-delivered envelopes that Syncthing has already propagated linger in
+        the outbox until something trims them; in v1 a broadcast bug let them
+        accumulate to ~256k files and overheat a laptop. This method bounds that
+        accumulation as defense in depth.
+
+        Args:
+            max_age_hours: Age threshold in hours. Files older than this (by
+                mtime) are deleted. Defaults to 48.0. Values <= 0 prune nothing.
+
+        Returns:
+            int: The number of envelope files deleted.
+        """
+        if max_age_hours <= 0 or not self._outbox.exists():
+            return 0
+
+        cutoff = time.time() - (max_age_hours * 3600.0)
+        deleted = 0
+
+        for peer_dir in self._outbox.iterdir():
+            if not peer_dir.is_dir():
+                continue
+
+            for env_file in peer_dir.glob(f"*{ENVELOPE_SUFFIX}"):
+                try:
+                    if env_file.stat().st_mtime < cutoff:
+                        env_file.unlink()
+                        deleted += 1
+                except OSError as exc:
+                    logger.warning("Failed to prune envelope %s: %s", env_file, exc)
+
+            # Remove the peer dir if it is now empty.
+            try:
+                if not any(peer_dir.iterdir()):
+                    peer_dir.rmdir()
+                    logger.debug("Removed empty outbox peer dir: %s", peer_dir)
+            except OSError as exc:
+                logger.warning("Failed to remove empty peer dir %s: %s", peer_dir, exc)
+
+        if deleted:
+            logger.info(
+                "Pruned %d stale outbox envelope(s) older than %sh", deleted, max_age_hours
+            )
+        return deleted
 
     def _ensure_dirs(self) -> None:
         """Create the comms directory structure if it doesn't exist."""

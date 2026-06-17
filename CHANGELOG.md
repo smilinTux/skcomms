@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.6] — 2026-06-16
+
+### Added
+- **Recipient-name validation in the Syncthing transport** (`_validate_peer_name`):
+  recipient/peer names are validated at the boundary where the
+  `outbox/<peer>/` (and `inbox/<peer>/`) directory is actually created.
+  Names that are empty/whitespace-only, contain glob metacharacters
+  (`* ? [ ]`), path separators (`/` `\`), path traversal (`..`), or a NUL
+  byte are rejected with a `ValueError` naming the offending value. A literal
+  `*` recipient can no longer create an `outbox/*/` directory.
+- **Optional `SyncthingTransport.prune_outbox(max_age_hours=48.0)`** self-trim
+  safety valve: deletes `*.skc.json` files older than the threshold from
+  `outbox/<peer>/`, removes emptied peer dirs, and returns the count. Never
+  called automatically on send — the authoritative pruner remains skcapstone
+  housekeeping; this is a conservative library-level guard.
+- `receive()` now skips invalid peer subdirectories (e.g. a stray `*` dir left
+  over from a v1 broadcast bug) as defense in depth.
+
+### Fixed
+- Defends against the v1 broadcast-directory incident: a presence broadcast
+  (`recipient="*"`) was written verbatim as a literal `outbox/*/` directory,
+  accumulating ~256k stale envelopes until a Framework 13 laptop overheated
+  churning the filesystem. The transport now makes this class of bug
+  impossible and keeps outboxes self-bounding.
+
+---
+
 ## [0.0.1] — 2026-04-26
 
 ### Added
