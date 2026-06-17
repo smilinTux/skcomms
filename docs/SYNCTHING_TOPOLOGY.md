@@ -359,3 +359,79 @@ A `✓` means the message was authored by the same PGP key chef pinned via
 | Folder Label            | `skcomms:<operator>.<realm>`                                  |
 | Device ⇄ FQID ⇄ key map | `${SKCOMMS_HOME}/peers.json` (from `skcomms peers add`, T8)  |
 | Ignored files           | `~/.skcomms/.stignore` (`*.tmp *.lock *.partial *.pid logs/ *.log` …) |
+
+---
+
+## 8. Performance & CPU tuning (large state folders)
+
+> Added 2026-06-17 after triaging high syncthing CPU on the `cbrd21` Framework
+> laptop. Relevant to any host that syncs a **big, live-churned** folder such as
+> the `SKCapstone Sovereign` folder (`~/.skcapstone`, id `skcapstone-sync`).
+
+### Symptom
+syncthing pegs ~1.5–2 cores **continuously**, folder stuck cycling
+`scanning` / `sync-preparing` (never settling to `idle`). On `cbrd21` it was a
+material contributor to the laptop's thermal load.
+
+### Root cause
+1. `~/.skcapstone` is **~84k synced files** (of ~113k on disk; `agents/` alone is
+   ~45k tiny `.json` memory polaroids, `agents/lumina/` ≈ 2 GB).
+2. The **live daemon stack** (skcomms API, skwhisper, agent bridges, skgateway,
+   skcapstone-mcp) writes small JSON into that tree **constantly** — heartbeats,
+   acks, outbox, `*.seed.json.gpg`, logs, metrics — ~8–16 files/2 min.
+3. Every write → fsWatcher → re-compare of the whole tree. Each scan over 84k
+   files is expensive, so changes arrive faster than scans finish → back-to-back
+   scanning. (On a thermally-throttled CPU this is **amplified** — slow scans pin
+   the CPU longer, which makes more heat. See the Framework repaste note.)
+
+This is the same family as ITIL **`prb-7810b08e`** (service-health daemon
+multi-writes shared files) and the recurring `inc-*-syncthing-down` incidents.
+
+### Knobs that help (and one that doesn't)
+- **`<hashers>` (per-folder)** caps hash threads. Already `2` on the skcapstone
+  folder. ⚠️ Dropping 2→1 gave **no improvement** — the bottleneck is the
+  scan/compare *walk*, not hashing.
+- **`maxFolderConcurrency` (global)** = `2` — limits how many folders scan at once.
+- **`.stignore` is the real lever** — fewer watched files = fewer fsWatcher
+  wakeups = fewer scans. The skcapstone `.stignore` was extended (2026-06-17) to
+  match what skcomms already ignores:
+  ```gitignore
+  coordination.backup-pre-cleanup   # stale local backups
+  _doubled-path-backup-*
+  **/logs                            # per-host runtime logs (not shared state)
+  **/*.log
+  ```
+  **Deliberately kept synced** (load-bearing, do NOT ignore): `**/acks`,
+  `**/outbox`, `*.seed.json.gpg` (messaging + memory-sync), and the v2
+  `sync/heartbeats/` tree (host-unique names — the real cross-node liveness).
+
+### ⚠️ Operational gotchas
+- **`config.xml` is PER-NODE and does NOT sync.** Folder settings (`hashers`,
+  `maxFolderConcurrency`) tuned on one host do **not** propagate — set them on
+  each host. `.stignore` *does* sync (it's a file inside the folder).
+- **Edits don't apply until syncthing restarts.** Hand-edits to `config.xml`/
+  `.stignore` are inert until `systemctl --user restart syncthing` (or a rescan
+  via `POST /rest/db/scan?folder=<id>`). Don't hand-edit `config.xml` while
+  running — change it via the REST API (`PATCH /rest/config/folders/<id>`) to
+  avoid the shutdown-overwrite race.
+- **Measuring CPU:** `ps -o pcpu` is a *lifetime average* — misleading right
+  after a heavy scan. Use `top -bn2` (2nd sample) or a `/proc/<pid>/stat`
+  utime+stime delta for the instantaneous figure.
+
+### ❓ OPEN QUESTION — re-architect, or leave it?
+**Undecided as of 2026-06-17.** Is syncing the *entire* `~/.skcapstone`
+(durable memory **+** ephemeral runtime) sustainable, or should we split them?
+
+- **Can't measure cleanly yet:** the `cbrd21` host is thermally throttled (failing
+  CPU paste). Throttling slows every scan, so we can't tell if this is a *real*
+  scaling problem or just heat-amplified noise. **Re-evaluate after the repaste.**
+- **If it IS a real problem,** options to weigh (don't act yet):
+  1. **Split folders** — sync only durable state (memory, souls, the skcomms
+     message tree) and keep ephemeral/runtime (heartbeats, acks churn, metrics,
+     pubsub, logs) **node-local / out of any synced folder**.
+  2. **Move ephemeral writes** out of `~/.skcapstone` entirely (e.g. `~/.cache/…`
+     or `$XDG_RUNTIME_DIR`) so the synced tree only holds things worth syncing.
+  3. **Coarser sync cadence** for the bulk memory folder (longer fsWatcher delay /
+     scheduled rescans) if near-real-time isn't needed for `agents/*/memory`.
+- **If it's fine post-repaste,** the current `.stignore` + `hashers`/concurrency
+  caps are enough; just document the per-node restart requirement (above).
