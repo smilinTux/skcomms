@@ -15,7 +15,7 @@ FQID / realm layer (pre-alpha stubs, implementations landing in coord tasks):
     from skcomms.cluster import ...
 """
 
-__version__ = "0.1.3"
+__version__ = "0.1.6"
 
 from .core import SKComms, SKComm
 from .crypto import EnvelopeCrypto, KeyStore
