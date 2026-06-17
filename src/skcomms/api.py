@@ -42,6 +42,9 @@ _skcomms: Optional[SKComms] = None
 # Global WebRTC signaling broker (initialized on startup)
 _broker: Optional[SignalingBroker] = None
 
+# Global channel-adapter registry (initialized on startup from the adapters: block)
+_adapter_registry = None
+
 # Global ChatHistory instance (lazily initialized from skchat)
 _chat_history = None
 
@@ -69,7 +72,7 @@ def _get_chat_history():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage SKComms lifecycle on server startup/shutdown."""
-    global _skcomms, _broker
+    global _skcomms, _broker, _adapter_registry
     logger.info("Starting SKComms API server...")
     try:
         _skcomms = SKComms.from_config()
@@ -122,9 +125,36 @@ async def lifespan(app: FastAPI):
     )
     logger.info("WebRTC signaling broker initialized (require_auth=%s)", not dev_auth)
 
+    # Channel-adapter registry: build from the raw `adapters:` config block and
+    # start any enabled, credentialed adapters. Backward-compatible — an absent
+    # or empty block yields an empty registry whose start()/stop() are no-ops.
+    from .adapters.factory import build_registry_from_config
+    from .config import load_adapters_block
+
+    try:
+        adapter_cfg = load_adapters_block()
+        _adapter_registry, built, skipped = build_registry_from_config(adapter_cfg)
+        await _adapter_registry.start()
+        logger.info(
+            "Channel adapters started: %d built %s, %d skipped %s",
+            len(built),
+            built,
+            len(skipped),
+            skipped,
+        )
+    except Exception:
+        logger.exception("Failed to start channel adapters")
+        _adapter_registry = None
+
     yield
 
     logger.info("Shutting down SKComms API server...")
+    if _adapter_registry is not None:
+        try:
+            await _adapter_registry.stop()
+        except Exception:
+            logger.exception("Error stopping channel adapters")
+    _adapter_registry = None
     _skcomms = None
     _broker = None
 
