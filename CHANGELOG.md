@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.7] — 2026-06-17
+
+### Added
+- **AdapterRegistry instantiated in the daemon lifespan** (U14 keystone):
+  the daemon now builds its registry from config via
+  `build_registry_from_config(...)` and drives `AdapterRegistry.start()` /
+  `AdapterRegistry.stop()` from the lifespan begin/teardown. Backward
+  compatible — with no `adapters` block in config the registry is built
+  empty and the daemon behaves exactly as before. The accompanying factory
+  (`build_registry_from_config`) and `AdapterRegistry` live in
+  `src/skcomms/adapters/registry.py`.
+
+### Fixed
+- **Per-agent wire identity in `load_config`** (`src/skcomms/config.py`):
+  the transmit identity is now overridden from `SKAGENT` (primary), falling
+  back to `SKCAPSTONE_AGENT`, instead of always resolving to `lumina`. This
+  closes the identity collision where non-lumina agents (e.g. `opus`)
+  transmitted on the wire as `lumina`. `SKAGENT` matches the skcapstone
+  agent-resolution selector; `SKCAPSTONE_AGENT` is the documented fallback.
+
+---
+
 ## [0.1.6] — 2026-06-16
 
 ### Added
