@@ -59,6 +59,7 @@ Spec: docs/superpowers/specs/2026-06-13-skcomms-channel-adapter.md §6
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from pathlib import Path
 from typing import Any, AsyncIterator, Callable, Optional, Protocol, runtime_checkable
@@ -538,6 +539,12 @@ class TelegramAdapter(ChannelAdapter):
         # _last_update_id is stored per-adapter (not per-room) for Bot API mode
         last_id = getattr(self, "_last_update_id", 0)
         params = {"offset": last_id + 1, "timeout": 10}
+        # Opt-in: receive update types Telegram excludes by default (e.g.
+        # message_reaction). Set self._allowed_updates = ["message", ...,
+        # "message_reaction"] to enable; unset = current default behavior.
+        allowed = getattr(self, "_allowed_updates", None)
+        if allowed:
+            params["allowed_updates"] = json.dumps(allowed)
         try:
             async with self._make_httpx_client(timeout=15.0) as c:
                 r = await c.get(
