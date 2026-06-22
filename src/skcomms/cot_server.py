@@ -464,6 +464,7 @@ class UdpMeshListener:
 
         self._loop = asyncio.get_running_loop()
         if_addr = socket.inet_aton(self._iface_ip) if self._iface_ip != "0.0.0.0" else None
+        self._joined: list[tuple] = []  # (sock, group, mreq) for periodic re-join
         for group, port in self._groups:
             sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -480,7 +481,12 @@ class UdpMeshListener:
                 lambda: _MeshProtocol(self._handle), sock=sock
             )
             self._transports.append(transport)
+            self._joined.append((sock, group, mreq))
             logger.info("CoT mesh listener joined %s:%d", group, port)
+        # Periodic IGMP re-join: switches with IGMP snooping age out group
+        # membership (~5 min), silently dropping forwarding to the wired box —
+        # which kills chat reception. Re-issue the join every 90s to stay fresh.
+        self._loop.create_task(self._rejoin_loop())
         # outbound multicast socket (send fabric CoT back to mesh devices)
         self._send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         self._send_sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, self._ttl)
@@ -504,6 +510,18 @@ class UdpMeshListener:
             self._send_sock.sendto(to_cot(cot).encode("utf-8"), (group, port))
         except OSError as exc:
             logger.debug("mesh send failed: %s", exc)
+
+    async def _rejoin_loop(self, interval: float = 90.0) -> None:
+        import socket
+
+        while True:
+            await asyncio.sleep(interval)
+            for sock, group, mreq in getattr(self, "_joined", []):
+                try:
+                    sock.setsockopt(socket.IPPROTO_IP, socket.IP_DROP_MEMBERSHIP, mreq)
+                    sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+                except OSError as exc:
+                    logger.debug("mesh re-join %s failed: %s", group, exc)
 
     def _handle(self, data: bytes, addr: tuple) -> None:
         from .cot import parse_cot_datagram
