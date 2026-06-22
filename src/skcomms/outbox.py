@@ -8,11 +8,32 @@ dead letter queue for manual review.
 The outbox is filesystem-based: one JSON file per queued message.
 No database needed. Works offline. Survives daemon restarts.
 
+Federation queue of record (SKFed S7)
+-------------------------------------
+There are historically THREE retry stores in skcomms:
+
+  1. :class:`PersistentOutbox` (this module)  -- durable, file-per-entry.
+  2. :class:`skcomms.core.RetryQueue`         -- fast JSONL, transient blips.
+  3. the router's own JSONL retry             -- :meth:`Router._enqueue_retry`.
+
+For the **federation** send path, :class:`PersistentOutbox` is the
+**authoritative queue of record**. ``core.send()`` enqueues here on
+delivery failure (RetryQueue / router JSONL remain as fast-path /
+transport backstops and are NOT removed -- they simply overlap). The
+federation contract is: an :attr:`OutboxEntry.envelope_json` holds a
+serialized **SignedEnvelope** (Envelope v1, the canonical wire format).
+Legacy entries holding a serialized
+:class:`~skcomms.models.MessageEnvelope` are tolerated (detected +
+skipped on delivery, converted by
+:func:`skcomms.outbox_migrate.migrate_outbox`).
+
 Layout:
     ~/.skcapstone/skcomms/outbox/
     ├── pending/          # messages awaiting retry
     │   └── {id}.json
-    └── dead/             # permanently failed messages
+    ├── dead/             # permanently failed messages
+    │   └── {id}.json
+    └── archive/          # migrated-away corrupt / dead-end entries
         └── {id}.json
 """
 
@@ -32,6 +53,47 @@ logger = logging.getLogger("skcomms.outbox")
 DEFAULT_OUTBOX_DIR = "~/.skcapstone/skcomms/outbox"
 DEFAULT_MAX_RETRIES = 10
 DEFAULT_BASE_BACKOFF = 5
+
+
+def classify_envelope_json(envelope_json: str) -> str:
+    """Classify a serialized envelope string by its on-wire shape.
+
+    Used to keep the federation outbox tolerant of the historical mix of
+    serialized payloads. No deserialization into a model is performed --
+    only a cheap structural inspection -- so a corrupt-for-one-model entry
+    is still classifiable.
+
+    Returns one of:
+        - ``"signed"``  : an Envelope v1 :class:`SignedEnvelope`
+          (has a nested ``envelope`` object with ``from_fqid``/``to_fqid``).
+        - ``"envelope_v1"`` : a bare Envelope v1
+          (has ``from_fqid``/``to_fqid`` at the top level).
+        - ``"legacy"``  : a legacy :class:`~skcomms.models.MessageEnvelope`
+          (has ``sender``/``recipient``/``payload``).
+        - ``"corrupt"`` : not valid JSON, or an unrecognized shape.
+
+    Args:
+        envelope_json: The serialized envelope string.
+
+    Returns:
+        str: The classification token.
+    """
+    try:
+        data = json.loads(envelope_json)
+    except (json.JSONDecodeError, TypeError):
+        return "corrupt"
+
+    if not isinstance(data, dict):
+        return "corrupt"
+
+    inner = data.get("envelope")
+    if isinstance(inner, dict) and "from_fqid" in inner and "to_fqid" in inner:
+        return "signed"
+    if "from_fqid" in data and "to_fqid" in data:
+        return "envelope_v1"
+    if "sender" in data and "recipient" in data and "payload" in data:
+        return "legacy"
+    return "corrupt"
 
 
 class OutboxEntry(BaseModel):
@@ -84,12 +146,29 @@ class PersistentOutbox:
         self._root = Path(outbox_dir).expanduser()
         self._pending = self._root / "pending"
         self._dead = self._root / "dead"
+        self._archive = self._root / "archive"
         self._max_retries = max_retries
         self._base_backoff = base_backoff
         self._router = router
 
         self._pending.mkdir(parents=True, exist_ok=True)
         self._dead.mkdir(parents=True, exist_ok=True)
+        self._archive.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def root(self) -> Path:
+        """Root directory of this outbox."""
+        return self._root
+
+    @property
+    def pending_dir(self) -> Path:
+        """Directory holding pending entries."""
+        return self._pending
+
+    @property
+    def archive_dir(self) -> Path:
+        """Directory holding migrated-away (corrupt / dead-end) entries."""
+        return self._archive
 
     def enqueue(
         self,
@@ -123,6 +202,29 @@ class PersistentOutbox:
         self._write_entry(self._pending, entry)
         logger.info("Queued %s for retry (error: %s)", envelope_id[:8], error[:60])
         return entry
+
+    def enqueue_signed(self, signed: object, error: str = "") -> OutboxEntry:
+        """Enqueue a :class:`~skcomms.envelope.SignedEnvelope` (federation path).
+
+        This is the canonical federation enqueue helper: it serializes the
+        SignedEnvelope to its wire bytes and stores it as the entry's
+        ``envelope_json``, deriving ``envelope_id`` / ``recipient`` from the
+        inner Envelope v1 (``id`` / ``to_fqid``).
+
+        Args:
+            signed: A :class:`~skcomms.envelope.SignedEnvelope` instance.
+            error: Error from the failed delivery attempt.
+
+        Returns:
+            OutboxEntry: The queued entry.
+        """
+        env = signed.envelope  # type: ignore[attr-defined]
+        return self.enqueue(
+            envelope_id=env.id,
+            recipient=env.to_fqid,
+            envelope_json=signed.to_bytes().decode("utf-8"),  # type: ignore[attr-defined]
+            error=error,
+        )
 
     def retry_all(self) -> dict[str, Any]:
         """Sweep the pending queue and retry all eligible messages.
@@ -246,6 +348,11 @@ class PersistentOutbox:
         """Number of messages in the dead letter queue."""
         return len(list(self._dead.glob("*.json")))
 
+    @property
+    def archive_count(self) -> int:
+        """Number of messages in the archive (migrated-away) directory."""
+        return len(list(self._archive.glob("*.json")))
+
     def start(self, interval: int = 30) -> None:
         """Start the background retry worker thread.
 
@@ -292,8 +399,81 @@ class PersistentOutbox:
                 logger.warning("Outbox retry sweep error: %s", exc)
             self._stop_event.wait(timeout=self._retry_interval)
 
+    def _deliver_federation(self, entry: OutboxEntry, kind: str) -> bool:
+        """Deliver a federation (Envelope v1 / SignedEnvelope) entry.
+
+        Deserializes the entry into a :class:`~skcomms.envelope.SignedEnvelope`
+        (wrapping a bare Envelope v1 in an unsigned :class:`SignedEnvelope` so
+        the wire shape is uniform) and routes the signed bytes.
+
+        The router is engaged via duck typing so this works with both the
+        current router (legacy ``route(MessageEnvelope)``) and the forward
+        federation router (S3/S4: ``route_signed`` / ``route_bytes``):
+
+          - ``router.route_signed(signed_envelope)``  -- preferred (S4).
+          - ``router.route_bytes(signed_bytes, recipient)`` -- bytes rail.
+
+        If the router exposes neither, the entry stays queued (returns False)
+        rather than crashing -- the canonical bytes are preserved on disk for a
+        federation-capable router to pick up later.
+
+        Args:
+            entry: The outbox entry to deliver.
+            kind: ``"signed"`` or ``"envelope_v1"`` (from
+                :func:`classify_envelope_json`).
+
+        Returns:
+            bool: True if delivery succeeded.
+        """
+        from .envelope import Envelope, SignedEnvelope
+
+        raw = entry.envelope_json.encode("utf-8")
+        if kind == "signed":
+            signed = SignedEnvelope.from_bytes(raw)
+        else:  # bare Envelope v1 -> wrap unsigned for a uniform wire shape
+            signed = SignedEnvelope(envelope=Envelope.from_bytes(raw))
+
+        signed_bytes = signed.to_bytes()
+
+        route_signed = getattr(self._router, "route_signed", None)
+        if callable(route_signed):
+            report = route_signed(signed)
+            return getattr(report, "delivered", False)
+
+        route_bytes = getattr(self._router, "route_bytes", None)
+        if callable(route_bytes):
+            report = route_bytes(signed_bytes, entry.recipient)
+            return getattr(report, "delivered", False)
+
+        # No federation-aware router path available yet (pre-S3/S4). Keep the
+        # canonical SignedEnvelope on disk; do not crash the sweep.
+        entry.last_error = (
+            "router has no federation route path (route_signed/route_bytes); "
+            "entry preserved for a federation-capable router"
+        )
+        logger.info(
+            "Outbox %s held: SignedEnvelope ready but router lacks a "
+            "federation route path",
+            entry.envelope_id[:8],
+        )
+        return False
+
     def _attempt_delivery(self, entry: OutboxEntry) -> bool:
         """Try to deliver a queued message via the router.
+
+        The federation contract (SKFed S7) is that ``envelope_json`` holds a
+        serialized :class:`~skcomms.envelope.SignedEnvelope` (Envelope v1).
+        Delivery deserializes via ``SignedEnvelope.from_bytes`` and routes the
+        signed bytes. The method stays tolerant of the existing backlog:
+
+          - ``signed``      : deserialize + route (preferred path).
+          - ``envelope_v1`` : a bare unsigned Envelope v1 -- routed too, so the
+            migrator can re-queue unsigned-pending entries that signing-at-send
+            will eventually cover.
+          - ``legacy``      : an old MessageEnvelope -- routed via the legacy
+            path for backward compatibility (until migrated).
+          - ``corrupt``     : skipped (returns False) without raising, so a
+            corrupt backlog never crashes the retry sweep.
 
         Args:
             entry: The outbox entry to deliver.
@@ -304,7 +484,20 @@ class PersistentOutbox:
         if self._router is None:
             return False
 
+        kind = classify_envelope_json(entry.envelope_json)
+
+        if kind == "corrupt":
+            entry.last_error = "corrupt envelope_json (unparseable / unknown shape)"
+            logger.warning(
+                "Outbox delivery skipped for %s: corrupt entry (run migrate_outbox)",
+                entry.envelope_id[:8],
+            )
+            return False
+
         try:
+            if kind in ("signed", "envelope_v1"):
+                return self._deliver_federation(entry, kind)
+            # kind == "legacy"
             from .models import MessageEnvelope
 
             envelope = MessageEnvelope.from_bytes(entry.envelope_json.encode("utf-8"))
