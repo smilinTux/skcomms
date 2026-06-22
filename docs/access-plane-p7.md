@@ -172,3 +172,6 @@ pgvector + pg_search/BM25 + AGE), so physical replication is clean (identical bi
 - Write-back re-index: synchronous vs queued into skingest?
 - File transfer for big/binary files: inline base64 vs a signed one-shot HTTP range fetch?
 - Scope granularity: per-root ACLs vs per-identity global scopes for v1 (start global, refine).
+
+## DEPLOYED (core, 2026-06-22)
+`skcomms-access.service` LIVE on .158 — `100.108.59.57:9386`, tailnet-only, capauth-gated, 12 tools (10 + node_info/health). A1-A4 done + integrated (`wiring.register_builtin_tools`), 836 tests. Read-only by default (`scope_grants={}`); exposed root `~/clawd`; secrets hard-denied. **Remaining:** A5 federation routing (query any node -> fetch from owning node), A6 RBAC/scope-grants + per-call identity on /sse (F1), A7 skreachd exec (F2), A8 client wiring (Claude Code .mcp.json / agents / Flutter Files P9), deploy sk-access on .41, + live PG primary/replica (supervised).
