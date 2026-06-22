@@ -111,6 +111,7 @@ class TestCanonicalBytes:
             content_type="text/plain",
             body="hi",
             id="fixed-id",
+            nonce="fixed-nonce",
             created_at="2026-01-01T00:00:00+00:00",
         )
         b = Envelope(
@@ -119,6 +120,7 @@ class TestCanonicalBytes:
             content_type="text/plain",
             from_fqid="a@chef.skworld",
             created_at="2026-01-01T00:00:00+00:00",
+            nonce="fixed-nonce",
             id="fixed-id",
         )
         assert a.canonical_bytes() == b.canonical_bytes()
