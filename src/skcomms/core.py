@@ -491,6 +491,15 @@ class SKComms:
                 reply_to=in_reply_to,
             )
         )
+        # SKFed P3: if the recipient is an unknown fqid, try to auto-discover it
+        # from the Nostr directory before routing (best-effort, non-fatal).
+        if "@" in to_fqid and not self._resolve_peer_transports(to_fqid):
+            try:
+                from .nostr_discovery import ensure_peer
+
+                ensure_peer(to_fqid)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("nostr discovery for %s failed: %s", to_fqid, exc)
         preferred = self._resolve_peer_transports(to_fqid)
         report = self._router.route_signed(signed, preferred_transports=preferred, mode=mode)
         if not report.delivered:
@@ -617,7 +626,21 @@ class SKComms:
         try:
             store = PeerStore()
             peer = store.get(recipient)
+            # fqid recipients are stored under the bare agent name (or carry the
+            # fqid in their `fqid` field) — fall back to an fqid-aware scan so
+            # auto-discovered peers (SKFed P3) are honored on the send path.
+            if peer is None and "@" in recipient:
+                bare = recipient.split("@", 1)[0]
+                peer = store.get(bare)
+                if peer is None or peer.fqid not in (None, recipient):
+                    for candidate in store.list_all():
+                        if candidate.fqid == recipient:
+                            peer = candidate
+                            break
             if peer and peer.transports:
+                # honor the peer's advertised rail order if present
+                if peer.rails:
+                    return list(peer.rails)
                 return [t.transport for t in peer.transports]
         except Exception as exc:
             logger.debug("Peer store lookup failed for '%s': %s", recipient, exc)
