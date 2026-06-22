@@ -206,6 +206,57 @@ def record_file_location(
         )
 
 
+def record_ingest_location(
+    abs_path: str,
+    *,
+    doc_id: Optional[int] = None,
+    node: str = LOCAL_NODE,
+    conn: Any = None,
+    compute_sha: bool = True,
+) -> bool:
+    """One-call ingest hook: index a freshly-ingested LOCAL FILE.
+
+    Convenience wrapper over :func:`record_file_location` that derives ``mtime``
+    (and, by default, the sha256) from ``abs_path`` on disk, then upserts the
+    ``{node, path}`` row. Safe to call from an ingest pipeline right after a
+    file's chunks are written to ``docs`` (see ``docs/access-plane-p8.md`` for the
+    exact skingest insertion point).
+
+    Returns ``True`` if a row was recorded, ``False`` if ``abs_path`` is missing /
+    not a regular file (URL ingests, encrypted/private blobs, etc. should simply
+    not call this). Never raises on a missing file — ingest must not break.
+    """
+    import os as _os
+
+    if not abs_path:
+        return False
+    try:
+        st = _os.stat(abs_path)
+        if not _os.path.isfile(abs_path):
+            return False
+        mtime: Optional[float] = st.st_mtime
+    except OSError:
+        return False
+
+    sha: Optional[str] = None
+    if compute_sha:
+        try:
+            import hashlib
+
+            h = hashlib.sha256()
+            with open(abs_path, "rb") as fh:
+                for block in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(block)
+            sha = h.hexdigest()
+        except OSError:
+            sha = None
+
+    record_file_location(
+        abs_path, node=node, doc_id=doc_id, mtime=mtime, sha=sha, conn=conn
+    )
+    return True
+
+
 def pg_locate(query_or_doc_id: Any, *, limit: int = 10, conn: Any = None) -> list[dict]:
     """Resolve a location: ``{node, path, doc_id, mtime, sha, score?}``.
 
@@ -296,12 +347,25 @@ def pg_search(
     fetch_k = k * 4 if layer else k
 
     with conn.cursor() as cur:
+        # The location index is keyed UNIQUE(node, path), so it stores ONE
+        # representative chunk doc_id per file. A search hit is an arbitrary
+        # chunk of that file, so a doc_id-only join misses sibling chunks. We
+        # therefore join in two passes and COALESCE: (1) exact doc_id, then
+        # (2) a source-suffix fallback (``fl.path`` ends with ``h.source``),
+        # which resolves any chunk of a backfilled file to its absolute path.
         cur.execute(
             """
             SELECT h.id, h.corpus, h.source, h.content, h.score,
-                   fl.node, fl.path
+                   COALESCE(fl_id.node, fl_src.node)  AS node,
+                   COALESCE(fl_id.path, fl_src.path)  AS path
             FROM hybrid_search_docs(%s, %s::vector, %s, %s) AS h
-            LEFT JOIN file_locations fl ON fl.doc_id = h.id
+            LEFT JOIN file_locations fl_id  ON fl_id.doc_id = h.id
+            LEFT JOIN LATERAL (
+                SELECT node, path FROM file_locations
+                WHERE h.source IS NOT NULL
+                  AND path LIKE '%%/' || h.source
+                ORDER BY length(path) LIMIT 1
+            ) AS fl_src ON TRUE
             """,
             (query, vec_param, fetch_k, agent),
         )

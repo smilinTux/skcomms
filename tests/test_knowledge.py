@@ -156,7 +156,11 @@ def test_pg_search_builds_query_and_maps_rows():
     sql, params = conn.executed[-1]
     ns = norm(sql)
     assert "hybrid_search_docs(%s, %s::vector, %s, %s)" in ns
-    assert "left join file_locations fl on fl.doc_id = h.id" in ns
+    # P8: two-pass location join — exact doc_id, then source-suffix fallback so
+    # any chunk of a backfilled file resolves to its absolute path.
+    assert "left join file_locations fl_id on fl_id.doc_id = h.id" in ns
+    assert "coalesce(fl_id.node, fl_src.node)" in ns
+    assert "path like '%%/' || h.source" in ns
     # params: (q_text, vec_literal, fetch_k, agent)
     assert params[0] == "capauth enrollment bug"
     assert params[1] == "[0.1,0.2,0.3]"
