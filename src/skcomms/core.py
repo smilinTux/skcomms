@@ -468,7 +468,16 @@ class SKComms:
 
         ident = resolve_self_identity()
         from_fqid = ident.get("fqid") or self._identity
-        crypto = self._crypto or EnvelopeCrypto.from_capauth()
+        crypto = self._crypto
+        if crypto is None:
+            # Resolve the running agent's capauth dir (SKAGENT-aware) rather than
+            # the hardcoded ~/.capauth default — keys live under
+            # ~/.skcapstone/agents/<agent>/capauth in the multi-agent layout.
+            from pathlib import Path
+
+            agent = ident.get("agent") or self._identity
+            cap_dir = Path.home() / ".skcapstone" / "agents" / str(agent) / "capauth"
+            crypto = EnvelopeCrypto.from_capauth(cap_dir if cap_dir.exists() else None)
         if crypto is None:
             raise RuntimeError("no capauth key available to sign federation envelope")
 

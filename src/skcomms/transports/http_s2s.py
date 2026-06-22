@@ -301,10 +301,18 @@ class HttpS2STransport(Transport):
             inbox_url from the peer store, or None.
         """
         try:
+            # Use the fqid-aware resolver (S5): handles recipient given as a
+            # full fqid ("lumina@chef.skworld") OR a bare name ("lumina"),
+            # which name-only PeerStore.get() does not.
+            from skcomms.discovery import inbox_url_for
+
+            url = inbox_url_for(recipient)
+            if url:
+                return url
+            # Fallback: direct name lookup (fingerprint/legacy keys).
             from skcomms.discovery import PeerStore
 
-            store = PeerStore()
-            peer = store.get(recipient)
+            peer = PeerStore().get(recipient)
             if peer:
                 for t in peer.transports:
                     if t.transport == TRANSPORT_NAME:
