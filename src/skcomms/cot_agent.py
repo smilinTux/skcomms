@@ -39,14 +39,22 @@ _SENDER_RE = re.compile(r'senderCallsign="([^"]*)"')
 _MSGID_RE = re.compile(r'messageId="([^"]*)"')
 
 
-def llm_reply(text: str, *, timeout: float = 20.0) -> str:
-    """Ask the local LLM for Lumina's reply; fall back to a canned line."""
+def llm_reply(text: str, context: str = "", *, timeout: float = 20.0) -> str:
+    """Ask the local LLM for Lumina's reply; fall back to a canned line.
+
+    ``context`` carries live situational awareness (real unit positions) so
+    Lumina answers from ground truth instead of hallucinating.
+    """
+    system = PERSONA
+    if context:
+        system += ("\n\nGROUND TRUTH (use this; do NOT invent locations). " + context +
+                   " If asked a position you don't have, say you don't have a fix on it.")
     body = json.dumps({
         "model": LLM_MODEL,
-        "messages": [{"role": "system", "content": PERSONA},
+        "messages": [{"role": "system", "content": system},
                      {"role": "user", "content": text}],
         "max_tokens": 160,
-        "temperature": 0.7,
+        "temperature": 0.6,
     }).encode()
     req = urllib.request.Request(LLM_URL, data=body, headers={"Content-Type": "application/json"})
     try:
@@ -64,10 +72,21 @@ def run(host, port, package, *, callsign="LUMINA", lat=40.758, lon=-73.986, inte
     print(f"LUMINA agent connected to {host}:{port} as {callsign} (uid {my_uid})", flush=True)
     lock = threading.Lock()
     seen: set[str] = set()
+    positions: dict[str, tuple[float, float]] = {}  # callsign -> (lat, lon)
 
     def send(ev: CotEvent):
         with lock:
             sock.sendall((to_cot(ev) + "\n").encode())
+
+    def _sa_context(sender: str | None) -> str:
+        units = "; ".join(f"{cs} at ({la:.5f},{lo:.5f})" for cs, (la, lo) in positions.items()) or "none reported yet"
+        ctx = f"Live unit positions on the net: {units}."
+        if sender and sender in positions:
+            la, lo = positions[sender]
+            ctx += f" The operator messaging you is '{sender}', currently at ({la:.5f},{lo:.5f})."
+        elif sender:
+            ctx += f" The operator messaging you is '{sender}' (no position fix on them yet)."
+        return ctx
 
     def reader():
         buf = b""
@@ -88,6 +107,11 @@ def run(host, port, package, *, callsign="LUMINA", lat=40.758, lon=-73.986, inte
                     cot = parse_cot(raw)
                 except ValueError:
                     continue
+                # Track real positions for situational awareness.
+                if not cot.is_chat and cot.callsign and cot.callsign != callsign:
+                    if -90 <= cot.point.lat <= 90 and cot.point.lat or cot.point.lon:
+                        positions[cot.callsign] = (cot.point.lat, cot.point.lon)
+                    continue
                 if not cot.is_chat:
                     continue
                 sender = (_SENDER_RE.search(cot.detail_xml or "") or [None, None])[1] if cot.detail_xml else None
@@ -100,7 +124,7 @@ def run(host, port, package, *, callsign="LUMINA", lat=40.758, lon=-73.986, inte
                     continue
                 seen.add(key)
                 print(f"  <{sender or '?'}> {text}", flush=True)
-                reply = llm_reply(text)
+                reply = llm_reply(text, _sa_context(sender))
                 print(f"  <{callsign}> {reply}", flush=True)
                 send(make_geochat(reply, sender_callsign=callsign, sender_uid=my_uid,
                                   point=CotPoint(lat=lat, lon=lon)))
