@@ -227,6 +227,53 @@ def parse_cot_datagram(data: bytes) -> Optional[CotEvent]:
     return None
 
 
+def _xml_escape(s: str) -> str:
+    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            .replace('"', "&quot;"))
+
+
+def make_geochat(
+    text: str,
+    *,
+    sender_callsign: str,
+    sender_uid: str,
+    room: str = "All Chat Rooms",
+    room_id: str = "All Chat Rooms",
+    msg_id: Optional[str] = None,
+    point: Optional[CotPoint] = None,
+) -> CotEvent:
+    """Build a GeoChat (``b-t-f``) CoT that ATAK/iTAK render in the chat window.
+
+    Constructs the full ``<detail>`` (``__chat`` + ``chatgrp`` + ``link`` +
+    ``remarks``) ATAK needs to display + thread the message. Broadcasts to the
+    given room (default "All Chat Rooms") so every connected client sees it.
+    """
+    import uuid as _uuid
+
+    mid = msg_id or _uuid.uuid4().hex
+    pt = point or CotPoint()
+    esc = _xml_escape(text)
+    cs = _xml_escape(sender_callsign)
+    detail = (
+        f'<__chat parent="RootContactGroup" groupOwner="false" messageId="{mid}" '
+        f'chatroom="{_xml_escape(room)}" id="{_xml_escape(room_id)}" senderCallsign="{cs}">'
+        f'<chatgrp uid0="{sender_uid}" uid1="{room_id}" id="{_xml_escape(room_id)}"/></__chat>'
+        f'<link uid="{sender_uid}" type="a-f-G-U-C" relation="p-p"/>'
+        f'<remarks source="BAO.F.SKFed.{sender_uid}" to="{_xml_escape(room_id)}">{esc}</remarks>'
+        f'<__serverdestination destinations="{_xml_escape(room_id)}"/>'
+    )
+    return CotEvent(
+        uid=f"GeoChat.{sender_uid}.{room_id}.{mid}",
+        type="b-t-f",
+        how="h-g-i-g-o",
+        point=pt,
+        detail_xml=detail,
+        callsign=sender_callsign,
+        chat=text,
+        remarks=text,
+    )
+
+
 def envelope_to_cot(env: Envelope) -> CotEvent:
     """Extract a :class:`CotEvent` from a CoT-bearing :class:`Envelope`.
 
