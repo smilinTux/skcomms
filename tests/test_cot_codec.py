@@ -136,3 +136,11 @@ class TestMeshDatagram:
         from skcomms.cot import parse_cot_datagram
         # 0xbf header but no takproto / bogus body -> None, never raises
         assert parse_cot_datagram(b"\xbf\x01\xbf\x00\x00") is None
+
+
+def test_protobuf_mesh_datagram_roundtrip():
+    takproto = pytest.importorskip("takproto")
+    from skcomms.cot import parse_cot_datagram
+    proto = takproto.xml2proto(PLI, takproto.TAKProtoVer.MESH)
+    cot = parse_cot_datagram(bytes(proto))
+    assert cot is not None and cot.uid == "ANDROID-deadbeef" and cot.callsign == "JARVIS-1"
