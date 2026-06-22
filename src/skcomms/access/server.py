@@ -463,7 +463,7 @@ def build_app(server: Optional[AccessServer] = None):
     Returns:
         A configured ``fastapi.FastAPI`` instance.
     """
-    from fastapi import FastAPI, Header, HTTPException, Request
+    from fastapi import Body, FastAPI, Header, HTTPException, Request  # noqa: F401
 
     srv = server or AccessServer()
     srv.config.validate()  # refuse public binds at app-build time
@@ -488,8 +488,10 @@ def build_app(server: Optional[AccessServer] = None):
         return srv._tool_node_info({}, ctx)
 
     @app.post("/tool", tags=["access"])
-    async def _tool(request: Request, authorization: Optional[str] = Header(default=None)):
-        body = await request.json()
+    async def _tool(body: dict = Body(...), authorization: Optional[str] = Header(default=None)):
+        # body via Body(...) not Request: under `from __future__ import annotations`
+        # FastAPI can't resolve the local-only `Request` annotation (it lives in the
+        # module namespace), which mis-binds it as a query param (422). `dict` resolves.
         token = body.get("token")
         if token is None and authorization and authorization.lower().startswith("bearer "):
             token = authorization[7:]
@@ -638,8 +640,11 @@ def main() -> None:
     import uvicorn
 
     srv = AccessServer()
+    from .exec import register_builtin_exec_tools
     from .wiring import register_builtin_tools
     tools = register_builtin_tools(registry=srv.registry)
+    # exec tools register too, but are exec-scope (denied unless explicitly granted).
+    tools += register_builtin_exec_tools(registry=srv.registry)
     logger.info("sk-access registered %d tools: %s", len(tools), ", ".join(tools))
     app = build_app(srv)
     srv.register_with_skos()
