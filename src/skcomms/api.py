@@ -565,6 +565,110 @@ async def get_status():
     return comm.status()
 
 
+class AccessTokenRequest(BaseModel):
+    """Request to mint a capauth token for a single sk-access tool call.
+
+    Attributes:
+        node: Target access node id (dotted id / fqid / name / host) — used
+            only to derive a meaningful ``to_fqid`` in the signed envelope; the
+            gate authenticates the *caller*, not the recipient.
+        tool: The sk-access tool the token authorizes (e.g. ``"file_read"``).
+        arguments: The tool arguments the call will carry.
+    """
+
+    node: str
+    tool: str
+    arguments: dict = Field(default_factory=dict)
+
+
+class AccessTokenResponse(BaseModel):
+    """A minted capauth access token + the identity it was signed as.
+
+    Attributes:
+        token: A :class:`~skcomms.envelope.SignedEnvelope` as a JSON string,
+            ready to drop into the ``"token"`` field of a ``POST /tool`` body.
+        from_fqid: The caller identity the token was signed as.
+        fingerprint: The 40-char PGP fingerprint of the signing key.
+    """
+
+    token: str
+    from_fqid: str
+    fingerprint: str
+
+
+@app.post(
+    "/api/v1/access/token",
+    response_model=AccessTokenResponse,
+    status_code=status.HTTP_200_OK,
+    tags=["access"],
+)
+async def mint_access_token(request: AccessTokenRequest):
+    """Mint a capauth-signed token authorizing one sk-access ``/tool`` call.
+
+    This is the **P9 live seam** for the Flutter skos surfaces. The Dart app
+    cannot itself produce the OpenPGP detached signature the sk-access gate
+    requires (its in-app crypto is RSA/PKCS#1, not OpenPGP), so the daemon —
+    which holds this node's CapAuth PGP key — mints the token on the app's
+    behalf. The app then POSTs ``{token, tool, arguments}`` straight to the
+    target node's sk-access ``/tool`` over the tailnet.
+
+    The token is the SAME canonical :class:`~skcomms.envelope.SignedEnvelope`
+    that :func:`skcomms.access.routing.call_remote` builds (Envelope v1, body
+    ``{"tool", "arguments"}``, detached PGP signature over canonical bytes), so
+    a node verifies it identically via :func:`skcomms.federation.accept_signed`.
+
+    Args:
+        request: The {node, tool, arguments} the token should authorize.
+
+    Returns:
+        AccessTokenResponse: the signed token + the signing identity.
+
+    Raises:
+        HTTPException: 503 when no CapAuth signing key is available, 500 on
+            unexpected signing failure.
+    """
+    import json as _json
+
+    from .access.routing import _sign_tool_request
+    from .identity import resolve_self_identity
+
+    ident = resolve_self_identity()
+    agent = ident.get("agent") or "local"
+    from_fqid = ident.get("fqid") or f"{agent}@local.skworld"
+    to_fqid = request.node if "@" in request.node else f"access@{request.node}"
+
+    try:
+        signed_bytes = _sign_tool_request(
+            request.tool,
+            request.arguments or {},
+            from_fqid=from_fqid,
+            to_fqid=to_fqid,
+            agent=agent,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "no CapAuth signing key available to mint an access token "
+                f"(agent={agent!r}): {exc}"
+            ),
+        ) from exc
+    except Exception as exc:
+        logger.exception("Failed to mint access token")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to mint access token: {exc}",
+        ) from exc
+
+    signed_obj = _json.loads(signed_bytes.decode("utf-8"))
+    fingerprint = signed_obj.get("signer_fingerprint", "")
+    return AccessTokenResponse(
+        token=signed_bytes.decode("utf-8"),
+        from_fqid=from_fqid,
+        fingerprint=fingerprint,
+    )
+
+
 @app.post(
     "/api/v1/send",
     response_model=SendMessageResponse,
