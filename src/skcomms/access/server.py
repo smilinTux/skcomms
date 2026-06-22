@@ -515,6 +515,9 @@ def main() -> None:
     import uvicorn
 
     srv = AccessServer()
+    from .wiring import register_builtin_tools
+    tools = register_builtin_tools(registry=srv.registry)
+    logger.info("sk-access registered %d tools: %s", len(tools), ", ".join(tools))
     app = build_app(srv)
     srv.register_with_skos()
     logger.info(
