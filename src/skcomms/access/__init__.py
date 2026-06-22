@@ -30,6 +30,21 @@ from . import files  # noqa: F401  (A4 file tools)
 from . import knowledge  # noqa: F401  (A3 knowledge tools + A1 location index)
 from .config import AccessConfig
 from .registry import AccessRegistry, RegisteredTool, Scope, register_tool
+from .routing import (
+    NodeNotFoundError,
+    NodeResolver,
+    RemoteAccessError,
+    RoutingError,
+    call_remote,
+    fetch_located,
+    local_node,
+    routed_file_list,
+    routed_file_patch,
+    routed_file_read,
+    routed_file_stat,
+    routed_file_write,
+    routed_list_roots,
+)
 from .server import (
     AccessAuthError,
     AccessScopeError,
@@ -51,4 +66,18 @@ __all__ = [
     "build_app",
     "knowledge",
     "files",
+    # A5 — federation routing
+    "NodeResolver",
+    "local_node",
+    "call_remote",
+    "fetch_located",
+    "routed_file_read",
+    "routed_file_write",
+    "routed_file_patch",
+    "routed_file_list",
+    "routed_file_stat",
+    "routed_list_roots",
+    "RoutingError",
+    "NodeNotFoundError",
+    "RemoteAccessError",
 ]
