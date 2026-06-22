@@ -325,6 +325,7 @@ BUILTIN_TRANSPORTS: dict[str, str] = {
     "nostr": "skcomms.transports.nostr",
     "websocket": "skcomms.transports.websocket",
     "tailscale": "skcomms.transports.tailscale",
+    "https-s2s": "skcomms.transports.http_s2s",
     "webrtc": "skcomms.transports.webrtc",
 }
 
