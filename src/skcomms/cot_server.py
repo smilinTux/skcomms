@@ -302,6 +302,26 @@ class TlsCotStreamServer(CotStreamServer):
         ctx.verify_mode = (
             ssl.CERT_REQUIRED if self._require_client_cert else ssl.CERT_OPTIONAL
         )
+        # SNI: strict clients (iTAK) that can't import our CA connect by hostname
+        # and get a publicly-trusted cert (e.g. `tailscale cert`); ATAK connects
+        # by IP and gets the PKI cert (its data-package CA validates it). One
+        # listener, one client pool, so everyone shares the same SA picture.
+        import os as _os
+
+        sni_cert = _os.environ.get("SKCOMMS_COT_SNI_CERT")
+        sni_key = _os.environ.get("SKCOMMS_COT_SNI_KEY")
+        sni_name = _os.environ.get("SKCOMMS_COT_SNI_NAME")
+        if sni_cert and sni_key and sni_name:
+            alt = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            alt.load_cert_chain(certfile=sni_cert, keyfile=sni_key)
+            alt.load_verify_locations(cafile=ca_cert)
+            alt.verify_mode = ctx.verify_mode
+
+            def _sni(sslobj, server_name, _ctx):
+                if server_name == sni_name:
+                    sslobj.context = alt
+
+            ctx.sni_callback = _sni
         return ctx
 
     async def _handle_client(
