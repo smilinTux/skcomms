@@ -26,6 +26,7 @@ import uuid
 from .cot import CotEvent, CotPoint, make_geochat, parse_cot, to_cot
 from .cot_client import _connect
 from .cot_server import extract_events
+from .geo import GeoStore
 
 LLM_URL = os.environ.get("SKCOMMS_COT_LLM", "http://192.168.0.100:8082/v1/chat/completions")
 LLM_MODEL = os.environ.get("SKCOMMS_COT_LLM_MODEL", "qwen3.6-27b-abliterated")
@@ -72,20 +73,20 @@ def run(host, port, package, *, callsign="LUMINA", lat=40.758, lon=-73.986, inte
     print(f"LUMINA agent connected to {host}:{port} as {callsign} (uid {my_uid})", flush=True)
     lock = threading.Lock()
     seen: set[str] = set()
-    positions: dict[str, tuple[float, float]] = {}  # callsign -> (lat, lon)
+    geo = GeoStore()  # CB4 situational-awareness store (replaces ad-hoc dict)
 
     def send(ev: CotEvent):
         with lock:
             sock.sendall((to_cot(ev) + "\n").encode())
 
     def _sa_context(sender: str | None) -> str:
-        units = "; ".join(f"{cs} at ({la:.5f},{lo:.5f})" for cs, (la, lo) in positions.items()) or "none reported yet"
-        ctx = f"Live unit positions on the net: {units}."
-        if sender and sender in positions:
-            la, lo = positions[sender]
-            ctx += f" The operator messaging you is '{sender}', currently at ({la:.5f},{lo:.5f})."
-        elif sender:
-            ctx += f" The operator messaging you is '{sender}' (no position fix on them yet)."
+        ctx = "Live situational picture on the net: " + geo.situational_summary()
+        if sender:
+            u = geo.get(sender)
+            if u is not None:
+                ctx += f" The operator messaging you is '{sender}', currently at ({u.lat:.5f},{u.lon:.5f})."
+            else:
+                ctx += f" The operator messaging you is '{sender}' (no position fix on them yet)."
         return ctx
 
     def reader():
@@ -107,12 +108,10 @@ def run(host, port, package, *, callsign="LUMINA", lat=40.758, lon=-73.986, inte
                     cot = parse_cot(raw)
                 except ValueError:
                     continue
-                # Track real positions for situational awareness.
-                if not cot.is_chat and cot.callsign and cot.callsign != callsign:
-                    if -90 <= cot.point.lat <= 90 and cot.point.lat or cot.point.lon:
-                        positions[cot.callsign] = (cot.point.lat, cot.point.lon)
-                    continue
+                # Track real positions/markers for situational awareness.
                 if not cot.is_chat:
+                    if cot.callsign != callsign:  # don't track ourselves
+                        geo.upsert_from_cot(cot, source="net")
                     continue
                 sender = (_SENDER_RE.search(cot.detail_xml or "") or [None, None])[1] if cot.detail_xml else None
                 mid = (_MSGID_RE.search(cot.detail_xml or "") or [None, None])[1] if cot.detail_xml else None
