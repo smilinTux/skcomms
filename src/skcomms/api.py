@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, WebSocket, status
+from fastapi import FastAPI, HTTPException, Request, WebSocket, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -30,14 +30,27 @@ from .capauth_validator import CapAuthValidator
 from .core import SKComms
 from .discovery import PeerInfo, PeerStore
 from .heartbeat import HeartbeatConfig, HeartbeatPublisher
-from .models import MessageEnvelope, MessageType, RoutingMode, Urgency
+from .models import (
+    MessageEnvelope,
+    MessageMetadata,
+    MessagePayload,
+    MessageType,
+    RoutingMode,
+    Urgency,
+)
 from .outbox import PersistentOutbox
+from .ratelimit import RateLimiter
 from .signaling import SignalingBroker, signaling_ws_endpoint
 
 logger = logging.getLogger("skcomms.api")
 
 # Global SKComms instance (initialized on startup)
 _skcomms: Optional[SKComms] = None
+
+# Per-process federation receive state (SKFed S2). The nonce cache backs replay
+# protection and the rate limiter applies per-sender inbox back-pressure.
+_fed_nonce_cache = None  # lazily created skcomms.federation.NonceCache
+_fed_rate_limiter: Optional[RateLimiter] = None
 
 # Global WebRTC signaling broker (initialized on startup)
 _broker: Optional[SignalingBroker] = None
@@ -407,28 +420,50 @@ class PeerResponse(BaseModel):
     """Response model for a peer directory entry."""
 
     name: str
+    fqid: Optional[str] = None
     fingerprint: Optional[str] = None
     nostr_pubkey: Optional[str] = None
     transports: list[PeerTransportResponse] = []
+    rails: list[str] = []
     discovered_via: str
     last_seen: Optional[datetime] = None
 
 
 class PeerAddRequest(BaseModel):
-    """Request body for POST /api/v1/peers."""
+    """Request body for POST /api/v1/peers.
+
+    For the federation S2S rail set ``transport="https-s2s"`` and ``address``
+    to the peer's inbox URL (``https://<host>/api/v1/inbox``); ``rails`` gives
+    an ordered rail preference and ``pubkey`` pins the peer's PGP key (TOFU).
+    """
 
     name: str = Field(..., description="Friendly agent name (e.g. 'lumina')")
     address: str = Field(
         ...,
-        description="Transport address or URI (e.g. syncthing folder path, skcomms://...)",
+        description=(
+            "Transport address or URI (syncthing folder path, skcomms://..., "
+            "or for transport=https-s2s the peer inbox URL)"
+        ),
     )
     transport: str = Field(
         default="syncthing",
-        description="Transport type: syncthing, file, nostr, etc.",
+        description="Transport type: syncthing, file, nostr, https-s2s, etc.",
+    )
+    fqid: Optional[str] = Field(
+        default=None,
+        description="Peer FQID (<agent>@<operator>.<realm>) for federation addressing",
     )
     fingerprint: Optional[str] = Field(
         default=None,
         description="PGP fingerprint for this peer",
+    )
+    pubkey: Optional[str] = Field(
+        default=None,
+        description="Pinned ASCII-armored PGP public key (TOFU) for verifying this peer",
+    )
+    rails: list[str] = Field(
+        default_factory=list,
+        description="Ordered rail preference (transport names, most-preferred first)",
     )
 
 
@@ -589,11 +624,11 @@ async def send_message(request: SendMessageRequest):
 
 
 @app.get(
-    "/api/v1/inbox",
+    "/api/v1/messages",
     response_model=list[MessageEnvelopeResponse],
     tags=["messaging"],
 )
-async def get_inbox():
+async def get_messages():
     """Check all transports for incoming messages.
 
     Polls every available transport, deduplicates, and deserializes.
@@ -631,6 +666,206 @@ async def get_inbox():
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve inbox: {exc}",
         ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Federation S2S inbox (SKFed S2)
+# ---------------------------------------------------------------------------
+
+# Maximum signed-envelope body size accepted at the inbox (back-pressure).
+_MAX_INBOX_BYTES = 256 * 1024
+
+
+def _get_nonce_cache():
+    """Lazily create the per-process federation NonceCache (replay guard)."""
+    global _fed_nonce_cache
+    if _fed_nonce_cache is None:
+        from .federation import NonceCache
+
+        _fed_nonce_cache = NonceCache()
+    return _fed_nonce_cache
+
+
+def _get_fed_rate_limiter() -> RateLimiter:
+    """Lazily create the per-process inbox rate limiter (per-sender)."""
+    global _fed_rate_limiter
+    if _fed_rate_limiter is None:
+        _fed_rate_limiter = RateLimiter()
+    return _fed_rate_limiter
+
+
+def _build_inbox_verifier(from_fqid: str):
+    """Build an :class:`EnvelopeVerifier` loaded with the sender's trusted key.
+
+    The trusted public key is sourced TOFU-style, in order:
+      1. the pinned ``pubkey`` cached in the :mod:`skcomms.tofu` store for
+         *from_fqid* (recorded on first peer-add), then
+      2. the ``pubkey`` pinned on the matching :class:`PeerInfo` in the
+         discovery :class:`PeerStore` (by fqid/name).
+
+    Returns an ``EnvelopeVerifier`` keyed by *from_fqid*; if no key is known the
+    verifier is empty and verification fails closed (unknown signer -> 403).
+    """
+    from .signing import EnvelopeVerifier
+
+    verifier = EnvelopeVerifier()
+
+    # 1. TOFU pinned pubkey for this fqid.
+    try:
+        from .tofu import _load_store as _load_tofu_store  # internal: pinned keys
+
+        entry = _load_tofu_store().get(from_fqid)
+        if entry and entry.get("pubkey"):
+            verifier.add_key(from_fqid, entry["pubkey"])
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("tofu pubkey lookup failed for %s: %s", from_fqid, exc)
+
+    # 2. Pinned pubkey on the discovery peer entry.
+    if not verifier.has_key(from_fqid):
+        try:
+            store = PeerStore()
+            for peer in store.list_all():
+                if (peer.fqid == from_fqid or peer.name == from_fqid.split("@", 1)[0]) and peer.pubkey:
+                    verifier.add_key(from_fqid, peer.pubkey)
+                    break
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("peer pubkey lookup failed for %s: %s", from_fqid, exc)
+
+    return verifier
+
+
+def _fed_inbox_dir() -> Path:
+    """The local file-transport inbox dir that ``comm.receive()`` polls.
+
+    Matches :class:`skcomms.transports.file.FileTransport`'s default inbox so a
+    verified envelope written here is delivered by the existing receive path.
+    """
+    from .home import skcomms_home
+
+    return skcomms_home() / "inbox"
+
+
+def _envelope_v1_to_message(env) -> MessageEnvelope:
+    """Convert a verified Envelope v1 into the local transport MessageEnvelope.
+
+    ``comm.receive()`` deserializes file-transport inbox files as
+    :class:`MessageEnvelope`, so the federation Envelope v1 (the wire format)
+    is mapped onto it for local delivery. The Envelope v1 ``id`` is preserved
+    as the ``envelope_id`` for dedup; the body becomes the payload content.
+    """
+    return MessageEnvelope(
+        envelope_id=env.id,
+        sender=env.from_fqid,
+        recipient=env.to_fqid,
+        payload=MessagePayload(
+            content=env.body,
+            content_type=MessageType.TEXT,
+        ),
+        metadata=MessageMetadata(
+            thread_id=env.thread_id,
+            in_reply_to=env.reply_to,
+        ),
+    )
+
+
+def _write_to_recipient_inbox(env) -> str:
+    """Write a verified Envelope v1 to the recipient's file-transport inbox.
+
+    Atomic write (tmp then rename) of a :class:`MessageEnvelope` JSON file named
+    ``{envelope.id}.skc.json`` so :meth:`FileTransport.receive` (and hence
+    ``comm.receive()``) picks it up. Returns the file path written.
+    """
+    from .transports.file import ENVELOPE_SUFFIX
+
+    inbox = _fed_inbox_dir()
+    inbox.mkdir(parents=True, exist_ok=True)
+    msg = _envelope_v1_to_message(env)
+    filename = f"{env.id}{ENVELOPE_SUFFIX}"
+    target = inbox / filename
+    tmp = inbox / f".{filename}.tmp"
+    tmp.write_bytes(msg.to_bytes())
+    tmp.replace(target)
+    return str(target)
+
+
+@app.post(
+    "/api/v1/inbox",
+    tags=["federation"],
+)
+async def post_inbox(request: Request):
+    """Federation S2S receive gate — accept a signed envelope from a peer node.
+
+    Reads the raw request body as a :class:`skcomms.envelope.SignedEnvelope`,
+    runs the full federation accept gate
+    (:func:`skcomms.federation.accept_signed`: signature -> freshness ->
+    replay), and on success writes the verified envelope into the recipient's
+    file-transport inbox so the existing ``comm.receive()`` path delivers it.
+
+    Returns:
+        ``{"ok": true, "id": <envelope id>}`` on acceptance.
+
+    Raises:
+        HTTPException: 403 (bad/untrusted signature), 409 (replay),
+            422 (stale or unparseable), 413 (too large), 429 (rate limited).
+    """
+    from .envelope import SignedEnvelope
+    from .federation import (
+        ReplayError,
+        SignatureError,
+        StaleError,
+        accept_signed,
+    )
+
+    raw = await request.body()
+    if len(raw) > _MAX_INBOX_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"signed envelope exceeds {_MAX_INBOX_BYTES} bytes",
+        )
+
+    # Parse the wire bytes; a malformed body is a 422 (unprocessable).
+    try:
+        signed = SignedEnvelope.from_bytes(raw)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"unparseable signed envelope: {exc}",
+        ) from exc
+
+    from_fqid = signed.envelope.from_fqid
+
+    # Per-sender back-pressure on the inbox rail.
+    if not _get_fed_rate_limiter().allow("https-s2s", from_fqid):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"rate limit exceeded for sender {from_fqid}",
+        )
+
+    verifier = _build_inbox_verifier(from_fqid)
+    nonce_cache = _get_nonce_cache()
+
+    try:
+        env = accept_signed(signed, verifier=verifier, nonce_cache=nonce_cache)
+    except SignatureError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except ReplayError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except StaleError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+    try:
+        path = _write_to_recipient_inbox(env)
+        logger.info("federation inbox accepted %s from %s -> %s", env.id, from_fqid, path)
+    except Exception as exc:
+        logger.exception("Failed to store verified envelope")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"accepted but failed to store: {exc}",
+        ) from exc
+
+    return {"ok": True, "id": env.id}
 
 
 @app.get(
@@ -1257,12 +1492,14 @@ async def get_peers():
         return [
             PeerResponse(
                 name=p.name,
+                fqid=p.fqid,
                 fingerprint=p.fingerprint,
                 nostr_pubkey=p.nostr_pubkey,
                 transports=[
                     PeerTransportResponse(transport=t.transport, settings=t.settings)
                     for t in p.transports
                 ],
+                rails=p.rails,
                 discovered_via=p.discovered_via,
                 last_seen=p.last_seen,
             )
@@ -1305,12 +1542,17 @@ async def add_peer(request: PeerAddRequest):
             transport_settings = {"comms_root": request.address}
         elif request.transport == "file":
             transport_settings = {"inbox_path": request.address}
+        elif request.transport == "https-s2s":
+            transport_settings = {"inbox_url": request.address}
         else:
             transport_settings = {"address": request.address}
 
         peer = PeerInfo(
             name=request.name,
+            fqid=request.fqid,
             fingerprint=request.fingerprint,
+            pubkey=request.pubkey,
+            rails=request.rails,
             transports=[PeerTransport(transport=request.transport, settings=transport_settings)],
             discovered_via="manual",
         )
@@ -1324,12 +1566,14 @@ async def add_peer(request: PeerAddRequest):
 
         return PeerResponse(
             name=saved.name,
+            fqid=saved.fqid,
             fingerprint=saved.fingerprint,
             nostr_pubkey=saved.nostr_pubkey,
             transports=[
                 PeerTransportResponse(transport=t.transport, settings=t.settings)
                 for t in saved.transports
             ],
+            rails=saved.rails,
             discovered_via=saved.discovered_via,
             last_seen=saved.last_seen,
         )

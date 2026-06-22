@@ -357,7 +357,7 @@ async def _handle_receive_messages(args: dict) -> list[TextContent]:
     limit: int = int(args.get("limit", 10))
 
     try:
-        envelopes: list = await _get("/api/v1/inbox")
+        envelopes: list = await _get("/api/v1/messages")
     except httpx.ConnectError:
         return _error_response(
             f"Cannot reach SKComms daemon at {_api_base()}. Is it running? Start with: skcomms serve"

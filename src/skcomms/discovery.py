@@ -57,19 +57,37 @@ class PeerInfo(BaseModel):
 
     Attributes:
         name: Human-readable agent name.
+        fqid: Full ``<agent>@<operator>.<realm>`` handle, if known. Used by
+            federation addressing (``inbox_url_for``) and as the verifier key.
         fingerprint: PGP fingerprint (CapAuth identity), if known.
+        pubkey: Pinned ASCII-armored PGP public key (TOFU). The trusted key
+            an S2S inbox loads into its :class:`~skcomms.signing.EnvelopeVerifier`.
         nostr_pubkey: Nostr x-only hex pubkey, if known.
         transports: List of transport configs for reaching this peer.
+        rails: Ordered rail preference (transport names, most-preferred first)
+            the router honors ahead of global priority (SKFed S3/S5).
         discovered_via: How this peer was found (syncthing, mdns, manual, etc.).
         last_seen: When the peer was last observed active.
     """
 
     name: str
+    fqid: Optional[str] = None
     fingerprint: Optional[str] = None
+    pubkey: Optional[str] = None
     nostr_pubkey: Optional[str] = None
     transports: list[PeerTransport] = Field(default_factory=list)
+    rails: list[str] = Field(default_factory=list)
     discovered_via: str = "manual"
     last_seen: Optional[datetime] = None
+
+    def inbox_url(self) -> Optional[str]:
+        """Return this peer's ``https-s2s`` inbox URL, if it carries one."""
+        for t in self.transports:
+            if t.transport == "https-s2s":
+                url = t.settings.get("inbox_url")
+                if url:
+                    return url
+        return None
 
     def merge(self, other: PeerInfo) -> PeerInfo:
         """Merge another PeerInfo into this one, keeping the richest data.
@@ -82,6 +100,9 @@ class PeerInfo(BaseModel):
         """
         fingerprint = self.fingerprint or other.fingerprint
         nostr_pubkey = self.nostr_pubkey or other.nostr_pubkey
+        fqid = self.fqid or other.fqid
+        pubkey = self.pubkey or other.pubkey
+        rails = self.rails or other.rails
         last_seen = max(
             filter(None, [self.last_seen, other.last_seen]),
             default=None,
@@ -100,9 +121,12 @@ class PeerInfo(BaseModel):
 
         return PeerInfo(
             name=self.name,
+            fqid=fqid,
             fingerprint=fingerprint,
+            pubkey=pubkey,
             nostr_pubkey=nostr_pubkey,
             transports=list(existing_transports.values()),
+            rails=rails,
             discovered_via=self.discovered_via,
             last_seen=last_seen,
         )
@@ -474,6 +498,82 @@ def discover_all(
                 merged[peer.name] = peer
 
     return sorted(merged.values(), key=lambda p: p.name)
+
+
+# ---------------------------------------------------------------------------
+# Federation addressing (SKFed S5)
+# ---------------------------------------------------------------------------
+
+
+def inbox_url_for(fqid: str, store: Optional[PeerStore] = None) -> Optional[str]:
+    """Resolve the ``https-s2s`` inbox URL for a peer *fqid*.
+
+    Looks the peer up in the :class:`PeerStore` (by ``fqid`` field first, then
+    by ``name``, then by the agent component of the fqid) and returns the
+    ``inbox_url`` carried on its ``https-s2s`` transport entry, if any.
+
+    Args:
+        fqid: The peer's ``<agent>@<operator>.<realm>`` handle (or bare name).
+        store: Optional :class:`PeerStore` (a default one is used otherwise).
+
+    Returns:
+        The peer's S2S inbox URL, or ``None`` if the peer is unknown or has no
+        ``https-s2s`` transport.
+    """
+    store = store or PeerStore()
+    candidates = [fqid]
+    if "@" in fqid:
+        candidates.append(fqid.split("@", 1)[0])  # bare agent name
+    for peer in store.list_all():
+        if peer.fqid == fqid or peer.name in candidates or peer.fqid in candidates:
+            url = peer.inbox_url()
+            if url:
+                return url
+    return None
+
+
+def migrate_file_transports(store: Optional[PeerStore] = None) -> list[str]:
+    """Strip legacy dead-end ``file://`` transport entries from stored peers.
+
+    The early manual peer-add path recorded ``file`` transports whose
+    ``settings.inbox_path`` pointed at a local ``file://`` URI — a dead end for
+    federation (the bytes never leave the box). This drops those entries so the
+    router falls through to a live rail (``https-s2s``/syncthing/nostr).
+
+    Args:
+        store: Optional :class:`PeerStore` (a default one is used otherwise).
+
+    Returns:
+        Names of the peers whose stored entry was rewritten.
+    """
+    store = store or PeerStore()
+    migrated: list[str] = []
+    for peer in store.list_all():
+        kept = [
+            t
+            for t in peer.transports
+            if not (
+                t.transport == "file"
+                and str(t.settings.get("inbox_path", "")).startswith("file://")
+            )
+        ]
+        if len(kept) != len(peer.transports):
+            path = store._peer_path(peer.name)
+            cleaned = PeerInfo(
+                name=peer.name,
+                fqid=peer.fqid,
+                fingerprint=peer.fingerprint,
+                pubkey=peer.pubkey,
+                nostr_pubkey=peer.nostr_pubkey,
+                transports=kept,
+                rails=peer.rails,
+                discovered_via=peer.discovered_via,
+                last_seen=peer.last_seen,
+            )
+            data = cleaned.model_dump(mode="json", exclude_none=True)
+            path.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
+            migrated.append(peer.name)
+    return migrated
 
 
 # ---------------------------------------------------------------------------
