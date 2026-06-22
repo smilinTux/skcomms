@@ -23,7 +23,8 @@ from pathlib import Path
 
 from .cot import parse_cot
 from .cot_server import (
-    DEFAULT_COT_PORT, CotStreamServer, UdpMeshListener, federation_ingest,
+    DEFAULT_COT_PORT, DEFAULT_COT_TLS_PORT, CotStreamServer, TlsCotStreamServer,
+    UdpMeshListener, federation_ingest,
 )
 from .home import skcomms_home
 from .identity import resolve_self_identity
@@ -45,8 +46,14 @@ def _extract_cot_body(data: dict) -> str | None:
     return None
 
 
-async def _inbox_inject_loop(server: CotStreamServer, *, poll_s: float = 3.0) -> None:
-    """Inject peer-originated CoT (landed in the inbox) to connected clients."""
+async def _inbox_inject_loop(
+    server: CotStreamServer, *, also: CotStreamServer | None = None, poll_s: float = 3.0
+) -> None:
+    """Inject peer-originated CoT (landed in the inbox) to connected clients.
+
+    *also* is an optional second server (e.g. the TLS endpoint) to fan the same
+    CoT to, so peer-originated traffic reaches both plain and TLS operators.
+    """
     inbox = skcomms_home() / "inbox"
     processed = inbox / "cot-processed"
     try:
@@ -72,6 +79,8 @@ async def _inbox_inject_loop(server: CotStreamServer, *, poll_s: float = 3.0) ->
                 except ValueError:
                     continue
                 await server.push(cot)
+                if also is not None:
+                    await also.push(cot)
                 logger.info("injected peer CoT uid=%s to %d client(s)", cot.uid, server.client_count)
                 try:
                     f.rename(processed / f.name)
@@ -97,12 +106,28 @@ async def main() -> None:
     await server.start()
     logger.info("CoT service up as %s on %s:%d (phone→federate + inbox→inject)", fqid, host, port)
 
+    # CB3: TLS-enrolled endpoint (:8089). Each TLS connection's CoT is
+    # additionally attributed to the device identity pinned from its client cert.
+    tls_server: TlsCotStreamServer | None = None
+    if os.environ.get("SKCOMMS_COT_TLS", "0") == "1":
+        tls_port = int(os.environ.get("SKCOMMS_COT_TLS_PORT", DEFAULT_COT_TLS_PORT))
+
+        def _ident_hook(cot, identity, fingerprint):
+            logger.info("TLS CoT uid=%s attributed to device=%s (fp=%s)", cot.uid, identity, fingerprint)
+            fed_hook(cot)
+
+        tls_server = TlsCotStreamServer(host=host, port=tls_port, ident_ingest=_ident_hook)
+        await tls_server.start()
+        logger.info("CoT TLS endpoint up on %s:%d (per-device client-cert identity)", host, tls_port)
+
     # Mesh-mode ATAK (no server/auth): join the multicast group on the LAN so a
     # phone's mesh CoT is ingested + federated + shown to any TCP viewers.
     if os.environ.get("SKCOMMS_COT_MESH", "1") != "0":
         async def _mesh_event(cot):
             fed_hook(cot)            # mesh CoT → federate to peers
-            await server.push(cot)   # → any TCP-connected viewers
+            await server.push(cot)   # → any plain-TCP viewers
+            if tls_server is not None:
+                await tls_server.push(cot)  # → any TLS viewers
             logger.info("mesh CoT uid=%s callsign=%s pos=(%s,%s)", cot.uid, cot.callsign,
                         cot.point.lat, cot.point.lon)
         try:
@@ -110,7 +135,7 @@ async def main() -> None:
         except Exception as exc:  # noqa: BLE001
             logger.warning("mesh listener not started: %s", exc)
 
-    await _inbox_inject_loop(server)
+    await _inbox_inject_loop(server, also=tls_server)
 
 
 if __name__ == "__main__":
