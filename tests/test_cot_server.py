@@ -101,6 +101,89 @@ async def test_malformed_frame_does_not_kill_stream():
     w.close(); await srv.stop()
 
 
+async def test_tls_endpoint_extracts_client_cert_identity_and_ingests(tmp_path, monkeypatch):
+    """A synthetic ATAK-over-TLS client presents a client cert; the server
+    fingerprints + TOFU-pins it, maps it to a device identity, and the CoT is
+    ingested over TLS with that identity attached."""
+    import ssl
+
+    monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
+    from skcomms import cot_pki
+    from skcomms.cot_server import TlsCotStreamServer
+
+    cot_pki.init_ca()
+    cot_pki.init_server_cert(["127.0.0.1"])
+    cot_pki.mint_device_cert("test-phone")
+
+    seen: list[tuple] = []
+    def ident_hook(cot, identity, fp):
+        seen.append((cot.uid, identity, fp))
+
+    srv = TlsCotStreamServer(host="127.0.0.1", port=0, ident_ingest=ident_hook)
+    await srv.start()
+    port = srv._server.sockets[0].getsockname()[1]
+
+    # client ssl context: present the device cert + key, trust our CA
+    cctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    cctx.load_cert_chain(
+        certfile=str(cot_pki.devices_dir() / "test-phone.pem"),
+        keyfile=str(cot_pki.devices_dir() / "test-phone.key"),
+    )
+    cctx.load_verify_locations(cafile=str(cot_pki.pki_dir() / "ca.pem"))
+    cctx.check_hostname = True
+
+    r, w = await asyncio.open_connection("127.0.0.1", port, ssl=cctx, server_hostname="127.0.0.1")
+    w.write(PLI.encode()); await w.drain()
+    await asyncio.sleep(0.2)
+
+    assert len(seen) == 1
+    uid, identity, fp = seen[0]
+    assert uid == "ANDROID-1"
+    assert "test-phone" in identity                 # CN -> device identity
+    assert len(fp.split(":")) == 32                  # SHA-256 client-cert fingerprint
+
+    # the fingerprint was TOFU-pinned under that identity
+    from skcomms.tofu import fingerprint_for
+    assert fingerprint_for(identity) is not None
+
+    w.close(); await srv.stop()
+
+
+async def test_tls_endpoint_allows_certless_anonymous(tmp_path, monkeypatch):
+    """CERT_OPTIONAL: a client with no cert still connects (anonymous)."""
+    import ssl
+
+    monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
+    from skcomms import cot_pki
+    from skcomms.cot_server import TlsCotStreamServer
+
+    cot_pki.init_ca()
+    cot_pki.init_server_cert(["127.0.0.1"])
+
+    seen = []
+    srv = TlsCotStreamServer(host="127.0.0.1", port=0, ingest=lambda c: seen.append(c.uid))
+    await srv.start()
+    port = srv._server.sockets[0].getsockname()[1]
+
+    cctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    cctx.load_verify_locations(cafile=str(cot_pki.pki_dir() / "ca.pem"))
+    cctx.check_hostname = True
+
+    r, w = await asyncio.open_connection("127.0.0.1", port, ssl=cctx, server_hostname="127.0.0.1")
+    w.write(PLI.encode()); await w.drain()
+    await asyncio.sleep(0.2)
+    assert seen == ["ANDROID-1"]                      # plain ingest still fires
+    w.close(); await srv.stop()
+
+
+def test_plain_8087_unaffected_by_tls_imports():
+    """Importing the TLS server must not change the plain server's default port."""
+    from skcomms.cot_server import CotStreamServer, DEFAULT_COT_PORT, DEFAULT_COT_TLS_PORT
+    assert DEFAULT_COT_PORT == 8087
+    assert DEFAULT_COT_TLS_PORT == 8089
+    assert CotStreamServer()._port == 8087
+
+
 def test_federation_ingest_fans_out_cot_to_peers():
     """The federation ingest hook wraps CoT + send_federated's it to each peer."""
     from skcomms.cot_server import federation_ingest

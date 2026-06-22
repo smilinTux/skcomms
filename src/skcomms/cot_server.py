@@ -24,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import ssl
 from typing import Awaitable, Callable, Optional
 
 from .cot import CotEvent, parse_cot, to_cot
@@ -31,9 +32,13 @@ from .cot import CotEvent, parse_cot, to_cot
 logger = logging.getLogger("skcomms.cot_server")
 
 DEFAULT_COT_PORT = 8087  # TAK plain streaming (TLS is :8089, CB3)
+DEFAULT_COT_TLS_PORT = 8089  # TAK SSL streaming (CB3 enrolled-server flow)
 _EVENT_RE = re.compile(rb"<event\b.*?</event>", re.DOTALL)
 
 IngestHook = Callable[[CotEvent], Optional[Awaitable[None]]]
+# (cot, device_identity, fingerprint) — TLS ingest hook variant carrying the
+# per-device identity extracted + TOFU-pinned from the client cert (CB3).
+IdentIngestHook = Callable[[CotEvent, str, Optional[str]], Optional[Awaitable[None]]]
 
 
 def extract_events(buf: bytes) -> tuple[list[bytes], bytes]:
@@ -67,11 +72,13 @@ class CotStreamServer:
         self,
         *,
         ingest: Optional[IngestHook] = None,
+        ident_ingest: Optional[IdentIngestHook] = None,
         host: str = "0.0.0.0",
         port: int = DEFAULT_COT_PORT,
         rebroadcast: bool = True,
     ) -> None:
         self._ingest = ingest
+        self._ident_ingest = ident_ingest
         self._host = host
         self._port = port
         self._rebroadcast = rebroadcast
@@ -83,10 +90,16 @@ class CotStreamServer:
     def client_count(self) -> int:
         return len(self._clients)
 
+    def _ssl_context(self) -> Optional[ssl.SSLContext]:
+        """SSLContext for the listener (None = plain TCP). CB3 overrides this."""
+        return None
+
     async def start(self) -> "CotStreamServer":
         """Start listening (call inside a running loop)."""
         self._loop = asyncio.get_running_loop()
-        self._server = await asyncio.start_server(self._handle_client, self._host, self._port)
+        self._server = await asyncio.start_server(
+            self._handle_client, self._host, self._port, ssl=self._ssl_context()
+        )
         sockets = ", ".join(str(s.getsockname()) for s in (self._server.sockets or []))
         logger.info("CoT stream server listening on %s", sockets)
         return self
@@ -103,7 +116,12 @@ class CotStreamServer:
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         peer = writer.get_extra_info("peername")
         self._clients.add(writer)
-        logger.info("TAK client connected: %s (now %d)", peer, len(self._clients))
+        # CB3 subclasses populate a per-connection identity; plain TCP has none.
+        identity = self._connection_identity(writer)
+        logger.info(
+            "TAK client connected: %s%s (now %d)",
+            peer, f" as {identity}" if identity else "", len(self._clients),
+        )
         buf = b""
         try:
             while True:
@@ -127,9 +145,18 @@ class CotStreamServer:
                 writer.close()
             logger.info("TAK client disconnected: %s (now %d)", peer, len(self._clients))
 
+    def _connection_identity(self, writer: asyncio.StreamWriter) -> Optional[str]:
+        """Device identity attributed to a connection (None for plain TCP).
+
+        CB3 (the TLS server) overrides this to return the TOFU-pinned identity
+        derived from the presented client certificate.
+        """
+        return None
+
     async def _dispatch(self, cot: CotEvent, *, origin: asyncio.StreamWriter) -> None:
         if self._rebroadcast:
             await self._broadcast(cot, exclude=origin)
+        identity = self._connection_identity(origin)
         if self._ingest is not None:
             try:
                 res = self._ingest(cot)
@@ -137,6 +164,18 @@ class CotStreamServer:
                     await res
             except Exception as exc:  # noqa: BLE001 — never let one event kill the stream
                 logger.warning("CoT ingest hook failed for %s: %s", cot.uid, exc)
+        if self._ident_ingest is not None:
+            try:
+                fp = self._connection_fingerprint(origin)
+                res = self._ident_ingest(cot, identity or "anonymous", fp)
+                if asyncio.iscoroutine(res):
+                    await res
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("CoT ident-ingest hook failed for %s: %s", cot.uid, exc)
+
+    def _connection_fingerprint(self, writer: asyncio.StreamWriter) -> Optional[str]:
+        """Client-cert fingerprint for a connection (None for plain TCP)."""
+        return None
 
     async def _broadcast(self, cot: CotEvent, *, exclude: Optional[asyncio.StreamWriter] = None) -> None:
         data = (to_cot(cot) + "\n").encode("utf-8")
@@ -162,6 +201,156 @@ class CotStreamServer:
         if self._loop is None:
             return
         self._loop.call_soon_threadsafe(lambda: asyncio.ensure_future(self.push(cot)))
+
+
+def _cert_fingerprint_from_der(der: bytes) -> str:
+    """SHA-256 fingerprint of a DER cert as ``AA:BB:...`` uppercase hex."""
+    import hashlib
+
+    digest = hashlib.sha256(der).digest()
+    return ":".join(f"{b:02X}" for b in digest)
+
+
+class TlsCotStreamServer(CotStreamServer):
+    """[CoT][CB3] TLS-enrolled TAK streaming server (:8089).
+
+    Serves the same CoT stream as :class:`CotStreamServer` but over TLS, with
+    mutual-TLS-style **client-cert identity binding**:
+
+      * the listener uses an :class:`ssl.SSLContext` built from the node's server
+        cert + the CoT CA, with ``verify_mode=CERT_OPTIONAL`` so a presented
+        client cert is read (and verified against the CA) without *requiring* one
+        — plain reachability checks / phones mid-enrollment still connect;
+      * on connect, the client cert is extracted (``getpeercert(binary_form)``),
+        SHA-256-fingerprinted, **TOFU-pinned** (:mod:`skcomms.tofu`) under the
+        device identity (``<cn>@<operator>.<realm>``), and that identity is
+        attributed to every CoT the connection ingests via the ``ident_ingest``
+        hook. A TOFU **conflict** (a different cert for a known device handle) is
+        rejected — the connection is dropped.
+
+    The plain :class:`CotStreamServer` on :8087 keeps working unchanged; run both.
+
+    Args:
+        server_cert/server_key/ca_cert: PEM paths (from :mod:`skcomms.cot_pki`).
+            Default to the standard ``cot-pki/`` locations, creating them on
+            first start if absent.
+        require_client_cert: If True, use ``CERT_REQUIRED`` (reject certless
+            clients). Default False (``CERT_OPTIONAL``) per the CB3 spec.
+    """
+
+    def __init__(
+        self,
+        *,
+        ingest: Optional[IngestHook] = None,
+        ident_ingest: Optional[IdentIngestHook] = None,
+        host: str = "0.0.0.0",
+        port: int = DEFAULT_COT_TLS_PORT,
+        rebroadcast: bool = True,
+        server_cert: Optional[str] = None,
+        server_key: Optional[str] = None,
+        ca_cert: Optional[str] = None,
+        require_client_cert: bool = False,
+    ) -> None:
+        super().__init__(
+            ingest=ingest, ident_ingest=ident_ingest, host=host, port=port,
+            rebroadcast=rebroadcast,
+        )
+        self._server_cert = server_cert
+        self._server_key = server_key
+        self._ca_cert = ca_cert
+        self._require_client_cert = require_client_cert
+        # writer-id -> (identity, fingerprint) for the lifetime of the connection
+        self._conn_identity: dict[int, tuple[str, str]] = {}
+
+    def _resolve_pki_paths(self) -> tuple[str, str, str]:
+        """Resolve (server_cert, server_key, ca_cert), creating PKI if needed."""
+        from . import cot_pki
+
+        if self._server_cert and self._server_key and self._ca_cert:
+            return self._server_cert, self._server_key, self._ca_cert
+        cot_pki.init_ca()
+        sp, sk = cot_pki.init_server_cert()
+        ca = cot_pki.pki_dir() / "ca.pem"
+        return (
+            self._server_cert or str(sp),
+            self._server_key or str(sk),
+            self._ca_cert or str(ca),
+        )
+
+    def _ssl_context(self) -> ssl.SSLContext:
+        server_cert, server_key, ca_cert = self._resolve_pki_paths()
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(certfile=server_cert, keyfile=server_key)
+        ctx.load_verify_locations(cafile=ca_cert)
+        ctx.verify_mode = (
+            ssl.CERT_REQUIRED if self._require_client_cert else ssl.CERT_OPTIONAL
+        )
+        return ctx
+
+    async def _handle_client(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
+        # Extract + TOFU-pin the client cert BEFORE serving the stream.
+        ident, fp = self._extract_identity(writer)
+        if ident is None:
+            # CERT_OPTIONAL: certless connections are allowed but anonymous.
+            logger.info("TLS TAK client without client cert: %s", writer.get_extra_info("peername"))
+        else:
+            from .tofu import verify_fingerprint
+
+            result = verify_fingerprint(ident, fp)
+            if not result.trusted:
+                logger.warning(
+                    "TLS client cert TOFU CONFLICT for %s (stored=%s presented=%s) — dropping",
+                    ident, result.stored_fingerprint, fp,
+                )
+                with _suppress():
+                    writer.close()
+                return
+            self._conn_identity[id(writer)] = (ident, fp)
+            logger.info("TLS TAK client cert pinned: %s (%s, %s)", ident, result.status.value, fp)
+        try:
+            await super()._handle_client(reader, writer)
+        finally:
+            self._conn_identity.pop(id(writer), None)
+
+    def _extract_identity(
+        self, writer: asyncio.StreamWriter
+    ) -> tuple[Optional[str], Optional[str]]:
+        """Pull (device_identity, fingerprint) from the connection's client cert."""
+        ssl_obj = writer.get_extra_info("ssl_object")
+        if ssl_obj is None:
+            return None, None
+        der = ssl_obj.getpeercert(binary_form=True)
+        if not der:
+            return None, None
+        fp = _cert_fingerprint_from_der(der)
+        cn = self._cn_from_der(der)
+        from .cot_pki import device_identity
+
+        ident = device_identity(cn) if cn else f"device:fp:{fp[:17]}"
+        return ident, fp
+
+    @staticmethod
+    def _cn_from_der(der: bytes) -> Optional[str]:
+        """Extract the subject CN from a DER client cert (the device handle)."""
+        try:
+            from cryptography import x509
+            from cryptography.x509.oid import NameOID
+
+            cert = x509.load_der_x509_certificate(der)
+            attrs = cert.subject.get_attributes_for_oid(NameOID.COMMON_NAME)
+            return attrs[0].value if attrs else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _connection_identity(self, writer: asyncio.StreamWriter) -> Optional[str]:
+        ent = self._conn_identity.get(id(writer))
+        return ent[0] if ent else None
+
+    def _connection_fingerprint(self, writer: asyncio.StreamWriter) -> Optional[str]:
+        ent = self._conn_identity.get(id(writer))
+        return ent[1] if ent else None
 
 
 TAK_MESH_GROUP = "239.2.3.1"  # ATAK default "Mesh SA" multicast group
