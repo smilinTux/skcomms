@@ -28,7 +28,9 @@ from __future__ import annotations
 
 from . import files  # noqa: F401  (A4 file tools)
 from . import knowledge  # noqa: F401  (A3 knowledge tools + A1 location index)
+from .audit import AccessAuditLog
 from .config import AccessConfig
+from .grants import apply_to_config, load_grants, merge_grants, save_grants
 from .registry import AccessRegistry, RegisteredTool, Scope, register_tool
 from .server import (
     AccessAuthError,
@@ -48,7 +50,12 @@ __all__ = [
     "AccessServer",
     "AccessAuthError",
     "AccessScopeError",
+    "AccessAuditLog",
     "build_app",
+    "apply_to_config",
+    "load_grants",
+    "save_grants",
+    "merge_grants",
     "knowledge",
     "files",
 ]

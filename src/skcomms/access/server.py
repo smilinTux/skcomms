@@ -35,6 +35,7 @@ from .. import federation as fed
 from ..discovery import PeerStore
 from ..envelope import SignedEnvelope
 from ..signing import EnvelopeVerifier
+from .audit import AccessAuditLog
 from .config import AccessConfig
 from .registry import AccessRegistry, DEFAULT_REGISTRY, RegisteredTool, Scope
 
@@ -111,12 +112,14 @@ class AccessServer:
         registry: Optional[AccessRegistry] = None,
         verifier: Optional[EnvelopeVerifier] = None,
         peer_store: Optional[PeerStore] = None,
+        audit: Optional[AccessAuditLog] = None,
     ) -> None:
         self.config = config or AccessConfig.load()
         self.registry = registry or DEFAULT_REGISTRY
         self._peer_store = peer_store if peer_store is not None else PeerStore()
         self.verifier = verifier or self._build_verifier()
         self.nonce_cache = fed.NonceCache()
+        self.audit = audit or AccessAuditLog(node=self.config.node_name)
         self._register_builtins()
 
     # -- key/TOFU setup -----------------------------------------------------
@@ -192,6 +195,7 @@ class AccessServer:
                 "tailnet_only": not cfg.allow_public,
                 "capauth_gated": not cfg.dev_bypass,
                 "dev_bypass": cfg.dev_bypass,
+                "sse_require_auth": cfg.sse_require_auth,
             },
         }
 
@@ -254,6 +258,54 @@ class AccessServer:
             server=self,
         )
 
+    def authenticate_session(self, token: Any) -> ToolContext:
+        """Authenticate an MCP **session** (the /sse handshake hook, A6/F1).
+
+        An MCP client opening an /sse session presents a capauth-signed *hello*
+        (a :class:`SignedEnvelope`, same form as the per-call token; its body may
+        carry ``{"hello": ...}`` — the signature is what matters). This binds the
+        whole session to the verified identity, and every tool call on that
+        session is then scope-checked against THAT identity — not a blanket
+        node-local grant.
+
+        Behaviour is governed by ``config.sse_require_auth``:
+
+        * **ON (prod default):** a missing/unsigned/untrusted hello raises
+          :class:`AccessAuthError`. The session is bound to the verified fqid +
+          its granted scopes.
+        * **OFF (loopback/dev):** if no token is presented, fall back to a
+          node-local context (the node's own granted scopes ∪ READ), preserving
+          the old "tailnet-trusted" behaviour for local dev. A *presented* token
+          is still verified even when auth isn't required.
+
+        Args:
+            token: The signed hello envelope, or ``None`` (dev fallback only).
+
+        Returns:
+            A :class:`ToolContext` bound to the session identity.
+
+        Raises:
+            AccessAuthError: When auth is required and the hello is
+                missing/unsigned/untrusted.
+        """
+        if token is None or token == "":
+            if self.config.sse_require_auth and not self.config.dev_bypass:
+                raise AccessAuthError(
+                    "sse session requires a capauth-signed hello "
+                    "(sse_require_auth is ON)"
+                )
+            # Dev/loopback fallback: node-local trusted session.
+            ident = self.config.node_fqid or self.config.node_name
+            return ToolContext(
+                identity=ident,
+                fingerprint=None,
+                scopes=self.config.granted_scopes(ident) | {Scope.READ},
+                config=self.config,
+                server=self,
+            )
+        # A hello was presented — verify it (even if auth wasn't required).
+        return self.authenticate(token)
+
     @staticmethod
     def _coerce_signed(token: Any) -> SignedEnvelope:
         """Normalize a token into a :class:`SignedEnvelope`."""
@@ -269,13 +321,17 @@ class AccessServer:
 
     # -- dispatch -----------------------------------------------------------
 
-    async def call_tool(self, token: Any, name: str, arguments: Optional[dict] = None) -> Any:
+    async def call_tool(
+        self, token: Any, name: str, arguments: Optional[dict] = None,
+        *, transport: str = "tool",
+    ) -> Any:
         """Authenticate, enforce scope, then invoke a registered tool.
 
         Args:
             token: The capauth-signed token (envelope) authorizing the call.
             name: Registered tool name.
             arguments: Tool arguments.
+            transport: Audit label for the calling path (``"tool"`` | ``"sse"``).
 
         Returns:
             The tool's JSON-serialisable result.
@@ -285,26 +341,47 @@ class AccessServer:
             AccessScopeError: Caller lacks the tool's required scope.
             ToolNotFoundError: No such tool.
         """
-        ctx = self.authenticate(token)
-        return await self.call_tool_with_ctx(ctx, name, arguments)
+        try:
+            ctx = self.authenticate(token)
+        except AccessAuthError:
+            self.audit.record(
+                transport=transport, identity=None, tool=name, scope=None,
+                decision="deny", reason="auth",
+            )
+            raise
+        return await self.call_tool_with_ctx(ctx, name, arguments, transport=transport)
 
     async def call_tool_with_ctx(
-        self, ctx: ToolContext, name: str, arguments: Optional[dict] = None
+        self, ctx: ToolContext, name: str, arguments: Optional[dict] = None,
+        *, transport: str = "tool",
     ) -> Any:
         """Dispatch when the caller is already authenticated.
 
         Used by the MCP/SSE transport which authenticates once per session.
+        Every decision (allow / scope-deny / not-found) is audit-logged.
         """
         tool: Optional[RegisteredTool] = self.registry.get(name)
         if tool is None:
+            self.audit.record(
+                transport=transport, identity=ctx.identity, fingerprint=ctx.fingerprint,
+                tool=name, scope=None, decision="deny", reason="not_found",
+            )
             raise ToolNotFoundError(f"unknown tool: {name}")
         if not ctx.has_scope(tool.scope):
+            self.audit.record(
+                transport=transport, identity=ctx.identity, fingerprint=ctx.fingerprint,
+                tool=name, scope=tool.scope.value, decision="deny", reason="scope",
+            )
             raise AccessScopeError(
                 f"identity {ctx.identity!r} lacks scope {tool.scope.value!r} "
                 f"for tool {name!r} (granted: {sorted(s.value for s in ctx.scopes)})"
             )
         logger.info(
             "access tool=%s scope=%s caller=%s", name, tool.scope.value, ctx.identity
+        )
+        self.audit.record(
+            transport=transport, identity=ctx.identity, fingerprint=ctx.fingerprint,
+            tool=name, scope=tool.scope.value, decision="allow",
         )
         return await tool.invoke(arguments or {}, ctx)
 
@@ -436,27 +513,69 @@ def build_app(server: Optional[AccessServer] = None):
     return app
 
 
+def _extract_sse_hello(request) -> Any:
+    """Pull a capauth-signed hello token off an /sse connect request.
+
+    Looked for, in order:
+      1. ``Authorization: Bearer <signed-envelope-json>`` header,
+      2. ``X-Capauth-Hello`` header,
+      3. ``?hello=<...>`` query parameter (for clients that can't set headers).
+
+    Returns the raw token string, or ``None`` if none present.
+    """
+    try:
+        headers = request.headers
+        auth = headers.get("authorization")
+        if auth and auth.lower().startswith("bearer "):
+            return auth[7:]
+        hello = headers.get("x-capauth-hello")
+        if hello:
+            return hello
+        q = request.query_params.get("hello")
+        if q:
+            return q
+    except Exception as exc:  # pragma: no cover - exotic request object
+        logger.debug("sse hello extraction failed: %s", exc)
+    return None
+
+
 def _mount_mcp_sse(app, srv: AccessServer) -> None:
     """Mount the MCP SSE transport, exposing registered tools to MCP clients.
 
-    The SSE transport itself carries no per-call capauth signature, so the
-    SSE mount is intended for **already-tailnet-trusted** MCP clients; the
-    signed-token gate is enforced on the ``/tool`` POST seam (and is the path
-    A5 federation routing uses node-to-node). This keeps the skeleton runnable
-    for Claude Code over the tailnet while the strict per-call gate guards the
-    programmatic seam. (F1/A6 will fold a per-session capauth handshake into
-    the SSE path.)
+    Per-session identity (A6/F1): an /sse session is authenticated **once at
+    connect time** via :meth:`AccessServer.authenticate_session`, which requires
+    a capauth-signed hello when ``config.sse_require_auth`` is ON (prod default)
+    and falls back to a node-local context only for loopback/dev when it is OFF.
+    Every tool call on the session is then scope-checked against THAT verified
+    identity (not a blanket node-local grant) and audit-logged with
+    ``transport="sse"``.
+
+    The hello rides the connect request (``Authorization: Bearer``,
+    ``X-Capauth-Hello`` header, or ``?hello=`` query param — see
+    :func:`_extract_sse_hello`). If auth is required and absent/invalid, the
+    connection is refused 401 before the MCP protocol starts.
     """
     try:
         from mcp.server import Server as MCPServer
         from mcp.server.sse import SseServerTransport
         from mcp.types import TextContent, Tool
+        from starlette.responses import JSONResponse
         from starlette.routing import Mount, Route
     except Exception as exc:  # pragma: no cover - mcp missing
         logger.warning("MCP SSE deps unavailable, /sse not mounted: %s", exc)
         return
 
     mcp = MCPServer("sk-access")
+
+    # The session ctx is resolved per-connection in _handle_sse and stashed
+    # here so the (process-global) MCP call handler can read it. MCP runs one
+    # session per connection within this coroutine, so a contextvar keeps
+    # concurrent sessions isolated.
+    import contextvars
+
+    _session_ctx: "contextvars.ContextVar[Optional[ToolContext]]" = contextvars.ContextVar(
+        "sk_access_session_ctx", default=None
+    )
 
     @mcp.list_tools()
     async def _list_tools() -> list:
@@ -471,19 +590,11 @@ def _mount_mcp_sse(app, srv: AccessServer) -> None:
 
     @mcp.call_tool()
     async def _call(name: str, arguments: dict) -> list:
-        # Tailnet-trusted session ctx (see docstring). Grants the node's own
-        # wildcard scopes so registered tools are usable; the strict per-call
-        # signed gate lives on /tool.
-        ident = srv.config.node_fqid or srv.config.node_name
-        ctx = ToolContext(
-            identity=ident,
-            fingerprint=None,
-            scopes=srv.config.granted_scopes(ident) | {Scope.READ},
-            config=srv.config,
-            server=srv,
-        )
+        ctx = _session_ctx.get()
+        if ctx is None:  # pragma: no cover - connect always sets it
+            return [TextContent(type="text", text=json.dumps({"error": "no session identity"}))]
         try:
-            result = await srv.call_tool_with_ctx(ctx, name, arguments)
+            result = await srv.call_tool_with_ctx(ctx, name, arguments, transport="sse")
         except AccessError as exc:
             return [TextContent(type="text", text=json.dumps({"error": str(exc)}))]
         return [TextContent(type="text", text=json.dumps(result, default=str))]
@@ -491,6 +602,18 @@ def _mount_mcp_sse(app, srv: AccessServer) -> None:
     transport = SseServerTransport("/messages/")
 
     async def _handle_sse(request):
+        # Authenticate the SESSION before the MCP protocol starts.
+        token = _extract_sse_hello(request)
+        try:
+            ctx = srv.authenticate_session(token)
+        except AccessAuthError as exc:
+            srv.audit.record(
+                transport="sse", identity=None, tool="<session>", scope=None,
+                decision="deny", reason="auth",
+            )
+            return JSONResponse({"error": str(exc)}, status_code=401)
+        _session_ctx.set(ctx)
+        logger.info("sse session bound to identity=%s", ctx.identity)
         async with transport.connect_sse(
             request.scope, request.receive, request._send
         ) as (read_stream, write_stream):
