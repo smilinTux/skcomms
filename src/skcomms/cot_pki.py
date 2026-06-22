@@ -311,6 +311,25 @@ def device_identity(device_name: str) -> str:
 # PKCS#12 keystore/truststore builders (for the data package)
 # --------------------------------------------------------------------------- #
 
+def _atak_p12_encryption(password: str):
+    """Legacy PKCS#12 encryption (PBESv1 / SHA1+3DES) for ATAK/iTAK.
+
+    ATAK's Java/BouncyCastle keystore loader rejects modern AES-256 (PBESv2)
+    p12s produced by ``BestAvailableEncryption``; the field-proven format is
+    legacy PBESv1 SHA1+3DES, which BouncyCastle reads. (cryptography >= 38.)
+    """
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.serialization import PrivateFormat
+
+    return (
+        PrivateFormat.PKCS12.encryption_builder()
+        .kdf_rounds(50000)
+        .key_cert_algorithm(pkcs12.PBES.PBESv1SHA1And3KeyTripleDESCBC)
+        .hmac_hash(hashes.SHA1)
+        .build(password.encode())
+    )
+
+
 def _truststore_p12(
     ca_cert: x509.Certificate, *, password: str = DEFAULT_P12_PASSWORD
 ) -> bytes:
@@ -323,7 +342,7 @@ def _truststore_p12(
         key=None,
         cert=None,
         cas=[ca_cert],
-        encryption_algorithm=serialization.BestAvailableEncryption(password.encode()),
+        encryption_algorithm=_atak_p12_encryption(password),
     )
 
 
@@ -341,7 +360,7 @@ def _client_keystore_p12(
         key=key,
         cert=cert,
         cas=[ca_cert],
-        encryption_algorithm=serialization.BestAvailableEncryption(password.encode()),
+        encryption_algorithm=_atak_p12_encryption(password),
     )
 
 
