@@ -325,7 +325,7 @@ def _atak_p12_encryption(password: str):
         PrivateFormat.PKCS12.encryption_builder()
         .kdf_rounds(50000)
         .key_cert_algorithm(pkcs12.PBES.PBESv1SHA1And3KeyTripleDESCBC)
-        .hmac_hash(hashes.SHA1)
+        .hmac_hash(hashes.SHA1())
         .build(password.encode())
     )
 
