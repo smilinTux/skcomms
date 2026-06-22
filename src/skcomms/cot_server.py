@@ -154,6 +154,12 @@ class CotStreamServer:
         return None
 
     async def _dispatch(self, cot: CotEvent, *, origin: asyncio.StreamWriter) -> None:
+        # TAK keepalive: ATAK/WinTAK send a periodic ping (type t-x-c-t) and drop
+        # the link (~20-30s) if the server doesn't pong (t-x-c-t-r). Answer it
+        # point-to-point; don't rebroadcast/ingest pings.
+        if cot.type.startswith("t-x-c-t") and not cot.type.startswith("t-x-c-t-r"):
+            await self._send_pong(origin)
+            return
         if self._rebroadcast:
             await self._broadcast(cot, exclude=origin)
         identity = self._connection_identity(origin)
@@ -187,6 +193,17 @@ class CotStreamServer:
                 await w.drain()
             except (ConnectionError, RuntimeError):
                 self._clients.discard(w)
+
+    async def _send_pong(self, writer: asyncio.StreamWriter) -> None:
+        """Reply to a TAK ping with a pong (keeps ATAK/WinTAK connected)."""
+        from .cot import CotPoint
+
+        pong = CotEvent(uid="takPong", type="t-x-c-t-r", how="m-g", point=CotPoint())
+        try:
+            writer.write((to_cot(pong) + "\n").encode("utf-8"))
+            await writer.drain()
+        except (ConnectionError, RuntimeError):
+            self._clients.discard(writer)
 
     async def push(self, cot: CotEvent) -> None:
         """Push a CoT event to ALL connected clients (e.g. federation-inbound)."""

@@ -199,3 +199,18 @@ def test_federation_ingest_fans_out_cot_to_peers():
     assert {c[0] for c in sk.calls} == {"lumina@chef.skworld", "opus@chef.skworld"}
     assert all(c[1] == "application/cot+xml" for c in sk.calls)
     assert "ANDROID-1" in sk.calls[0][2]          # the CoT XML rides in the body
+
+
+async def test_tak_ping_gets_pong_and_is_not_ingested():
+    seen = []
+    srv, port = await _serve(ingest=lambda c: seen.append(c))
+    r, w = await asyncio.open_connection("127.0.0.1", port)
+    ping = ('<event version="2.0" uid="DEV-ping" type="t-x-c-t" how="m-g"'
+            ' time="2026-06-22T03:00:00Z" start="2026-06-22T03:00:00Z" stale="2026-06-22T03:01:00Z">'
+            '<point lat="0" lon="0" hae="0" ce="9" le="9"/><detail/></event>')
+    w.write(ping.encode()); await w.drain()
+    data = await asyncio.wait_for(r.readuntil(b"</event>"), timeout=2)
+    assert parse_cot(data).type == "t-x-c-t-r"   # got a pong
+    await asyncio.sleep(0.05)
+    assert seen == []                            # ping was NOT ingested/federated
+    w.close(); await srv.stop()
