@@ -26,10 +26,16 @@ from .cot_server import (
     DEFAULT_COT_PORT, DEFAULT_COT_TLS_PORT, CotStreamServer, TlsCotStreamServer,
     UdpMeshListener, federation_ingest,
 )
+from .geo import GeoStore
 from .home import skcomms_home
 from .identity import resolve_self_identity
 
 logger = logging.getLogger("skcomms.cot_service")
+
+# Process-wide situational-awareness store (CB4). Every CoT this node receives
+# — TCP, TLS, mesh, or peer-injected — is upserted here so agents and the map
+# read one ground-truth picture. In-memory; positions are re-beaconed.
+GEO_STORE = GeoStore()
 
 
 def _extract_cot_body(data: dict) -> str | None:
@@ -78,6 +84,7 @@ async def _inbox_inject_loop(
                     cot = parse_cot(body)
                 except ValueError:
                     continue
+                GEO_STORE.upsert_from_cot(cot, source="federation")  # CB4 picture
                 await server.push(cot)
                 if also is not None:
                     await also.push(cot)
@@ -116,6 +123,7 @@ async def main() -> None:
                 pass
 
     def tcp_ingest(cot):
+        GEO_STORE.upsert_from_cot(cot, source="tcp")  # CB4 situational picture
         fed_hook(cot)   # federate to peer nodes
         mesh_out(cot)   # bridge TCP fabric → mesh devices
 
@@ -131,6 +139,7 @@ async def main() -> None:
 
         def _ident_hook(cot, identity, fingerprint):
             logger.info("TLS CoT uid=%s attributed to device=%s (fp=%s)", cot.uid, identity, fingerprint)
+            GEO_STORE.upsert_from_cot(cot, source=identity or "tls")  # CB4 picture
             fed_hook(cot)
             mesh_out(cot)   # bridge TLS clients (Androids, LUMINA) → mesh devices
 
@@ -158,6 +167,7 @@ async def main() -> None:
         async def _mesh_event(cot):
             # mesh device CoT → fabric: federate + show to TCP clients. Do NOT
             # mesh_out (it came from mesh; re-sending would echo).
+            GEO_STORE.upsert_from_cot(cot, source="mesh")  # CB4 picture
             fed_hook(cot)
             await server.push(cot)
             if tls_server is not None:
