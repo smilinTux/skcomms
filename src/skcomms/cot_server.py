@@ -85,6 +85,10 @@ class CotStreamServer:
         self._clients: set[asyncio.StreamWriter] = set()
         self._server: Optional[asyncio.AbstractServer] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+        # Last-known CoT per uid (positions/markers) for initial state sync —
+        # replayed to each new client so silent-on-connect clients (iTAK) get
+        # immediate data and don't drop the link.
+        self._last_cot: dict[str, bytes] = {}
 
     @property
     def client_count(self) -> int:
@@ -122,12 +126,24 @@ class CotStreamServer:
             "TAK client connected: %s%s (now %d)",
             peer, f" as {identity}" if identity else "", len(self._clients),
         )
+        # Initial state sync: replay last-known positions so the client (esp.
+        # iTAK, which waits silently) immediately has the picture and stays up.
+        if self._last_cot:
+            try:
+                for cached in list(self._last_cot.values()):
+                    writer.write(cached + b"\n")
+                await writer.drain()
+            except (ConnectionError, RuntimeError):
+                pass
         buf = b""
         try:
             while True:
                 data = await reader.read(8192)
                 if not data:
                     break
+                import os as _os
+                if _os.environ.get("SKCOMMS_COT_DEBUG_RAW"):
+                    logger.info("RAW from %s (%dB): %r", peer, len(data), data[:400])
                 buf += data
                 events, buf = extract_events(buf)
                 for raw in events:
@@ -136,6 +152,10 @@ class CotStreamServer:
                     except ValueError as exc:
                         logger.debug("dropping malformed CoT from %s: %s", peer, exc)
                         continue
+                    # Cache positions/markers for initial-state replay (not chat
+                    # or transient pings).
+                    if not cot.is_chat and not cot.type.startswith("t-x-c-t") and cot.uid:
+                        self._last_cot[cot.uid] = raw
                     await self._dispatch(cot, origin=writer)
         except (ConnectionError, asyncio.IncompleteReadError):
             pass
