@@ -116,9 +116,23 @@ async def main() -> None:
             logger.info("TLS CoT uid=%s attributed to device=%s (fp=%s)", cot.uid, identity, fingerprint)
             fed_hook(cot)
 
-        tls_server = TlsCotStreamServer(host=host, port=tls_port, ident_ingest=_ident_hook)
+        # Optional override: present a publicly-trusted server cert (e.g. a
+        # `tailscale cert` Let's Encrypt cert) so strict clients (iTAK) trust us
+        # without importing our CA. The PKI CA still verifies optional client
+        # certs for per-device identity.
+        tls_cert = os.environ.get("SKCOMMS_COT_TLS_CERT")
+        tls_key = os.environ.get("SKCOMMS_COT_TLS_KEY")
+        tls_ca = os.environ.get("SKCOMMS_COT_CA")
+        if tls_cert and tls_key and not tls_ca:
+            from .cot_pki import pki_dir
+            tls_ca = str(pki_dir() / "ca.pem")
+        tls_server = TlsCotStreamServer(
+            host=host, port=tls_port, ident_ingest=_ident_hook,
+            server_cert=tls_cert, server_key=tls_key, ca_cert=tls_ca,
+        )
         await tls_server.start()
-        logger.info("CoT TLS endpoint up on %s:%d (per-device client-cert identity)", host, tls_port)
+        logger.info("CoT TLS endpoint up on %s:%d (server_cert=%s)", host, tls_port,
+                    tls_cert or "PKI self-signed")
 
     # Mesh-mode ATAK (no server/auth): join the multicast group on the LAN so a
     # phone's mesh CoT is ingested + federated + shown to any TCP viewers.
