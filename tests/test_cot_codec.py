@@ -115,3 +115,24 @@ class TestEnvelopeMapping:
         env = Envelope(from_fqid="a@x", to_fqid="b@x", content_type="text/plain", body="hi")
         with pytest.raises(ValueError):
             envelope_to_cot(env)
+
+
+class TestMeshDatagram:
+    def test_xml_datagram_parses(self):
+        from skcomms.cot import parse_cot_datagram
+        cot = parse_cot_datagram(PLI.encode())
+        assert cot is not None and cot.uid == "ANDROID-deadbeef"
+
+    def test_xml_datagram_with_leading_ws(self):
+        from skcomms.cot import parse_cot_datagram
+        assert parse_cot_datagram(b"\n  " + PLI.encode()).uid == "ANDROID-deadbeef"
+
+    def test_garbage_datagram_returns_none(self):
+        from skcomms.cot import parse_cot_datagram
+        assert parse_cot_datagram(b"") is None
+        assert parse_cot_datagram(b"\x00\x01\x02not cot") is None
+
+    def test_protobuf_datagram_best_effort_no_crash(self):
+        from skcomms.cot import parse_cot_datagram
+        # 0xbf header but no takproto / bogus body -> None, never raises
+        assert parse_cot_datagram(b"\xbf\x01\xbf\x00\x00") is None

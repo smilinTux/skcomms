@@ -189,6 +189,44 @@ def cot_to_envelope(ev: CotEvent, *, from_fqid: str, to_fqid: str = COT_BROADCAS
     )
 
 
+def parse_cot_datagram(data: bytes) -> Optional[CotEvent]:
+    """Parse a single mesh UDP datagram into a :class:`CotEvent`, or None.
+
+    ATAK mesh ("Mesh SA") sends one CoT per datagram, either as **XML** (legacy
+    / "TAK Protocol Version 0") or the **TAK Protocol** protobuf (header byte
+    ``0xbf``, "Version 1"). XML is parsed directly; protobuf is decoded
+    best-effort via the optional ``takproto`` package (``pip install takproto``).
+    Returns None for unparseable/partial datagrams (never raises).
+    """
+    if not data:
+        return None
+    head = data.lstrip()[:1]
+    if head == b"<":
+        try:
+            return parse_cot(data.lstrip())
+        except ValueError:
+            return None
+    if data[:1] == b"\xbf":  # TAK Protocol mesh (protobuf)
+        try:
+            import takproto  # optional dep
+
+            msg = takproto.parse_proto(bytearray(data))
+            if msg is None:
+                return None
+            ev = msg.cotEvent
+            contact = getattr(getattr(ev, "detail", None), "contact", None)
+            return CotEvent(
+                uid=ev.uid or "",
+                type=ev.type or "a-f-G-U-C",
+                how=ev.how or "m-g",
+                point=CotPoint(lat=ev.lat, lon=ev.lon, hae=ev.hae, ce=ev.ce, le=ev.le),
+                callsign=(contact.callsign if contact and contact.callsign else None),
+            )
+        except Exception:  # noqa: BLE001 — missing dep or schema drift → skip
+            return None
+    return None
+
+
 def envelope_to_cot(env: Envelope) -> CotEvent:
     """Extract a :class:`CotEvent` from a CoT-bearing :class:`Envelope`.
 
