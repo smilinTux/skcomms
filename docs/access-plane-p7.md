@@ -175,3 +175,10 @@ pgvector + pg_search/BM25 + AGE), so physical replication is clean (identical bi
 
 ## DEPLOYED (core, 2026-06-22)
 `skcomms-access.service` LIVE on .158 — `100.108.59.57:9386`, tailnet-only, capauth-gated, 12 tools (10 + node_info/health). A1-A4 done + integrated (`wiring.register_builtin_tools`), 836 tests. Read-only by default (`scope_grants={}`); exposed root `~/clawd`; secrets hard-denied. **Remaining:** A5 federation routing (query any node -> fetch from owning node), A6 RBAC/scope-grants + per-call identity on /sse (F1), A7 skreachd exec (F2), A8 client wiring (Claude Code .mcp.json / agents / Flutter Files P9), deploy sk-access on .41, + live PG primary/replica (supervised).
+
+## A8 — clients wired (2026-06-22)
+- **E2E proven:** capauth `pg_search` on .158 + cross-node `file_read` on .41 over the tailnet (both gated).
+- **Claude Code:** `~/clawd/.mcp.json` -> `sk-access` SSE at `http://127.0.0.1:9386/sse` (loopback -> A6 dev fallback grants node-local READ; A5 routing reaches remote files). Loads next Claude Code session.
+- **Agents (Lumina/Jarvis):** point their MCP client at the local node's sk-access `/sse` (loopback) or `/tool` with a capauth token for write/exec scopes.
+- **Both nodes live:** sk-access on .158 (`100.108.59.57:9386`) + .41 (`100.86.156.5:9386`), persistent.
+- **Remaining:** grant write/exec to specific identities via `python -m skcomms.access.grants` when needed; live PG primary/replica (supervised); per-session capauth on /sse for non-loopback MCP clients (A6 flag).
