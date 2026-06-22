@@ -471,6 +471,22 @@ def build_app(server: Optional[AccessServer] = None):
     app = FastAPI(title="sk-access", version="0.1.0")
     app.state.access_server = srv
 
+    # Allow browser clients (the skchat web app, served from the webui origin or
+    # the funnel) to call /tool cross-origin. Safe because every /tool call is
+    # independently capauth-gated — CORS only permits the request to be *made*;
+    # the signed token still authorizes it. No cookies/credentials are used.
+    try:
+        from fastapi.middleware.cors import CORSMiddleware
+
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+    except Exception:  # pragma: no cover — fastapi always ships CORS
+        pass
+
     @app.get("/health", tags=["health"])
     async def _health():
         return srv._tool_health({}, None)  # type: ignore[arg-type]
