@@ -28,7 +28,7 @@ def test_adapter_invokes_direct_arg_callable(tmp_path):
     reg = AccessRegistry()
     register_builtin_tools(registry=reg)
     tool = reg.get("list_roots")
-    out = asyncio.get_event_loop().run_until_complete(tool.invoke({}, None))
+    out = asyncio.run(tool.invoke({}, None))   # fresh loop; no shared-loop pollution
     assert isinstance(out, list)
 
 
