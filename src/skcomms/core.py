@@ -433,6 +433,64 @@ class SKComms:
         """
         self._router.register_transport(transport)
 
+    def send_federated(
+        self,
+        to_fqid: str,
+        message: str,
+        *,
+        content_type: str = "text/plain",
+        thread_id: Optional[str] = None,
+        in_reply_to: Optional[str] = None,
+        mode: Optional[RoutingMode] = None,
+    ) -> DeliveryReport:
+        """Send a canonical signed Envelope v1 to a remote agent (federation).
+
+        The strategic node-to-node path: build Envelope v1 (``from_fqid`` =
+        this agent, ``to_fqid`` = recipient), **sign** it with this agent's
+        capauth key, best-effort route it over the selected rail (router owns
+        rail ordering + store-forward), and on failure enqueue a durable copy
+        to the federation outbox (authoritative retry). Nonce dedup makes
+        retry/redelivery idempotent.
+
+        Args:
+            to_fqid: Recipient FQID (``<agent>@<operator>.<realm>``).
+            message: Body content.
+            content_type: Rail-agnostic "kind" (default ``text/plain``).
+            thread_id / in_reply_to: Optional threading.
+            mode: Routing mode override.
+
+        Returns:
+            DeliveryReport for the immediate attempt.
+        """
+        from .crypto import EnvelopeCrypto
+        from .envelope import Envelope
+        from .identity import resolve_self_identity
+
+        ident = resolve_self_identity()
+        from_fqid = ident.get("fqid") or self._identity
+        crypto = self._crypto or EnvelopeCrypto.from_capauth()
+        if crypto is None:
+            raise RuntimeError("no capauth key available to sign federation envelope")
+
+        signed = crypto.envelope_signer().sign(
+            Envelope(
+                from_fqid=from_fqid,
+                to_fqid=to_fqid,
+                content_type=content_type,
+                body=message,
+                thread_id=thread_id,
+                reply_to=in_reply_to,
+            )
+        )
+        preferred = self._resolve_peer_transports(to_fqid)
+        report = self._router.route_signed(signed, preferred_transports=preferred, mode=mode)
+        if not report.delivered:
+            try:
+                self._outbox.enqueue_signed(signed, error="initial send failed")
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("federation outbox enqueue failed: %s", exc)
+        return report
+
     def send(
         self,
         recipient: str,
