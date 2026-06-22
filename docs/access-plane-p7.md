@@ -182,3 +182,20 @@ pgvector + pg_search/BM25 + AGE), so physical replication is clean (identical bi
 - **Agents (Lumina/Jarvis):** point their MCP client at the local node's sk-access `/sse` (loopback) or `/tool` with a capauth token for write/exec scopes.
 - **Both nodes live:** sk-access on .158 (`100.108.59.57:9386`) + .41 (`100.86.156.5:9386`), persistent.
 - **Remaining:** grant write/exec to specific identities via `python -m skcomms.access.grants` when needed; live PG primary/replica (supervised); per-session capauth on /sse for non-loopback MCP clients (A6 flag).
+
+## PG replication — LIVE (2026-06-22)
+Physical streaming replication is up: **.158 primary → .41 hot-standby**, real-time (lag 0), over the
+tailnet (slot `standby_41`). Proven: write on primary appeared on standby <3s. Both containers
+`restart=unless-stopped` (reboot-durable).
+
+**Setup recap (non-disruptive — no primary restart):** primary was already `wal_level=replica`/
+`max_wal_senders=10`/`hot_standby=on`; added role `replicator` (pwd `skfedrepl2026`), slot `standby_41`,
+pg_hba `host replication replicator all scram-sha-256` + reload. Standby seeded with
+`pg_basebackup -d "host=100.108.59.57 ... password=..." -Fp -Xs -R -S standby_41` into the
+`skmem_pgdata` volume, then `docker start skmem-pg`.
+
+**Ops:** standby is READ-ONLY (`pg_is_in_recovery()=true`); writes go to .158. Health:
+`pg_stat_replication` (primary) / `pg_stat_wal_receiver` (standby). **Promote** .41 if .158 dies:
+`docker exec skmem-pg pg_ctl promote` (or `SELECT pg_promote()`). **Re-seed:** stop standby, wipe
+`skmem_pgdata`, re-run the basebackup. Access plane reads can point at the local replica (sub-ms) +
+write to the primary.
