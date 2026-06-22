@@ -137,6 +137,10 @@ class AccessConfig:
         port: TCP port (default 9386).
         allow_public: Operator override to permit a public bind (default False).
         dev_bypass: Skip capauth verification (LOCAL DEV ONLY, default False).
+        sse_require_auth: Require an MCP /sse session to present a capauth-signed
+            hello (or per-call token) before any tool call, binding the session
+            to a verified identity. ON by default in prod; turn OFF only for
+            loopback/dev (a blanket node-local fallback is then used).
         exposed_roots: Absolute, expanded directories agents may touch.
         deny_subpaths: Path fragments hard-denied even under an exposed root.
         scope_grants: Map of identity (fqid/name/fingerprint) -> granted scopes.
@@ -150,6 +154,7 @@ class AccessConfig:
     port: int = _DEFAULT_PORT
     allow_public: bool = False
     dev_bypass: bool = False
+    sse_require_auth: bool = True
     exposed_roots: list[Path] = field(default_factory=list)
     deny_subpaths: list[str] = field(default_factory=lambda: list(DEFAULT_DENY_SUBPATHS))
     scope_grants: dict[str, set[Scope]] = field(default_factory=dict)
@@ -166,6 +171,7 @@ class AccessConfig:
         port: Optional[int] = None,
         allow_public: Optional[bool] = None,
         dev_bypass: Optional[bool] = None,
+        sse_require_auth: Optional[bool] = None,
         config_path: Optional[Path] = None,
     ) -> "AccessConfig":
         """Build config from kwargs > env > yaml > defaults.
@@ -175,6 +181,7 @@ class AccessConfig:
             port: Explicit port.
             allow_public: Explicit public-bind override.
             dev_bypass: Explicit dev-bypass override.
+            sse_require_auth: Explicit /sse session-auth override (default ON).
             config_path: Alternate ``access.yml`` path (testing).
 
         Returns:
@@ -192,6 +199,11 @@ class AccessConfig:
             dev_bypass
             if dev_bypass is not None
             else _env_bool("SK_ACCESS_DEV_BYPASS", bool(raw.get("dev_bypass", False)))
+        )
+        eff_sse_require_auth = (
+            sse_require_auth
+            if sse_require_auth is not None
+            else _env_bool("SK_ACCESS_SSE_REQUIRE_AUTH", bool(raw.get("sse_require_auth", True)))
         )
 
         eff_host = (
@@ -212,6 +224,15 @@ class AccessConfig:
 
         scope_grants = cls._parse_grants(raw.get("scope_grants") or {})
 
+        # Fold the persistent grants store (grants.yml) over the static config
+        # grants — the store is the live, CLI-managed source of truth (A6).
+        try:
+            from .grants import load_grants, merge_grants
+
+            scope_grants = merge_grants(scope_grants, load_grants())
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("grants.yml load skipped: %s", exc)
+
         node_name, node_fqid = cls._resolve_node()
 
         return cls(
@@ -219,6 +240,7 @@ class AccessConfig:
             port=eff_port,
             allow_public=eff_allow_public,
             dev_bypass=eff_dev_bypass,
+            sse_require_auth=eff_sse_require_auth,
             exposed_roots=exposed_roots,
             deny_subpaths=deny,
             scope_grants=scope_grants,
@@ -285,6 +307,7 @@ class AccessConfig:
             "port": self.port,
             "allow_public": self.allow_public,
             "dev_bypass": self.dev_bypass,
+            "sse_require_auth": self.sse_require_auth,
             "exposed_roots": [str(p) for p in self.exposed_roots],
             "deny_subpaths": list(self.deny_subpaths),
             "node_name": self.node_name,
