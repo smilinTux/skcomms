@@ -26,10 +26,12 @@ Public surface:
 
 from __future__ import annotations
 
+from . import exec as exec_tools  # noqa: F401  (A7 exec tools)
 from . import files  # noqa: F401  (A4 file tools)
 from . import knowledge  # noqa: F401  (A3 knowledge tools + A1 location index)
 from .audit import AccessAuditLog
 from .config import AccessConfig
+from .exec import register_builtin_exec_tools
 from .grants import apply_to_config, load_grants, merge_grants, save_grants
 from .registry import AccessRegistry, RegisteredTool, Scope, register_tool
 from .routing import (
@@ -62,6 +64,7 @@ __all__ = [
     "Scope",
     "register_tool",
     "register_builtin_tools",
+    "register_builtin_exec_tools",
     "AccessServer",
     "AccessAuthError",
     "AccessScopeError",
@@ -73,6 +76,8 @@ __all__ = [
     "merge_grants",
     "knowledge",
     "files",
+    "exec_tools",
+    "register_builtin_exec_tools",
     # A5 — federation routing
     "NodeResolver",
     "local_node",
