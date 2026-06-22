@@ -211,6 +211,82 @@ the fabric; capauth is identity. Everything designed above is what the app consu
 - This is the convergence of [[skchat-unified-client-federation]] (the one client), [[skfed-comms-architecture]]
   (the fabric), and the **skos** umbrella (epic `1b4ab47a`).
 
+## 9b. Detailed P1/P2 build spec (arch hat — the swarm builds to this)
+**skcomms-in-place is MAINTENANCE MODE** (Chef 2026-06-22): build the strategic path cleanly —
+canonical `SignedEnvelope` is THE federation wire format; no dual-path/back-compat gymnastics. Legacy
+`MessageEnvelope` stays only where non-federation local code still needs it; the federation send/receive
+path uses Envelope v1 end-to-end.
+
+### Message lifecycle (target)
+```mermaid
+sequenceDiagram
+  participant A as Agent (sender, N1)
+  participant SND as skcomms.send (N1)
+  participant R as Router (N1)
+  participant RAIL as Rail (http-s2s/nostr/ble)
+  participant IN as POST /inbox (N2, tailnet)
+  participant G as accept_signed (N2)
+  participant STORE as local inbox (N2)
+  participant B as Agent (recipient, N2)
+  A->>SND: send(to_fqid, body, kind)
+  SND->>SND: Envelope v1 (+nonce) → sign → SignedEnvelope
+  SND->>R: route(SignedEnvelope, peer)
+  R->>R: select rails (tailnet-http→funnel→nostr-S&F→ble/lora→telegram)
+  R->>RAIL: send(signed_bytes) [encrypt body if rail public]
+  RAIL->>IN: POST signed_bytes
+  IN->>G: sig → freshness → nonce-replay
+  G-->>IN: Envelope | reject 403/409/422
+  IN->>STORE: write recipient inbox
+  IN-->>RAIL: 200 ACK
+  RAIL-->>R: ok (else outbox retry → store-forward)
+  B->>STORE: consume → consciousness loop
+```
+
+### Component contracts (parallel-build units = swarm tasks)
+- **S1 `transports/http_s2s.py : HttpS2STransport(Transport)`** (model on `transports/tailscale.py`):
+  `name="https-s2s"`, REALTIME, priority above tailscale-tcp. `send(bytes, recipient)`: resolve
+  `inbox_url` from `discovery.PeerStore` peer `transports[].settings.inbox_url`; POST bytes
+  (`Content-Type: application/skcomms-signed-envelope+json`); 200→ok, 4xx→permanent, 5xx/timeout→retry.
+  `receive()`→`[]`. Register in `core.BUILTIN_TRANSPORTS` + `create_transport`.
+- **S2 `POST /api/v1/inbox`** (api.py): rename current GET `/inbox`→`/messages`; new POST → `SignedEnvelope.from_bytes`
+  → `federation.accept_signed(verifier, nonce_cache)` → write to recipient agent's file-transport inbox →
+  `{ok,id}`. Reject 403/409/422; per-sender rate-limit (`ratelimit.py`).
+- **S3 Router rail ordering** (`router.py`): `_select_transports` honors peer-advertised ordered rail list
+  ahead of global priority; federation default chain; store-forward (Nostr) fallback when all direct fail.
+- **S4 Canonical send path** (`core.py`): `send()` builds+signs Envelope v1 (capauth key) → router gets
+  `SignedEnvelope.to_bytes()`; outbox stores `SignedEnvelope`.
+- **S5 Peer addressing** (`discovery.py`/`peers.py`/api `POST /peers`): `PeerInfo.transports` carries
+  `{transport:"https-s2s",settings:{inbox_url}}` + ordered rails + pinned pubkey; `inbox_url_for(fqid)`;
+  migrate `file://` dead-ends.
+- **S6 Deploy** (both nodes): bind skcomms API to the **tailnet** (not 127.0.0.1; firewalld tailscale0=trusted);
+  systemd env; seed peer `inbox_url`s (`https://noroc2027.ts.net/api/v1/inbox`,
+  `https://cbrd21-laptop…ts.net/api/v1/inbox`).
+- **S7 Queue reconcile + migration scaffold** (`outbox.py`): one federation queue; entries store
+  `SignedEnvelope`; `migrate` old/corrupt `MessageEnvelope`→Envelope v1 (route deliverable, archive dead-ends).
+
+### Bolstered elements (arch hat)
+- **Per-rail confidentiality:** sign ALWAYS; **encrypt body on untrusted/public rails** (Nostr S&F→NIP-44;
+  tailnet/TLS rails already encrypt).
+- **Reliability/idempotency:** inbox 200=delivered; else exponential retry → store-forward; **nonce dedup
+  makes retry + S&F idempotent.**
+- **Groups:** fan-out one signed envelope per recipient node (shared-inbox later).
+- **Observability:** `metrics.py` per-rail counters (sent/ok/fail/retry, queue depth, inbox accept/reject
+  reason) at `/api/v1/status` + `/federation/status`.
+- **Back-pressure:** per-sender inbox rate-limit + max envelope size.
+
+```mermaid
+flowchart LR
+  App[Flutter skos OS app] -- MCP/SSE over Tailscale, capauth --> AP{{access plane}}
+  AP --> MSG[messages: S2S+Nostr]
+  AP --> MEM[memory hub: skmem-pg]
+  AP --> KN[knowledge+files: skos pg-index + file MCP]
+  AP --> MED[media: LiveKit]
+  MSG --- N1[(lumina@.158)] & N2[(jarvis@.41)]
+  MEM --- N1
+  KN --- N1 & N2
+  MED --- N1 & N2
+```
+
 ## 8. Build plan (coord epic `skfed-comms`)
 - **P0 Foundation/parity:** standardize both nodes on new `skcomms` (retire legacy `skcomm`), latest
   versions, GitHub-synced; skcomms API bound to tailnet (not localhost), reachable peer-to-peer.

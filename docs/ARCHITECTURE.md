@@ -360,3 +360,11 @@ when present and gracefully absent otherwise.
 ---
 
 Part of the **[SKWorld](https://skworld.io)** sovereign ecosystem · 🐧 smilinTux
+
+## Federation (SKFed Comms) — strategic build
+See **[federation-data-comms-architecture.md](federation-data-comms-architecture.md)** for the
+federated-node data-comms architecture: rail-agnostic canonical signed envelope + transport router +
+ActivityPub-style S2S + Nostr discovery/store-forward, owner-centric (no full replication), hub-spoke
+memory, skos knowledge plane, Flutter OS shell. Coord epic `c26e6fe9` (`skfed-comms`), P0–P9 + the
+detailed P1/P2 build spec (§9b) with sequence + topology diagrams. **The current file/legacy message
+path is in maintenance mode while this strategic path is deployed.**
