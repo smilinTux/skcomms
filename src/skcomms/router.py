@@ -17,7 +17,8 @@ import time
 from collections import OrderedDict
 from typing import Optional
 
-from .models import MessageEnvelope, RoutingMode
+from .envelope import SignedEnvelope
+from .models import MessageEnvelope, MessagePayload, RoutingConfig, RoutingMode
 from .transport import (
     DeliveryReport,
     SendResult,
@@ -196,6 +197,79 @@ class Router:
             self._enqueue_retry(envelope, envelope_bytes)
 
         return report
+
+    def route_bytes(
+        self,
+        envelope_bytes: bytes,
+        recipient: str,
+        *,
+        envelope_id: str = "",
+        sender: str = "skfed-router",
+        preferred_transports: Optional[list[str]] = None,
+        mode: Optional[RoutingMode] = None,
+    ) -> DeliveryReport:
+        """Best-effort deliver pre-serialized wire bytes to ``recipient``.
+
+        The federation send path: the caller supplies the EXACT wire bytes
+        (a :class:`~skcomms.envelope.SignedEnvelope`) and owns durability/retry
+        (the federation outbox is authoritative — see ``outbox.py``). This does
+        rail selection (peer-advertised order or the federation default chain)
+        → failover → store-and-forward fallback, and returns the report. Unlike
+        :meth:`route`, it does NOT enqueue to the router's own retry queue.
+
+        Args:
+            envelope_bytes: The exact bytes to put on the wire (e.g.
+                ``SignedEnvelope.to_bytes()``).
+            recipient: Recipient address used for rail resolution (fqid/name).
+            envelope_id: Stable id for dedup/reporting (the inner Envelope id).
+            sender: Sender address (informational; not on the wire).
+            preferred_transports: Peer-advertised ordered rail list.
+            mode: Routing mode override (default the router's default).
+
+        Returns:
+            DeliveryReport for this attempt.
+        """
+        mode = mode or self._default_mode
+        carrier = MessageEnvelope(
+            envelope_id=envelope_id or "",
+            sender=sender,
+            recipient=recipient,
+            payload=MessagePayload(content=""),
+            routing=RoutingConfig(mode=mode, preferred_transports=preferred_transports or []),
+        )
+        report = DeliveryReport(envelope_id=carrier.envelope_id, delivered=False)
+        candidates = self._select_transports(mode, carrier)
+        if not candidates:
+            logger.warning("No available rails for %s (mode=%s)", recipient, mode.value)
+            return report
+        report = self._route_failover(envelope_bytes, carrier, candidates, report)
+        if not report.delivered:
+            report = self._try_store_forward(envelope_bytes, carrier, candidates, report)
+        return report
+
+    def route_signed(
+        self,
+        signed: SignedEnvelope,
+        *,
+        preferred_transports: Optional[list[str]] = None,
+        mode: Optional[RoutingMode] = None,
+    ) -> DeliveryReport:
+        """Route a canonical :class:`SignedEnvelope` to its ``to_fqid``.
+
+        The signed envelope's own bytes go on the wire verbatim (so the remote
+        node's ``POST /inbox`` parses the same ``SignedEnvelope`` and verifies
+        it). Rail order comes from ``preferred_transports`` (peer-advertised) or
+        the federation default chain.
+        """
+        env = signed.envelope
+        return self.route_bytes(
+            signed.to_bytes(),
+            env.to_fqid,
+            envelope_id=env.id,
+            sender=env.from_fqid,
+            preferred_transports=preferred_transports,
+            mode=mode,
+        )
 
     def receive_all(self) -> list[bytes]:
         """Poll all transports for incoming envelopes.
