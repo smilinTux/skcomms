@@ -98,6 +98,17 @@ class EnvelopeCrypto:
         """
         return self._fingerprint
 
+    def envelope_signer(self):
+        """Return an :class:`~skcomms.signing.EnvelopeSigner` for Envelope v1.
+
+        Builds the canonical-envelope signer from this agent's loaded private
+        key — the federation send path signs the canonical ``SignedEnvelope``
+        with it (vs. the legacy ``sign_payload`` on ``MessageEnvelope``).
+        """
+        from .signing import EnvelopeSigner
+
+        return EnvelopeSigner(self._private_armor, self._passphrase)
+
     def encrypt_payload(
         self,
         envelope: MessageEnvelope,
