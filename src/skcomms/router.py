@@ -32,6 +32,23 @@ logger = logging.getLogger("skcomms.router")
 FAILURE_THRESHOLD = 3  # consecutive failures before cooldown
 COOLDOWN_SECONDS = 60.0  # seconds to skip a transport after repeated failures
 
+# Federation default rail chain (by transport name). Used to order candidate
+# transports when a peer advertises no explicit rail order. Rails not named
+# here fall to the back, ordered by their global priority.
+FEDERATION_DEFAULT_CHAIN = [
+    "https-s2s",
+    "tailscale",
+    "nostr",
+    "ble",
+    "lora",
+    "telegram",
+    "file",
+]
+
+# Designated store-and-forward fallback rail. Tried last, after every direct
+# rail has failed, before an envelope is handed to the retry queue.
+DEFAULT_STORE_FORWARD_TRANSPORT = "nostr"
+
 # Deduplication cache limit
 SEEN_IDS_MAX = 10_000
 
@@ -67,9 +84,14 @@ class Router:
         self,
         transports: Optional[list[Transport]] = None,
         default_mode: RoutingMode = RoutingMode.FAILOVER,
+        store_forward_transport: str = DEFAULT_STORE_FORWARD_TRANSPORT,
     ):
         self._transports: list[Transport] = transports or []
         self._default_mode = default_mode
+        # Name of the designated store-and-forward fallback rail. When all
+        # direct rails fail this rail is tried last (if available + not in
+        # cooldown) before the envelope is queued for retry.
+        self._store_forward_transport = store_forward_transport
         self._seen_ids: OrderedDict[str, float] = OrderedDict()
         self._seen_ttl = 7 * 24 * 3600  # 7 days
 
@@ -151,6 +173,13 @@ class Router:
             report = self._route_broadcast(envelope_bytes, envelope, candidates, report)
         else:
             report = self._route_failover(envelope_bytes, envelope, candidates, report)
+
+        # Store-and-forward fallback: when every direct rail failed, try the
+        # designated S&F rail (default "nostr") as a last resort before the
+        # envelope is queued for retry. Skipped if it was already a candidate
+        # (and thus already attempted) above.
+        if not report.delivered:
+            report = self._try_store_forward(envelope_bytes, envelope, candidates, report)
 
         if report.delivered:
             logger.info(
@@ -243,16 +272,27 @@ class Router:
         return (time.monotonic() - last_fail) < COOLDOWN_SECONDS
 
     def _select_transports(self, mode: RoutingMode, envelope: MessageEnvelope) -> list[Transport]:
-        """Filter and sort transports for the given routing mode.
+        """Filter and order transports for the given routing mode.
 
-        Transports in failure cooldown are excluded from candidates.
+        Ordering precedence (federation rail selection):
+        1. **Peer-advertised ordered rail list** — when the envelope carries
+           ``routing.preferred_transports``, that order is honored *strictly*.
+           The named rails lead, in exactly the order given; any remaining
+           available rails follow, ordered by the federation default chain.
+        2. **Federation default chain** — when the peer advertises no order,
+           rails are ordered by :data:`FEDERATION_DEFAULT_CHAIN` (by name),
+           with un-named rails appended by global priority.
+
+        Transports in failure cooldown (and, for stealth/speed modes, rails of
+        the wrong category) are excluded from candidates.
 
         Args:
             mode: The routing mode to apply.
-            envelope: The envelope being routed (for preferred transport hints).
+            envelope: The envelope being routed (carries the peer-advertised
+                ordered rail list in ``routing.preferred_transports``).
 
         Returns:
-            Sorted list of eligible, available transports.
+            Ordered list of eligible, available transports.
         """
         available = [
             t for t in self._transports if t.is_available() and not self._is_in_cooldown(t.name)
@@ -265,16 +305,44 @@ class Router:
 
         preferred = envelope.routing.preferred_transports
         if preferred:
-            # Reason: boost preferred transports to the front while keeping
-            # non-preferred as fallbacks in their natural priority order
-            preferred_set = set(preferred)
-            boosted = [t for t in available if t.name in preferred_set]
-            rest = [t for t in available if t.name not in preferred_set]
-            return sorted(boosted, key=lambda t: t.priority) + sorted(
-                rest, key=lambda t: t.priority
-            )
+            # Reason: respect the peer-advertised rail ORDER exactly — the peer
+            # knows which rails it is reachable on and in what preference. We do
+            # not re-sort the advertised rails by our own global priority.
+            by_name = {t.name: t for t in available}
+            ordered: list[Transport] = []
+            seen: set[str] = set()
+            for name in preferred:
+                t = by_name.get(name)
+                if t is not None and t.name not in seen:
+                    ordered.append(t)
+                    seen.add(t.name)
+            # Remaining available rails (not advertised) follow as fallbacks,
+            # ordered by the federation default chain.
+            rest = [t for t in available if t.name not in seen]
+            return ordered + self._order_by_default_chain(rest)
 
-        return sorted(available, key=lambda t: t.priority)
+        # No peer-advertised order → federation default chain.
+        return self._order_by_default_chain(available)
+
+    @staticmethod
+    def _order_by_default_chain(transports: list[Transport]) -> list[Transport]:
+        """Order transports by the federation default chain, then priority.
+
+        Rails named in :data:`FEDERATION_DEFAULT_CHAIN` lead, in chain order;
+        rails not in the chain follow, ordered by ascending global priority.
+
+        Args:
+            transports: The transports to order.
+
+        Returns:
+            A new, ordered list.
+        """
+        chain_index = {name: i for i, name in enumerate(FEDERATION_DEFAULT_CHAIN)}
+        in_chain = [t for t in transports if t.name in chain_index]
+        out_of_chain = [t for t in transports if t.name not in chain_index]
+        in_chain.sort(key=lambda t: chain_index[t.name])
+        out_of_chain.sort(key=lambda t: t.priority)
+        return in_chain + out_of_chain
 
     def _route_failover(
         self,
@@ -305,6 +373,57 @@ class Router:
             report.attempts.append(result)
             if result.success:
                 report.delivered = True
+        return report
+
+    def _try_store_forward(
+        self,
+        envelope_bytes: bytes,
+        envelope: MessageEnvelope,
+        candidates: list[Transport],
+        report: DeliveryReport,
+    ) -> DeliveryReport:
+        """Last-resort store-and-forward fallback after all direct rails fail.
+
+        Attempts delivery via the designated store-and-forward rail
+        (``self._store_forward_transport``, default "nostr"). The Nostr relay
+        rail holds the signed envelope for an offline/NAT'd recipient to pull
+        later — turning a hard failure into a deferred delivery.
+
+        The rail is tried only if it is registered, available, not in cooldown,
+        and was not already among the ``candidates`` attempted above (so we
+        never double-send on the same rail).
+
+        Args:
+            envelope_bytes: Serialized envelope to deliver.
+            envelope: The envelope being routed (for recipient).
+            candidates: The direct rails already attempted this route.
+            report: The delivery report to append the attempt to.
+
+        Returns:
+            The (possibly updated) delivery report.
+        """
+        sf_name = self._store_forward_transport
+        if not sf_name:
+            return report
+
+        # Don't re-attempt a rail that was already tried as a direct candidate.
+        already_tried = {t.name for t in candidates}
+        if sf_name in already_tried:
+            return report
+
+        sf = next((t for t in self._transports if t.name == sf_name), None)
+        if sf is None or not sf.is_available() or self._is_in_cooldown(sf.name):
+            return report
+
+        logger.info(
+            "All direct rails failed for %s — attempting store-and-forward via '%s'",
+            envelope.envelope_id[:8],
+            sf_name,
+        )
+        result = self._try_send(sf, envelope_bytes, envelope.recipient)
+        report.attempts.append(result)
+        if result.success:
+            report.delivered = True
         return report
 
     def _record_failure(self, transport_name: str) -> None:
