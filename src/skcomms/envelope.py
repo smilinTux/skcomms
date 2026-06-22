@@ -33,10 +33,14 @@ class Envelope(BaseModel):
     Attributes:
         version: Schema version, always ``"1"``.
         id: Per-message UUID (stable identity of this message).
+        nonce: Per-message anti-replay nonce. Distinct from ``id`` so a
+            message can be re-sent (same ``id``) while each transmission
+            carries a fresh nonce the receiver dedups against (SKFed S2S).
         from_fqid: Sender FQID (``<agent>@<operator>.<realm>``).
         to_fqid: Recipient FQID.
         created_at: UTC ISO-8601 timestamp.
-        content_type: MIME-ish content type of ``body`` (e.g. ``text/plain``).
+        content_type: MIME-ish content type of ``body`` (e.g. ``text/plain``);
+            this is the rail-agnostic "kind" of the message.
         body: The message payload (string).
         subject: Optional human-readable subject.
         thread_id: Optional conversation/thread grouping id.
@@ -46,6 +50,7 @@ class Envelope(BaseModel):
 
     version: str = "1"
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    nonce: str = Field(default_factory=lambda: uuid.uuid4().hex)
     from_fqid: str
     to_fqid: str
     created_at: str = Field(default_factory=_utc_now_iso)
