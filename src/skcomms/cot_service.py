@@ -102,7 +102,24 @@ async def main() -> None:
 
     sk = SKComms.from_config()
     fed_hook = federation_ingest(sk, from_fqid=fqid)
-    server = CotStreamServer(host=host, port=port, ingest=fed_hook)
+
+    # Mesh bridge holder: TCP-fabric CoT is multicast OUT to mesh devices (iTAK)
+    # so they see the rest of the net. Mesh-origin CoT is NOT re-meshed (no echo).
+    _mesh: dict[str, object] = {}
+
+    def mesh_out(cot):
+        m = _mesh.get("listener")
+        if m is not None:
+            try:
+                m.send_cot(cot)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def tcp_ingest(cot):
+        fed_hook(cot)   # federate to peer nodes
+        mesh_out(cot)   # bridge TCP fabric → mesh devices
+
+    server = CotStreamServer(host=host, port=port, ingest=tcp_ingest)
     await server.start()
     logger.info("CoT service up as %s on %s:%d (phone→federate + inbox→inject)", fqid, host, port)
 
@@ -115,6 +132,7 @@ async def main() -> None:
         def _ident_hook(cot, identity, fingerprint):
             logger.info("TLS CoT uid=%s attributed to device=%s (fp=%s)", cot.uid, identity, fingerprint)
             fed_hook(cot)
+            mesh_out(cot)   # bridge TLS clients (Androids, LUMINA) → mesh devices
 
         # Optional override: present a publicly-trusted server cert (e.g. a
         # `tailscale cert` Let's Encrypt cert) so strict clients (iTAK) trust us
@@ -138,14 +156,18 @@ async def main() -> None:
     # phone's mesh CoT is ingested + federated + shown to any TCP viewers.
     if os.environ.get("SKCOMMS_COT_MESH", "1") != "0":
         async def _mesh_event(cot):
-            fed_hook(cot)            # mesh CoT → federate to peers
-            await server.push(cot)   # → any plain-TCP viewers
+            # mesh device CoT → fabric: federate + show to TCP clients. Do NOT
+            # mesh_out (it came from mesh; re-sending would echo).
+            fed_hook(cot)
+            await server.push(cot)
             if tls_server is not None:
-                await tls_server.push(cot)  # → any TLS viewers
+                await tls_server.push(cot)
             logger.info("mesh CoT uid=%s callsign=%s pos=(%s,%s)", cot.uid, cot.callsign,
                         cot.point.lat, cot.point.lon)
+        mesh_iface = os.environ.get("SKCOMMS_COT_MESH_IFACE", "0.0.0.0")
         try:
-            await UdpMeshListener(on_event=_mesh_event).start()
+            _mesh["listener"] = await UdpMeshListener(on_event=_mesh_event, iface_ip=mesh_iface).start()
+            logger.info("mesh bridge active (iface=%s) — TCP fabric <-> mesh devices", mesh_iface)
         except Exception as exc:  # noqa: BLE001
             logger.warning("mesh listener not started: %s", exc)
 

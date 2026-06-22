@@ -410,8 +410,11 @@ class TlsCotStreamServer(CotStreamServer):
         return ent[1] if ent else None
 
 
-TAK_MESH_GROUP = "239.2.3.1"  # ATAK default "Mesh SA" multicast group
+TAK_MESH_GROUP = "239.2.3.1"      # ATAK "Mesh SA" group (positions/markers)
 TAK_MESH_PORT = 6969
+TAK_GEOCHAT_GROUP = "224.10.10.1"  # ATAK/iTAK GeoChat group (chat)
+TAK_GEOCHAT_PORT = 17012
+DEFAULT_MESH_GROUPS = [(TAK_MESH_GROUP, TAK_MESH_PORT), (TAK_GEOCHAT_GROUP, TAK_GEOCHAT_PORT)]
 
 
 class _MeshProtocol(asyncio.DatagramProtocol):
@@ -423,29 +426,36 @@ class _MeshProtocol(asyncio.DatagramProtocol):
 
 
 class UdpMeshListener:
-    """Listen on the ATAK mesh multicast group — no server/auth needed.
+    """Bridge to ATAK/iTAK **mesh mode** (no server/auth) over UDP multicast.
 
-    Mesh-mode ATAK (the default with "Mesh Network enabled") broadcasts CoT over
-    UDP multicast on the LAN. Joining that group lets a node ingest a phone's
-    position/chat/markers with zero phone-side config — but multicast does NOT
-    cross Tailscale, so the node must share the phone's WiFi/LAN.
+    Mesh-mode TAK broadcasts CoT over UDP multicast on the LAN: positions on the
+    SA group (239.2.3.1:6969), chat on the GeoChat group (224.10.10.1:17012).
+    This joins both to *ingest* a device's traffic, and can *send* CoT back out
+    so mesh devices see the rest of the fabric (TCP clients + agents). Multicast
+    stays on the LAN (doesn't cross Tailscale), so the node must share the WiFi.
 
     Args:
-        on_event: callback(CotEvent) for each decoded mesh CoT.
-        group/port: multicast group + port (ATAK defaults 239.2.3.1:6969).
+        on_event: callback(CotEvent) for each decoded inbound mesh CoT.
+        groups: list of (group, port) to join (default SA + GeoChat).
+        iface_ip: local interface IP for multicast join + send (the LAN IP);
+            "0.0.0.0" lets the kernel choose.
+        ttl: multicast TTL for outbound sends (1 = local subnet).
     """
 
     def __init__(
         self,
         *,
         on_event: Callable[[CotEvent], Optional[Awaitable[None]]],
-        group: str = TAK_MESH_GROUP,
-        port: int = TAK_MESH_PORT,
+        groups: Optional[list[tuple[str, int]]] = None,
+        iface_ip: str = "0.0.0.0",
+        ttl: int = 1,
     ) -> None:
         self._on_event = on_event
-        self._group = group
-        self._port = port
-        self._transport: Optional[asyncio.BaseTransport] = None
+        self._groups = groups or list(DEFAULT_MESH_GROUPS)
+        self._iface_ip = iface_ip
+        self._ttl = ttl
+        self._transports: list[asyncio.BaseTransport] = []
+        self._send_sock = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     async def start(self) -> "UdpMeshListener":
@@ -453,17 +463,47 @@ class UdpMeshListener:
         import struct
 
         self._loop = asyncio.get_running_loop()
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(("", self._port))
-        mreq = struct.pack("=4sl", socket.inet_aton(self._group), socket.INADDR_ANY)
-        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-        sock.setblocking(False)
-        self._transport, _ = await self._loop.create_datagram_endpoint(
-            lambda: _MeshProtocol(self._handle), sock=sock
-        )
-        logger.info("CoT mesh listener joined %s:%d", self._group, self._port)
+        if_addr = socket.inet_aton(self._iface_ip) if self._iface_ip != "0.0.0.0" else None
+        for group, port in self._groups:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+            except (AttributeError, OSError):
+                pass
+            sock.bind(("", port))
+            mreq = (struct.pack("=4s4s", socket.inet_aton(group), if_addr) if if_addr
+                    else struct.pack("=4sl", socket.inet_aton(group), socket.INADDR_ANY))
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+            sock.setblocking(False)
+            transport, _ = await self._loop.create_datagram_endpoint(
+                lambda: _MeshProtocol(self._handle), sock=sock
+            )
+            self._transports.append(transport)
+            logger.info("CoT mesh listener joined %s:%d", group, port)
+        # outbound multicast socket (send fabric CoT back to mesh devices)
+        self._send_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        self._send_sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, self._ttl)
+        # No loopback: our own sends must NOT come back into our listener (would
+        # echo fabric CoT + double-federate). Remote devices still receive them.
+        try:
+            self._send_sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_LOOP, 0)
+        except OSError:
+            pass
+        if if_addr:
+            self._send_sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_IF, if_addr)
         return self
+
+    def send_cot(self, cot: CotEvent) -> None:
+        """Multicast a CoT out to mesh devices (chat→GeoChat group, else SA)."""
+        if self._send_sock is None:
+            return
+        group, port = ((TAK_GEOCHAT_GROUP, TAK_GEOCHAT_PORT) if cot.is_chat
+                       else (TAK_MESH_GROUP, TAK_MESH_PORT))
+        try:
+            self._send_sock.sendto(to_cot(cot).encode("utf-8"), (group, port))
+        except OSError as exc:
+            logger.debug("mesh send failed: %s", exc)
 
     def _handle(self, data: bytes, addr: tuple) -> None:
         from .cot import parse_cot_datagram
@@ -477,8 +517,10 @@ class UdpMeshListener:
             asyncio.ensure_future(res)
 
     def stop(self) -> None:
-        if self._transport is not None:
-            self._transport.close()
+        for t in self._transports:
+            t.close()
+        if self._send_sock is not None:
+            self._send_sock.close()
 
 
 def _federation_peer_fqids() -> list[str]:
