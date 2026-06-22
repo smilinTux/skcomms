@@ -323,6 +323,8 @@ BUILTIN_TRANSPORTS: dict[str, str] = {
     "file": "skcomms.transports.file",
     "syncthing": "skcomms.transports.syncthing",
     "nostr": "skcomms.transports.nostr",
+    # SKFed P4 store-and-forward rail (resolves fqid→pubkey; router fallback).
+    "nostr-sf": "skcomms.store_forward",
     "websocket": "skcomms.transports.websocket",
     "tailscale": "skcomms.transports.tailscale",
     "https-s2s": "skcomms.transports.http_s2s",
@@ -406,6 +408,9 @@ class SKComms:
         instance = cls(config=config, router=router, crypto=crypto, keystore=keystore)
         instance._outbox.start()
         instance._retry_queue.start()
+        # SKFed P4: ensure the store-and-forward rail is registered + selected,
+        # and (config-gated) start the relay pull loop. Best-effort, non-fatal.
+        instance._init_store_forward()
         crypto_status = "enabled" if crypto else "disabled"
         logger.info(
             "SKComms initialized as '%s' with %d transports, crypto %s",
@@ -432,6 +437,45 @@ class SKComms:
             transport: A configured Transport instance.
         """
         self._router.register_transport(transport)
+
+    def _init_store_forward(self) -> None:
+        """Wire SKFed P4 store-and-forward: register the rail + start the puller.
+
+        Best-effort and non-fatal:
+          1. Register the ``nostr-sf`` :class:`StoreForwardTransport` rail (unless
+             already present) so ``Router._try_store_forward`` can use it as the
+             last-resort fallback when all direct rails fail.
+          2. Point the router's ``_store_forward_transport`` at ``nostr-sf``.
+          3. Start the relay pull loop (config-gated on
+             ``SKCOMMS_STORE_FORWARD_PULL`` + a resolvable Nostr secret).
+
+        Any failure (missing crypto deps, no key, no relays) is swallowed so S&F
+        can never take the engine down.
+        """
+        try:
+            from .store_forward import (
+                STORE_FORWARD_RAIL,
+                StoreForwardTransport,
+                start_pull_loop,
+            )
+
+            have = any(t.name == STORE_FORWARD_RAIL for t in self._router.transports)
+            if not have:
+                self._router.register_transport(StoreForwardTransport())
+            # Ensure the router selects the S&F rail (not the plain "nostr" DM rail).
+            self._router._store_forward_transport = STORE_FORWARD_RAIL
+
+            # Share the HTTP inbox's nonce cache for cross-rail idempotency.
+            nonce_cache = None
+            try:
+                from .api import _get_nonce_cache
+
+                nonce_cache = _get_nonce_cache()
+            except Exception:  # noqa: BLE001
+                nonce_cache = None
+            self._sf_pull_thread = start_pull_loop(nonce_cache=nonce_cache)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("store-forward init failed (non-fatal): %s", exc)
 
     def send_federated(
         self,
