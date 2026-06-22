@@ -22,7 +22,9 @@ import os
 from pathlib import Path
 
 from .cot import parse_cot
-from .cot_server import DEFAULT_COT_PORT, CotStreamServer, federation_ingest
+from .cot_server import (
+    DEFAULT_COT_PORT, CotStreamServer, UdpMeshListener, federation_ingest,
+)
 from .home import skcomms_home
 from .identity import resolve_self_identity
 
@@ -90,9 +92,24 @@ async def main() -> None:
     from .core import SKComms  # local import — avoids heavy import at module load
 
     sk = SKComms.from_config()
-    server = CotStreamServer(host=host, port=port, ingest=federation_ingest(sk, from_fqid=fqid))
+    fed_hook = federation_ingest(sk, from_fqid=fqid)
+    server = CotStreamServer(host=host, port=port, ingest=fed_hook)
     await server.start()
     logger.info("CoT service up as %s on %s:%d (phone→federate + inbox→inject)", fqid, host, port)
+
+    # Mesh-mode ATAK (no server/auth): join the multicast group on the LAN so a
+    # phone's mesh CoT is ingested + federated + shown to any TCP viewers.
+    if os.environ.get("SKCOMMS_COT_MESH", "1") != "0":
+        async def _mesh_event(cot):
+            fed_hook(cot)            # mesh CoT → federate to peers
+            await server.push(cot)   # → any TCP-connected viewers
+            logger.info("mesh CoT uid=%s callsign=%s pos=(%s,%s)", cot.uid, cot.callsign,
+                        cot.point.lat, cot.point.lon)
+        try:
+            await UdpMeshListener(on_event=_mesh_event).start()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("mesh listener not started: %s", exc)
+
     await _inbox_inject_loop(server)
 
 

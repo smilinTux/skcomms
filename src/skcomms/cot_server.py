@@ -164,6 +164,77 @@ class CotStreamServer:
         self._loop.call_soon_threadsafe(lambda: asyncio.ensure_future(self.push(cot)))
 
 
+TAK_MESH_GROUP = "239.2.3.1"  # ATAK default "Mesh SA" multicast group
+TAK_MESH_PORT = 6969
+
+
+class _MeshProtocol(asyncio.DatagramProtocol):
+    def __init__(self, on_datagram: Callable[[bytes, tuple], None]) -> None:
+        self._on_datagram = on_datagram
+
+    def datagram_received(self, data: bytes, addr: tuple) -> None:
+        self._on_datagram(data, addr)
+
+
+class UdpMeshListener:
+    """Listen on the ATAK mesh multicast group — no server/auth needed.
+
+    Mesh-mode ATAK (the default with "Mesh Network enabled") broadcasts CoT over
+    UDP multicast on the LAN. Joining that group lets a node ingest a phone's
+    position/chat/markers with zero phone-side config — but multicast does NOT
+    cross Tailscale, so the node must share the phone's WiFi/LAN.
+
+    Args:
+        on_event: callback(CotEvent) for each decoded mesh CoT.
+        group/port: multicast group + port (ATAK defaults 239.2.3.1:6969).
+    """
+
+    def __init__(
+        self,
+        *,
+        on_event: Callable[[CotEvent], Optional[Awaitable[None]]],
+        group: str = TAK_MESH_GROUP,
+        port: int = TAK_MESH_PORT,
+    ) -> None:
+        self._on_event = on_event
+        self._group = group
+        self._port = port
+        self._transport: Optional[asyncio.BaseTransport] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    async def start(self) -> "UdpMeshListener":
+        import socket
+        import struct
+
+        self._loop = asyncio.get_running_loop()
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind(("", self._port))
+        mreq = struct.pack("=4sl", socket.inet_aton(self._group), socket.INADDR_ANY)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+        sock.setblocking(False)
+        self._transport, _ = await self._loop.create_datagram_endpoint(
+            lambda: _MeshProtocol(self._handle), sock=sock
+        )
+        logger.info("CoT mesh listener joined %s:%d", self._group, self._port)
+        return self
+
+    def _handle(self, data: bytes, addr: tuple) -> None:
+        from .cot import parse_cot_datagram
+
+        cot = parse_cot_datagram(data)
+        if cot is None:
+            logger.debug("undecodable mesh datagram from %s (%d bytes)", addr, len(data))
+            return
+        res = self._on_event(cot)
+        if asyncio.iscoroutine(res):
+            asyncio.ensure_future(res)
+
+    def stop(self) -> None:
+        if self._transport is not None:
+            self._transport.close()
+
+
 def _federation_peer_fqids() -> list[str]:
     """Default peer set for CoT fan-out: federation peers with an inbox_url."""
     try:
