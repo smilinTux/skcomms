@@ -254,13 +254,13 @@ def make_geochat(
     pt = point or CotPoint()
     esc = _xml_escape(text)
     cs = _xml_escape(sender_callsign)
+    ts = _utc_iso()
     detail = (
         f'<__chat parent="RootContactGroup" groupOwner="false" messageId="{mid}" '
         f'chatroom="{_xml_escape(room)}" id="{_xml_escape(room_id)}" senderCallsign="{cs}">'
         f'<chatgrp uid0="{sender_uid}" uid1="{room_id}" id="{_xml_escape(room_id)}"/></__chat>'
         f'<link uid="{sender_uid}" type="a-f-G-U-C" relation="p-p"/>'
-        f'<remarks source="BAO.F.SKFed.{sender_uid}" to="{_xml_escape(room_id)}">{esc}</remarks>'
-        f'<__serverdestination destinations="{_xml_escape(room_id)}"/>'
+        f'<remarks source="BAO.F.SKFed.{sender_uid}" to="{_xml_escape(room_id)}" time="{ts}">{esc}</remarks>'
     )
     return CotEvent(
         uid=f"GeoChat.{sender_uid}.{room_id}.{mid}",
