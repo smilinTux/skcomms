@@ -47,8 +47,13 @@ FEDERATION_DEFAULT_CHAIN = [
 ]
 
 # Designated store-and-forward fallback rail. Tried last, after every direct
-# rail has failed, before an envelope is handed to the retry queue.
-DEFAULT_STORE_FORWARD_TRANSPORT = "nostr"
+# rail has failed, before an envelope is handed to the retry queue. This is the
+# SKFed P4 Nostr-relay S&F rail (``skcomms.store_forward.StoreForwardTransport``,
+# name ``"nostr-sf"``): it resolves the recipient fqid→Nostr pubkey, encrypts the
+# signed envelope to that pubkey (untrusted public relay), and publishes it for
+# the offline recipient to pull. Excluded from DIRECT candidate selection — it is
+# only ever invoked by ``_try_store_forward``.
+DEFAULT_STORE_FORWARD_TRANSPORT = "nostr-sf"
 
 # Deduplication cache limit
 SEEN_IDS_MAX = 10_000
@@ -160,17 +165,17 @@ class Router:
         report = DeliveryReport(envelope_id=envelope.envelope_id, delivered=False)
 
         candidates = self._select_transports(mode, envelope)
+        envelope_bytes = envelope.to_bytes()
+
         if not candidates:
+            # No DIRECT rails — fall through to the store-and-forward fallback
+            # (and the retry queue) rather than giving up immediately.
             logger.warning(
-                "No available transports for envelope %s (mode=%s)",
+                "No direct transports for envelope %s (mode=%s)",
                 envelope.envelope_id[:8],
                 mode.value,
             )
-            return report
-
-        envelope_bytes = envelope.to_bytes()
-
-        if mode == RoutingMode.BROADCAST:
+        elif mode == RoutingMode.BROADCAST:
             report = self._route_broadcast(envelope_bytes, envelope, candidates, report)
         else:
             report = self._route_failover(envelope_bytes, envelope, candidates, report)
@@ -240,9 +245,12 @@ class Router:
         report = DeliveryReport(envelope_id=carrier.envelope_id, delivered=False)
         candidates = self._select_transports(mode, carrier)
         if not candidates:
-            logger.warning("No available rails for %s (mode=%s)", recipient, mode.value)
-            return report
-        report = self._route_failover(envelope_bytes, carrier, candidates, report)
+            # No DIRECT rails — but the store-and-forward fallback may still be
+            # able to defer the envelope (offline recipient), so don't give up
+            # before trying it.
+            logger.warning("No direct rails for %s (mode=%s)", recipient, mode.value)
+        else:
+            report = self._route_failover(envelope_bytes, carrier, candidates, report)
         if not report.delivered:
             report = self._try_store_forward(envelope_bytes, carrier, candidates, report)
         return report
@@ -369,7 +377,13 @@ class Router:
             Ordered list of eligible, available transports.
         """
         available = [
-            t for t in self._transports if t.is_available() and not self._is_in_cooldown(t.name)
+            t
+            for t in self._transports
+            if t.is_available()
+            and not self._is_in_cooldown(t.name)
+            # The designated store-and-forward rail is NEVER a direct candidate;
+            # it is reserved for the _try_store_forward last-resort fallback.
+            and t.name != self._store_forward_transport
         ]
 
         if mode == RoutingMode.STEALTH:
@@ -706,7 +720,11 @@ class Router:
     def _retry_send(self, envelope_bytes: bytes, recipient: str, mode: RoutingMode) -> bool:
         """Try to deliver envelope bytes via available transports (failover order)."""
         available = [
-            t for t in self._transports if t.is_available() and not self._is_in_cooldown(t.name)
+            t
+            for t in self._transports
+            if t.is_available()
+            and not self._is_in_cooldown(t.name)
+            and t.name != self._store_forward_transport
         ]
         if mode == RoutingMode.STEALTH:
             available = [t for t in available if t.category in self.STEALTH_CATEGORIES]
@@ -717,6 +735,13 @@ class Router:
         for transport in available:
             result = self._try_send(transport, envelope_bytes, recipient)
             if result.success:
+                return True
+        # Last-resort store-and-forward for retry-queue entries too.
+        sf = next(
+            (t for t in self._transports if t.name == self._store_forward_transport), None
+        )
+        if sf is not None and sf.is_available() and not self._is_in_cooldown(sf.name):
+            if self._try_send(sf, envelope_bytes, recipient).success:
                 return True
         return False
 
