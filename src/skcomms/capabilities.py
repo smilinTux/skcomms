@@ -87,26 +87,59 @@ _TRANSPORT_CATALOG: list[dict] = [
 # Co-resident SK services that back higher-level capabilities. These are NOT
 # skcomms transports — they are sibling daemons we can cheaply probe so the
 # node can honestly advertise voice/video/access-plane/geo availability.
-# (host, port) probed when probe=True.
-_SERVICE_PROBES: dict[str, tuple[str, int]] = {
-    "livekit": ("127.0.0.1", 7880),  # SFU — backs voice/video
-    "nostr-relay": ("127.0.0.1", 7447),  # discovery relay — backs federation
-    "sk-access": ("127.0.0.1", 9386),  # access plane
-    "cot": ("127.0.0.1", 8087),  # CoT/TAK service — backs geo
+# Only the PORT matters: many of these bind the node's tailnet IP (not
+# loopback), so we probe loopback AND the detected tailnet IP (see
+# _probe_hosts) and report up if EITHER accepts.
+_SERVICE_PROBES: dict[str, int] = {
+    "livekit": 7880,  # SFU — backs voice/video
+    "nostr-relay": 7447,  # discovery relay — backs federation
+    "sk-access": 9386,  # access plane
+    "cot": 8087,  # CoT/TAK service — backs geo
 }
 
 
-def _tcp_probe(host: str, port: int, timeout: float = 0.35) -> bool:
-    """Return True iff a TCP connect to (host, port) succeeds quickly.
+def _tailnet_ip() -> str | None:
+    """Best-effort: this node's tailscale (100.64.0.0/10) IPv4, or None.
+
+    Uses a connect-less UDP socket toward the tailscale MagicDNS address so the
+    kernel picks the source IP it would use to reach the tailnet — no packets
+    sent, no subprocess. Tailnet services bind this, not loopback.
+    """
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("100.100.100.100", 80))
+            ip = s.getsockname()[0]
+        finally:
+            s.close()
+        return ip if ip.startswith("100.") else None
+    except OSError:
+        return None
+
+
+def _probe_hosts() -> list[str]:
+    """Candidate hosts for a service probe: loopback + the tailnet IP."""
+    hosts = ["127.0.0.1"]
+    tip = _tailnet_ip()
+    if tip and tip not in hosts:
+        hosts.append(tip)
+    return hosts
+
+
+def _tcp_probe(port: int, hosts: list[str] | None = None, timeout: float = 0.35) -> bool:
+    """Return True iff a TCP connect to (host, port) succeeds on ANY candidate
+    host (loopback or the tailnet IP — services may bind either).
 
     A cheap liveness signal — does not speak any protocol, just confirms a
     listener is accepting connections. Kept short so the endpoint stays snappy.
     """
-    try:
-        with socket.create_connection((host, port), timeout=timeout):
-            return True
-    except OSError:
-        return False
+    for host in (hosts or _probe_hosts()):
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def _registry_status(transport) -> str:
@@ -246,8 +279,9 @@ def build_capabilities(skcomms=None, *, probe: bool = True) -> dict:
     # These upgrade derived service availability beyond pure transport status.
     probe_status: dict[str, str] = {}
     if probe:
-        for svc, (host, port) in _SERVICE_PROBES.items():
-            probe_status[svc] = UP if _tcp_probe(host, port) else DOWN
+        hosts = _probe_hosts()  # loopback + tailnet IP, computed once
+        for svc, port in _SERVICE_PROBES.items():
+            probe_status[svc] = UP if _tcp_probe(port, hosts) else DOWN
     else:
         probe_status = {svc: CONFIGURED for svc in _SERVICE_PROBES}
 
