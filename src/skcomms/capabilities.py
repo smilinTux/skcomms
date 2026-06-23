@@ -97,6 +97,15 @@ _SERVICE_PROBES: dict[str, int] = {
     "cot": 8087,  # CoT/TAK service — backs geo
 }
 
+# Transports whose rail is "up" when their broker/server infrastructure is
+# reachable (like services): webrtc + websocket need the signaling broker to
+# establish connections. If the broker is live, the rail is available even
+# though this API process isn't holding an active peer connection.
+_TRANSPORT_PROBES: dict[str, int] = {
+    "webrtc": 9390,  # WebRTC signaling broker (skcomms-signaling-broker)
+    "websocket": 9390,  # same broker also serves the ws rail
+}
+
 
 def _tailnet_ip() -> str | None:
     """Best-effort: this node's tailscale (100.64.0.0/10) IPv4, or None.
@@ -263,6 +272,13 @@ def build_capabilities(skcomms=None, *, probe: bool = True) -> dict:
             status = UNCONFIGURED
         else:
             status = UNCONFIGURED
+
+        # Rail-infrastructure probe: webrtc/websocket are "up" when their
+        # signaling broker is live + reachable (the rail can establish
+        # connections), even if this process holds no active peer right now.
+        if probe and entry["id"] in _TRANSPORT_PROBES and status != UP:
+            if _tcp_probe(_TRANSPORT_PROBES[entry["id"]]):
+                status = UP
 
         rec = {
             "id": entry["id"],
