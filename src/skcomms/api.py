@@ -565,6 +565,23 @@ async def get_status():
     return comm.status()
 
 
+@app.get("/api/v1/capabilities", tags=["status"])
+async def get_capabilities():
+    """Advertise which transports + services this deployment actually has.
+
+    Returns an honest, deployment-specific capability document
+    (``node`` / ``transports`` / ``services``). Status is derived from the
+    loaded config + live transport registry, with cheap TCP probes for
+    co-resident services (LiveKit / Nostr relay / sk-access / CoT).
+
+    Returns:
+        Dict shaped as ``{"node": {...}, "transports": [...], "services": [...]}``.
+    """
+    from .capabilities import build_capabilities
+
+    return build_capabilities(get_skcomms())
+
+
 class AccessTokenRequest(BaseModel):
     """Request to mint a capauth token for a single sk-access tool call.
 
