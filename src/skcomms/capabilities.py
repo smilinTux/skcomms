@@ -27,6 +27,11 @@ Services (text, voice, video, file-transfer, data-streaming, federation,
 access-plane, geo-cot) are **derived** from the status of the transports /
 co-resident services they ride on — never asserted independently.
 
+The document also carries a top-level ``api`` integer (daemon API version,
+for client ``minDaemonApi`` gating) and an additive ``modules`` block — the
+module ids this node wants surfaced (operator policy). Both are additive and
+backward-compatible; older clients ignore them.
+
 Public API:
     build_capabilities(skcomms=None, *, probe=True) -> dict
 """
@@ -40,6 +45,12 @@ from typing import Optional
 from .cluster import get_operator, get_realm
 
 logger = logging.getLogger("skcomms.capabilities")
+
+# Daemon API version. Bump when the capability/discovery contract changes in a
+# way a client must gate on (module ``minDaemonApi`` checks this). Additive
+# additions (new optional keys) do NOT require a bump; structural/semantic
+# changes do.
+API_VERSION = 1
 
 # Status constants — keep in sync with the app's status-dot mapping.
 UP = "up"
@@ -105,6 +116,28 @@ _TRANSPORT_PROBES: dict[str, int] = {
     "webrtc": 9390,  # WebRTC signaling broker (skcomms-signaling-broker)
     "websocket": 9390,  # same broker also serves the ws rail
 }
+
+
+# Module ids this node backs / wants surfaced in its client (the additive
+# ``modules`` hint block). This is OPERATOR POLICY — which sub-apps a deployment
+# ships — not a security boundary; the client still applies capability-gating on
+# top. The catalog mirrors the Flutter registry's module ids. A module whose
+# backing service is universally unconfigured here is still listed (the client
+# greys it with a reason rather than hiding it) — so the default is "advertise
+# the standard suite". Deployments can override via config later.
+_MODULE_HINTS: list[str] = [
+    "chats",
+    "spaces",
+    "activity",
+    "profile",
+    "skmap",
+    "cluster",
+    "skos-files",
+    "skos-control",
+    "coord",
+    "recordings",
+    "groups",
+]
 
 
 def _tailnet_ip() -> str | None:
@@ -349,4 +382,10 @@ def build_capabilities(skcomms=None, *, probe: bool = True) -> dict:
         },
     ]
 
-    return {"node": node, "transports": transports, "services": services}
+    return {
+        "api": API_VERSION,
+        "node": node,
+        "transports": transports,
+        "services": services,
+        "modules": list(_MODULE_HINTS),
+    }

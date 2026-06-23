@@ -12,6 +12,7 @@ disabled so no sockets are opened. The headline cases:
 from __future__ import annotations
 
 from skcomms.capabilities import (
+    API_VERSION,
     CONFIGURED,
     UNCONFIGURED,
     UP,
@@ -51,7 +52,7 @@ def _build_with_file_only(tmp_path) -> dict:
 
 def test_shape(tmp_path):
     doc = _build_with_file_only(tmp_path)
-    assert set(doc.keys()) == {"node", "transports", "services"}
+    assert set(doc.keys()) == {"api", "node", "transports", "services", "modules"}
 
     node = doc["node"]
     assert set(node.keys()) >= {"id", "label", "host"}
@@ -137,7 +138,7 @@ def test_no_skcomms_returns_wellformed_document():
     """With ``skcomms=None`` the helper self-loads from config and still returns
     a well-formed doc (statuses depend on the running node's config)."""
     doc = build_capabilities(skcomms=None, probe=False)
-    assert set(doc.keys()) == {"node", "transports", "services"}
+    assert set(doc.keys()) == {"api", "node", "transports", "services", "modules"}
     valid = {"up", "configured", "degraded", "down", "unconfigured"}
     assert len(doc["transports"]) == 10
     for t in doc["transports"]:
@@ -153,3 +154,27 @@ def test_explicit_empty_engine_all_unconfigured():
     doc = build_capabilities(comm, probe=False)
     for t in doc["transports"]:
         assert t["status"] == UNCONFIGURED
+
+
+def test_api_and_modules_block(tmp_path):
+    """The doc carries an integer ``api`` version and a ``modules`` hint list.
+
+    Both are additive (backward-compatible) — they enable client-side
+    ``minDaemonApi`` gating and operator-policy module surfacing without
+    restructuring the existing transports/services arrays.
+    """
+    doc = _build_with_file_only(tmp_path)
+
+    # api: an integer, matching the module's declared version.
+    assert isinstance(doc["api"], int)
+    assert doc["api"] == API_VERSION
+
+    # modules: a list of string ids including the skmap pilot + core surfaces.
+    assert isinstance(doc["modules"], list)
+    assert all(isinstance(m, str) for m in doc["modules"])
+    assert "skmap" in doc["modules"]
+    assert "chats" in doc["modules"]
+
+    # Additive: the existing arrays are untouched and still present.
+    assert isinstance(doc["transports"], list) and doc["transports"]
+    assert isinstance(doc["services"], list) and doc["services"]
