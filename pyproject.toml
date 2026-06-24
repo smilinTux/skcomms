@@ -55,6 +55,15 @@ crypto = [
     "capauth>=0.1.0",
     "pgpy>=0.6.0",
 ]
+pqc = [
+    # Hybrid post-quantum KEM (PQC-MIGRATION Q1): X25519 + ML-KEM-768.
+    # liboqs-python binds liboqs (FIPS 203 ML-KEM). It will build liboqs from
+    # source unless a prebuilt shared lib is reachable — set OQS_INSTALL_PATH
+    # (or SK_PQC_LIBOQS) to e.g. ~/.local so it uses ~/.local/lib/liboqs.so.
+    # Install: pip install "skcomms[pqc]"
+    "liboqs-python>=0.12",
+    "cryptography>=42.0,<44.0",
+]
 nostr = [
     "websockets>=12.0",
     "cryptography>=42.0,<44.0",
