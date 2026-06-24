@@ -66,9 +66,22 @@ def test_registry_default_sig_suite_is_classical():
     assert not suite.is_quantum_resistant
 
 
+# The Q0 honesty gate said *no* active suite may be hybrid/pq. Q1 (Phase 1)
+# relaxes that for exactly one entry: the verified ``x25519-mlkem768`` KEM
+# *primitive* (skcomms.pqkem) which round-trips and matches the sk_pqc
+# cross-impl vector. It is "active" only in the sense that the primitive is real
+# and usable — it is NOT yet wired into any wire surface (that is Q2/Q3).
+_Q1_ACTIVE_HYBRID_PRIMITIVES = {"x25519-mlkem768"}
+
+
 def test_registry_active_suites_are_never_hybrid_or_pq():
-    """Q0 honesty gate: nothing wired into running code may be hybrid/pq."""
+    """Honesty gate: only the verified (still-unwired) Q1 KEM primitive may be
+    an active hybrid suite; everything else active stays classical/symmetric."""
     for suite in active_suites():
+        if suite.suite_id in _Q1_ACTIVE_HYBRID_PRIMITIVES:
+            # Allowed: verified primitive, not yet wired into envelope/group.
+            assert suite.status == SuiteStatus.HYBRID_PQ
+            continue
         assert suite.status in (SuiteStatus.CLASSICAL, SuiteStatus.SYMMETRIC), (
             f"{suite.suite_id} is active but status={suite.status}"
         )

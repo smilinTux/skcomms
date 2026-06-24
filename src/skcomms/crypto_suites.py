@@ -191,6 +191,31 @@ def _seed() -> None:
             "quantum-acceptable. Do not migrate.",
             active=True,
         ),
+        # ---- ACTIVE hybrid-PQ KEM (Phase 1 / Q1 — LIVE primitive) -----------
+        # The verified hybrid KEM primitive shipped in ``skcomms.pqkem`` /
+        # ``skcomms.pqkem_backend`` (X25519 + ML-KEM-768, HKDF-SHA256 combiner).
+        # It is byte-for-byte interoperable with the sk_pqc Dart package
+        # (cross-impl vector). ACTIVE because the primitive round-trips and
+        # matches the cross-impl KAT — but NOTE it is *not yet wired* into
+        # group.py / envelope.py (that is Q2/Q3). "active" here means the
+        # primitive is real and usable, not that any surface has migrated.
+        CryptoSuite(
+            suite_id="x25519-mlkem768",
+            kind=SuiteKind.KEM,
+            status=SuiteStatus.HYBRID_PQ,
+            primitives=(
+                "X25519 (ephemeral-static DHKEM)",
+                "ML-KEM-768 (FIPS 203, liboqs)",
+                "HKDF-SHA256 concat-KDF combiner",
+            ),
+            fips_refs=("FIPS 203", "RFC 7748", "RFC 5869"),
+            description="LIVE hybrid X25519 || ML-KEM-768 key-encapsulation "
+            "primitive (skcomms.pqkem). Secret unless BOTH primitives break. "
+            "Cross-impl interoperable with sk_pqc (Dart). Verified primitive "
+            "only — NOT yet wired into envelope/group (Q2/Q3).",
+            active=True,
+            replaces="x25519-pgp-wrap-v1",
+        ),
         # ---- Planned hybrid-PQ suites (NOT active — Phase 1/2 targets) ------
         CryptoSuite(
             suite_id="x25519-mlkem768-v2",
