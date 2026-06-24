@@ -95,6 +95,13 @@ class Envelope(BaseModel):
         return cls.model_validate_json(data)
 
 
+# Default classical signature suite id (PQC Q0 crypto-agility scaffolding).
+# Kept as a module constant so deserializing an envelope never requires the
+# crypto_suites registry to be importable. The canonical definition of this id
+# lives in :mod:`skcomms.crypto_suites` (DEFAULT_SIG_SUITE).
+CLASSICAL_SIG_SUITE = "ed25519-v1"
+
+
 class SignedEnvelope(BaseModel):
     """An :class:`Envelope` plus a PGP detached signature.
 
@@ -107,6 +114,15 @@ class SignedEnvelope(BaseModel):
         signer_fingerprint: 40-char hex fingerprint of the signing key.
         signed_at: UTC ISO-8601 timestamp of signing.
         content_hash: SHA-256 hex of the signed canonical bytes.
+        sig_suite: Machine-readable signature cipher-suite id (PQC Q0
+            crypto-agility). Defaults to the current classical suite
+            (``"ed25519-v1"``) so older envelopes serialized *without* this
+            field still parse and are correctly described as classical. The id
+            resolves against :mod:`skcomms.crypto_suites`; the registry is the
+            single source of truth for what it means and whether it is
+            quantum-resistant. Phase 0 changes **no crypto** — this field only
+            makes the object self-describe its suite for future non-breaking
+            swaps (e.g. ``"mldsa65-ed25519-v2"`` in Phase 2).
     """
 
     envelope: Envelope
@@ -114,6 +130,7 @@ class SignedEnvelope(BaseModel):
     signer_fingerprint: str = ""
     signed_at: str = Field(default_factory=_utc_now_iso)
     content_hash: str = ""
+    sig_suite: str = CLASSICAL_SIG_SUITE
 
     @property
     def is_signed(self) -> bool:

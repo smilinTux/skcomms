@@ -27,6 +27,15 @@ from .models import (
     RoutingConfig,
     RoutingMode,
 )
+from .crypto_suites import (
+    CryptoSuite,
+    SuiteKind,
+    SuiteStatus,
+    all_suites,
+    get_suite,
+    is_quantum_resistant,
+    suite_status,
+)
 from .envelope import Envelope, SignedEnvelope
 from .signing import EnvelopeSigner, EnvelopeVerifier, VerificationResult
 from .transport import HealthStatus, SendResult, Transport, TransportError, TransportStatus
@@ -53,6 +62,14 @@ __all__ = [
     "EnvelopeSigner",
     "EnvelopeVerifier",
     "VerificationResult",
+    # Crypto-agility suite registry (PQC Q0)
+    "CryptoSuite",
+    "SuiteKind",
+    "SuiteStatus",
+    "all_suites",
+    "get_suite",
+    "suite_status",
+    "is_quantum_resistant",
     # FQID / realm layer (stubs — implementations pending)
     # envelope, realm, identity, cluster importable directly
 ]
