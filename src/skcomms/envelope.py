@@ -101,6 +101,13 @@ class Envelope(BaseModel):
 # lives in :mod:`skcomms.crypto_suites` (DEFAULT_SIG_SUITE).
 CLASSICAL_SIG_SUITE = "ed25519-v1"
 
+# Hybrid post-quantum signature suite id (PQC Q7 / Phase 2). When
+# ``SignedEnvelope.sig_suite`` is this value the ``signature`` field carries a
+# base64 ``skcomms.pqsig`` composite (Ed25519 + ML-DSA-65, FIPS 204) and the
+# hybrid public-key fields below are populated. The canonical definition lives
+# in :mod:`skcomms.crypto_suites` (suite ``mldsa65-ed25519-v2``).
+HYBRID_SIG_SUITE = "mldsa65-ed25519-v2"
+
 
 class SignedEnvelope(BaseModel):
     """An :class:`Envelope` plus a PGP detached signature.
@@ -123,6 +130,13 @@ class SignedEnvelope(BaseModel):
             quantum-resistant. Phase 0 changes **no crypto** — this field only
             makes the object self-describe its suite for future non-breaking
             swaps (e.g. ``"mldsa65-ed25519-v2"`` in Phase 2).
+        hybrid_ed25519_pub: base64 32-byte Ed25519 public key for the hybrid
+            signature's classical leg (Phase 2 / Q7). ``None`` for classical
+            envelopes — additive, back-compatible.
+        hybrid_mldsa_pub: base64 1952-byte ML-DSA-65 (FIPS 204) public key for
+            the hybrid signature's PQ leg. ``None`` for classical envelopes.
+            When both hybrid_* fields are set and ``sig_suite`` is the hybrid
+            suite, ``signature`` carries a base64 ``skcomms.pqsig`` composite.
     """
 
     envelope: Envelope
@@ -131,11 +145,28 @@ class SignedEnvelope(BaseModel):
     signed_at: str = Field(default_factory=_utc_now_iso)
     content_hash: str = ""
     sig_suite: str = CLASSICAL_SIG_SUITE
+    hybrid_ed25519_pub: Optional[str] = None
+    hybrid_mldsa_pub: Optional[str] = None
 
     @property
     def is_signed(self) -> bool:
         """Whether a signature is present."""
         return bool(self.signature)
+
+    @property
+    def is_hybrid(self) -> bool:
+        """Whether this envelope carries a hybrid post-quantum signature.
+
+        True iff ``sig_suite`` selects the hybrid suite *and* both hybrid
+        public-key fields are populated (so a verifier can check both legs).
+        Existing classical envelopes (no ``sig_suite`` or ``ed25519-v1``) are
+        never reported hybrid — back-compat is byte-for-byte.
+        """
+        return (
+            self.sig_suite == HYBRID_SIG_SUITE
+            and bool(self.hybrid_ed25519_pub)
+            and bool(self.hybrid_mldsa_pub)
+        )
 
     def to_bytes(self) -> bytes:
         """Serialize the signed envelope to pretty UTF-8 JSON bytes."""

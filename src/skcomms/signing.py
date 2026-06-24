@@ -24,6 +24,7 @@ Usage:
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import hashlib
 import json
@@ -33,7 +34,12 @@ from typing import Optional, Union
 
 from pydantic import BaseModel, Field
 
-from .envelope import Envelope, SignedEnvelope
+from .envelope import (
+    CLASSICAL_SIG_SUITE,
+    HYBRID_SIG_SUITE,
+    Envelope,
+    SignedEnvelope,
+)
 from .models import MessageEnvelope
 
 logger = logging.getLogger("skcomms.signing")
@@ -142,6 +148,87 @@ class EnvelopeSigner:
 
 
 # ---------------------------------------------------------------------------
+# Hybrid post-quantum signer (PQC Q7 / Phase 2) — ADDITIVE, opt-in
+# ---------------------------------------------------------------------------
+
+
+class HybridEnvelopeSigner:
+    """Signs Envelope v1 with a **hybrid Ed25519 + ML-DSA-65** composite.
+
+    This is the Phase 2 / Q7 opt-in signer. It composes the vetted
+    :mod:`skcomms.pqsig` primitive (FIPS 204 ML-DSA-65 + RFC 8032 Ed25519) over
+    the SAME ``Envelope.canonical_bytes()`` the classical signer uses, so the
+    signed transcript is identical — only the signature scheme changes.
+
+    The ML-DSA-65 keypair is a **per-signer key, SEPARATE from the PGP identity
+    key** (generated/persisted by ``pqsig.load_or_create_signer_keypair`` or
+    passed in). This signer NEVER touches the PGP root key; the classical
+    Ed25519 leg here is the hybrid keypair's own Ed25519 half. The resulting
+    :class:`~skcomms.envelope.SignedEnvelope` carries:
+
+    * ``sig_suite = "mldsa65-ed25519-v2"`` (selects the hybrid verify path),
+    * ``signature`` = base64 of the :func:`skcomms.pqsig.hybrid_sign` composite,
+    * ``hybrid_ed25519_pub`` / ``hybrid_mldsa_pub`` = base64 public keys so a
+      verifier can check both legs,
+    * ``content_hash`` = SHA-256 of the canonical bytes (unchanged tamper
+      pre-check).
+
+    Args:
+        keypair: A :class:`skcomms.pqsig.HybridSigKeypair`. If ``None``, one is
+            loaded-or-created for ``signer_id`` via
+            :func:`skcomms.pqsig.load_or_create_signer_keypair`.
+        signer_id: Stable id used for key persistence + as the
+            ``signer_fingerprint`` label (defaults to the ML-DSA pubkey hash).
+    """
+
+    def __init__(self, keypair=None, signer_id: str = "") -> None:
+        from . import pqsig
+
+        self._pqsig = pqsig
+        if keypair is None:
+            if not signer_id:
+                raise ValueError(
+                    "HybridEnvelopeSigner needs a keypair or a signer_id"
+                )
+            keypair = pqsig.load_or_create_signer_keypair(signer_id)
+        self._kp = keypair
+        # A stable signer label: caller id if given, else a short hash of the
+        # ML-DSA public key (so the verifier can index it).
+        self._signer_id = signer_id or (
+            "mldsa65:" + hashlib.sha256(keypair.mldsa_pub).hexdigest()[:32]
+        )
+
+    @property
+    def signer_id(self) -> str:
+        """The stable signer label recorded as ``signer_fingerprint``."""
+        return self._signer_id
+
+    def sign(self, envelope: Envelope) -> SignedEnvelope:
+        """Hybrid-sign an Envelope v1.
+
+        Args:
+            envelope: The :class:`~skcomms.envelope.Envelope` to sign.
+
+        Returns:
+            SignedEnvelope with the hybrid composite signature + public keys.
+        """
+        canonical = envelope.canonical_bytes()
+        content_hash = hashlib.sha256(canonical).hexdigest()
+        composite = self._pqsig.hybrid_sign(
+            canonical, self._kp.ed25519_priv, self._kp.mldsa_priv
+        )
+        return SignedEnvelope(
+            envelope=envelope,
+            signature=base64.b64encode(composite).decode("ascii"),
+            signer_fingerprint=self._signer_id,
+            content_hash=content_hash,
+            sig_suite=HYBRID_SIG_SUITE,
+            hybrid_ed25519_pub=base64.b64encode(self._kp.ed25519_pub).decode("ascii"),
+            hybrid_mldsa_pub=base64.b64encode(self._kp.mldsa_pub).decode("ascii"),
+        )
+
+
+# ---------------------------------------------------------------------------
 # Verifier
 # ---------------------------------------------------------------------------
 
@@ -207,6 +294,14 @@ class EnvelopeVerifier:
         if not signed.is_signed:
             return VerificationResult(valid=False, reason="No signature present")
 
+        # Hybrid post-quantum path (PQC Q7) — additive + negotiated. A hybrid
+        # envelope (sig_suite == mldsa65-ed25519-v2 with both hybrid pubkeys)
+        # is verified with skcomms.pqsig (BOTH Ed25519 AND ML-DSA-65 legs must
+        # verify). Classical envelopes never enter here (is_hybrid is False),
+        # so the legacy PGP path below is byte-for-byte unchanged.
+        if getattr(signed, "sig_suite", CLASSICAL_SIG_SUITE) == HYBRID_SIG_SUITE:
+            return self._verify_hybrid(signed)
+
         pub_armor = self._find_key(signed)
         if not pub_armor:
             return VerificationResult(
@@ -244,6 +339,56 @@ class EnvelopeVerifier:
             return VerificationResult(
                 valid=False,
                 reason=f"Verification error: {exc}",
+                fingerprint=signed.signer_fingerprint,
+            )
+
+    def _verify_hybrid(self, signed: SignedEnvelope) -> "VerificationResult":
+        """Verify a hybrid Ed25519 + ML-DSA-65 SignedEnvelope (PQC Q7).
+
+        The envelope carries the two hybrid public keys inline; both legs must
+        verify (skcomms.pqsig AND gate) over the canonical bytes. A
+        content-hash mismatch is rejected first (cheap tamper pre-check), same
+        as the classical path. Honest failure modes: a non-hybrid or malformed
+        hybrid envelope (missing pubkeys / bad framing) is reported invalid, not
+        crashed; a missing liboqs backend is surfaced as an error reason.
+        """
+        if not getattr(signed, "is_hybrid", False):
+            return VerificationResult(
+                valid=False,
+                reason="sig_suite is hybrid but hybrid public keys are missing",
+                fingerprint=signed.signer_fingerprint,
+            )
+
+        canonical = _canonical_bytes(signed.envelope)
+        actual_hash = hashlib.sha256(canonical).hexdigest()
+        if signed.content_hash and actual_hash != signed.content_hash:
+            return VerificationResult(
+                valid=False,
+                reason="Content hash mismatch (envelope tampered)",
+                fingerprint=signed.signer_fingerprint,
+            )
+
+        try:
+            from . import pqsig
+
+            composite = base64.b64decode(signed.signature)
+            ed_pub = base64.b64decode(signed.hybrid_ed25519_pub)
+            mldsa_pub = base64.b64decode(signed.hybrid_mldsa_pub)
+            ok = pqsig.hybrid_verify(canonical, composite, ed_pub, mldsa_pub)
+            return VerificationResult(
+                valid=bool(ok),
+                reason=(
+                    "Hybrid signature valid (Ed25519 + ML-DSA-65, FIPS 204)"
+                    if ok
+                    else "Hybrid signature invalid (a leg failed; both required)"
+                ),
+                fingerprint=signed.signer_fingerprint,
+            )
+        except Exception as exc:
+            logger.warning("signing.py hybrid: %s", exc)
+            return VerificationResult(
+                valid=False,
+                reason=f"Hybrid verification error: {exc}",
                 fingerprint=signed.signer_fingerprint,
             )
 
