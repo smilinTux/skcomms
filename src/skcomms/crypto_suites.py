@@ -232,15 +232,31 @@ def _seed() -> None:
             active=False,
             replaces="rsa-pgp-wrap-v1",
         ),
+        # ---- ACTIVE hybrid-PQ signature (Phase 2 / Q7 — LIVE primitive) -----
+        # The verified hybrid signature primitive shipped in ``skcomms.pqsig``
+        # (Ed25519 + ML-DSA-65 composite, BOTH legs required). ACTIVE because the
+        # primitive round-trips + matches the FIPS 204 KAT and is wired into
+        # ``skcomms.signing.HybridEnvelopeSigner`` (opt-in, negotiated). "active"
+        # means the primitive is real + usable; classical ``ed25519-v1`` remains
+        # the DEFAULT for unmigrated/old envelopes (either-or verify).
         CryptoSuite(
             suite_id="mldsa65-ed25519-v2",
             kind=SuiteKind.SIG,
             status=SuiteStatus.HYBRID_PQ,
-            primitives=("Ed25519", "ML-DSA-65"),
+            primitives=(
+                "Ed25519 (RFC 8032)",
+                "ML-DSA-65 (FIPS 204, liboqs)",
+                "length-prefixed SKHS composite (both legs required)",
+            ),
             fips_refs=("FIPS 204", "RFC 8032"),
-            description="PLANNED (Phase 2): hybrid Ed25519 + ML-DSA-65 composite "
-            "signature (OpenPGP alg 30). NOT YET ACTIVE.",
-            active=False,
+            description="LIVE hybrid Ed25519 + ML-DSA-65 composite signature "
+            "(skcomms.pqsig). Valid iff BOTH legs verify; unforgeable while "
+            "EITHER scheme holds. Opt-in/negotiated on SignedEnvelope.sig_suite "
+            "+ capauth challenge; classical ed25519-v1 stays the default for old "
+            "peers (either-or verify). NOTE: the ROOT PGP identity key is NOT "
+            "migrated (Phase-2 Sequoia, gated) — this is the per-message / "
+            "challenge signing layer only.",
+            active=True,
             replaces="ed25519-v1",
         ),
         CryptoSuite(

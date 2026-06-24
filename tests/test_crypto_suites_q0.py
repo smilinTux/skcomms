@@ -71,7 +71,10 @@ def test_registry_default_sig_suite_is_classical():
 # *primitive* (skcomms.pqkem) which round-trips and matches the sk_pqc
 # cross-impl vector. It is "active" only in the sense that the primitive is real
 # and usable — it is NOT yet wired into any wire surface (that is Q2/Q3).
-_Q1_ACTIVE_HYBRID_PRIMITIVES = {"x25519-mlkem768"}
+# Active hybrid primitives: Q1 KEM + Q7 hybrid signature. Both are verified
+# primitives wired opt-in (KEM into group/envelope; sig into
+# SignedEnvelope.sig_suite + capauth challenge). Classical stays default.
+_Q1_ACTIVE_HYBRID_PRIMITIVES = {"x25519-mlkem768", "mldsa65-ed25519-v2"}
 
 
 def test_registry_active_suites_are_never_hybrid_or_pq():
