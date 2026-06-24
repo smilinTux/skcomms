@@ -754,7 +754,16 @@ class SKComms:
             if self._keystore and self._keystore.has_key(envelope.recipient):
                 pub_armor = self._keystore.get_public_key(envelope.recipient)
                 if pub_armor:
-                    envelope = self._crypto.encrypt_payload(envelope, pub_armor)
+                    # PQC cut-over: negotiate hybrid X25519+ML-KEM-768 BY DEFAULT
+                    # when the recipient advertises a hybrid prekey (via the
+                    # crypto engine's hybrid_provider); otherwise this is exactly
+                    # the classical PGP wrap (negotiated downgrade, unchanged).
+                    if hasattr(self._crypto, "encrypt_payload_provider"):
+                        envelope, _suite = self._crypto.encrypt_payload_provider(
+                            envelope, pub_armor
+                        )
+                    else:
+                        envelope = self._crypto.encrypt_payload(envelope, pub_armor)
 
         return envelope
 

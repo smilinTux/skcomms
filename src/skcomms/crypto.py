@@ -49,11 +49,27 @@ class EnvelopeCrypto:
         private_key_armor: str,
         passphrase: str,
         own_fingerprint: str = "",
+        hybrid_provider: "Optional[object]" = None,
     ) -> None:
         self._private_armor = private_key_armor
         self._passphrase = passphrase
         self._fingerprint = own_fingerprint
         self._pgp_available = _check_pgpy()
+        # PQC cut-over (optional). A ``hybrid_provider`` lets the transport
+        # negotiate hybrid X25519+ML-KEM-768 confidentiality BY DEFAULT when the
+        # recipient advertises a hybrid prekey, and open hybrid inbound payloads.
+        # It is a small duck-typed object exposing:
+        #   * ``resolve_bundle(identity) -> dict | None`` — the recipient's
+        #     published prekey bundle (``{suite, hybrid_public_hex, ...}``), or
+        #     None if unknown (→ classical, negotiated downgrade).
+        #   * ``own_private() -> bytes | None`` — this agent's hybrid private key
+        #     for opening ``pqdm1:`` inbound payloads, or None.
+        #   * ``own_short() -> str`` / ``short(identity) -> str`` — short-name
+        #     normalisers used in the downgrade-lock AAD (optional; fall back to
+        #     the raw identity).
+        # When None (the default) EVERYTHING stays classical, byte-for-byte —
+        # so existing deployments without a prekey store are unchanged.
+        self._hybrid = hybrid_provider
 
     @classmethod
     def from_capauth(cls, capauth_dir: Optional[Path] = None) -> Optional[EnvelopeCrypto]:
@@ -87,10 +103,23 @@ class EnvelopeCrypto:
                 key_info = data.get("key_info", {})
                 fingerprint = key_info.get("fingerprint", "")
 
+            # PQC cut-over: attach the shared-store hybrid prekey provider so the
+            # transport negotiates hybrid X25519+ML-KEM-768 BY DEFAULT when the
+            # recipient advertises a hybrid prekey. None when liboqs is absent
+            # (→ classical, unchanged).
+            hybrid_provider = None
+            try:
+                from .pq_provider import default_provider
+
+                hybrid_provider = default_provider()
+            except Exception:
+                hybrid_provider = None
+
             return cls(
                 private_key_armor=private_armor,
                 passphrase="",
                 own_fingerprint=fingerprint,
+                hybrid_provider=hybrid_provider,
             )
         except Exception as exc:
             logger.warning("Failed to load CapAuth keys: %s", exc)
@@ -175,6 +204,27 @@ class EnvelopeCrypto:
         """
         if not envelope.payload.encrypted:
             return envelope
+
+        # PQC cut-over: route hybrid-sealed (``pqdm1:``) payloads to the hybrid
+        # opener with our hybrid private key. Classical PGP payloads fall through
+        # unchanged.
+        if self.is_hybrid_payload(envelope) and self._hybrid is not None:
+            priv = None
+            try:
+                priv = self._hybrid.own_private()
+            except Exception:
+                priv = None
+            if priv is not None:
+                try:
+                    sender = self._hybrid_short(envelope.sender)
+                    recipient = self._hybrid_short(envelope.recipient or self._fingerprint)
+                    return self.decrypt_payload_hybrid(
+                        envelope, priv, sender=sender, recipient=recipient
+                    )
+                except Exception as exc:
+                    logger.warning("hybrid payload decrypt failed: %s", exc)
+                    return envelope
+
         if not self._pgp_available:
             logger.debug("PGPy not available — cannot decrypt")
             return envelope
@@ -415,6 +465,49 @@ class EnvelopeCrypto:
                 suite,
             )
         return self.encrypt_payload(envelope, recipient_public_armor), suite
+
+    def _hybrid_short(self, identity: str) -> str:
+        """Normalise an identity to the short name used in the downgrade AAD.
+
+        Delegates to the hybrid provider's ``short`` if present (so both peers
+        agree on the AAD), else strips the ``capauth:``/``@…`` decoration here.
+        """
+        if self._hybrid is not None:
+            try:
+                return self._hybrid.short(identity)
+            except Exception:
+                pass
+        s = identity[len("capauth:") :] if identity.startswith("capauth:") else identity
+        return s.split("@")[0]
+
+    def encrypt_payload_provider(
+        self,
+        envelope: MessageEnvelope,
+        recipient_public_armor: str,
+    ) -> tuple[MessageEnvelope, str]:
+        """Negotiate confidentiality using the configured hybrid provider.
+
+        PQC cut-over default for the transport: when a ``hybrid_provider`` is
+        configured AND the recipient advertises a hybrid prekey, the payload is
+        hybrid-sealed (``x25519-mlkem768``); otherwise it falls back to the
+        unchanged classical PGP wrap. With no provider this is exactly the
+        classical path. Returns ``(envelope, negotiated_suite)``.
+        """
+        bundle = None
+        if self._hybrid is not None:
+            try:
+                bundle = self._hybrid.resolve_bundle(envelope.recipient)
+            except Exception:
+                bundle = None
+        sender = self._hybrid_short(envelope.sender or self._fingerprint)
+        recipient = self._hybrid_short(envelope.recipient)
+        return self.encrypt_payload_auto(
+            envelope,
+            recipient_public_armor,
+            recipient_bundle=bundle,
+            sender=sender,
+            recipient=recipient,
+        )
 
     @staticmethod
     def is_hybrid_payload(envelope: MessageEnvelope) -> bool:
