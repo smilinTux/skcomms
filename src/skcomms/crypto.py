@@ -14,6 +14,7 @@ Design:
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import logging
 from pathlib import Path
@@ -22,6 +23,12 @@ from typing import Optional
 from .models import MessageEnvelope, MessagePayload
 
 logger = logging.getLogger("skcomms.crypto")
+
+#: Wire marker for a hybrid-PQ sealed payload stored in ``payload.content``.
+#: Classical PGP payloads start with ``-----BEGIN PGP``; hybrid payloads start
+#: with this prefix so the two coexist in the same string field without any
+#: model change (back-compat: classical content is byte-for-byte unchanged).
+PQDM_SCHEME = "pqdm1:"
 
 
 class EnvelopeCrypto:
@@ -280,6 +287,185 @@ class EnvelopeCrypto:
         except Exception as exc:
             logger.warning("Signature verification failed: %s", exc)
             return False
+
+
+    # ------------------------------------------------------------------
+    # PQC Q3 — hybrid post-quantum payload sealing (HNDL fix, opt-in).
+    #
+    # These methods add a NEGOTIATED hybrid-KEM path *alongside* the classical
+    # PGP path above. ``encrypt_payload``/``decrypt_payload`` are untouched, so
+    # classical peers are byte-for-byte unchanged. Hybrid engages only when the
+    # recipient advertises a hybrid prekey bundle (``PrekeyBundle.is_hybrid``).
+    # The negotiated suite is recorded for the per-conversation self-report.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def supports_hybrid() -> bool:
+        """Whether this build can do hybrid sealing (liboqs reachable)."""
+        try:
+            from .pqkem import is_available
+
+            return is_available()
+        except Exception:
+            return False
+
+    def negotiated_suite(self, recipient_bundle) -> str:
+        """Resolve the suite for a conversation with ``recipient_bundle``.
+
+        Hybrid (``x25519-mlkem768``) only when this side supports hybrid AND the
+        recipient advertises a hybrid prekey; otherwise the classical suite
+        (negotiated downgrade). This is the single honest gate the self-report
+        and ``encrypt_payload_auto`` both use.
+
+        Args:
+            recipient_bundle: A ``skcomms.pqdm.PrekeyBundle`` (or a dict / None,
+                coerced via ``PrekeyBundle.from_dict``).
+
+        Returns:
+            The negotiated suite id.
+        """
+        from .pqdm import PrekeyBundle, negotiate_suite
+
+        bundle = (
+            recipient_bundle
+            if isinstance(recipient_bundle, PrekeyBundle)
+            else PrekeyBundle.from_dict(recipient_bundle)
+        )
+        return negotiate_suite(self.supports_hybrid(), bundle)
+
+    def encrypt_payload_hybrid(
+        self,
+        envelope: MessageEnvelope,
+        recipient_bundle,
+        sender: str = "",
+        recipient: str = "",
+    ) -> MessageEnvelope:
+        """Hybrid-seal an envelope payload to a recipient's hybrid prekey.
+
+        The recipient bundle MUST be hybrid (caller gates via
+        :meth:`negotiated_suite`). Encapsulates to the hybrid prekey, AES-256-GCM
+        seals the payload content, binds the negotiated suite into the AAD
+        (downgrade-lock), and stores ``PQDM_SCHEME + suite : base64(sealed)`` in
+        ``payload.content`` with ``encrypted=True``. The model is unchanged — the
+        scheme prefix distinguishes hybrid from classical PGP content.
+
+        Args:
+            envelope: Envelope with plaintext payload.
+            recipient_bundle: The recipient's ``PrekeyBundle`` (hybrid).
+            sender / recipient: Party identifiers bound into the downgrade-lock AAD.
+
+        Returns:
+            MessageEnvelope: Copy with a hybrid-sealed payload.
+
+        Raises:
+            PqDmFormatError / PqKemError: propagated (never a silent downgrade).
+        """
+        from .pqdm import HYBRID_SUITE, PrekeyBundle, seal
+
+        if envelope.payload.encrypted:
+            return envelope
+        bundle = (
+            recipient_bundle
+            if isinstance(recipient_bundle, PrekeyBundle)
+            else PrekeyBundle.from_dict(recipient_bundle)
+        )
+        sealed = seal(
+            envelope.payload.content.encode("utf-8"),
+            bundle,
+            sender=sender,
+            recipient=recipient,
+        )
+        token = f"{PQDM_SCHEME}{HYBRID_SUITE}:" + base64.b64encode(sealed).decode("ascii")
+        new_payload = MessagePayload(
+            content=token,
+            content_type=envelope.payload.content_type,
+            encrypted=True,
+            compressed=envelope.payload.compressed,
+            signature=envelope.payload.signature,
+        )
+        return envelope.model_copy(update={"payload": new_payload})
+
+    def encrypt_payload_auto(
+        self,
+        envelope: MessageEnvelope,
+        recipient_public_armor: str,
+        recipient_bundle=None,
+        sender: str = "",
+        recipient: str = "",
+    ) -> tuple[MessageEnvelope, str]:
+        """Encrypt honouring negotiation: hybrid if advertised, else classical.
+
+        This is the crypto-agile entry point. If the recipient advertises a
+        hybrid prekey AND this side supports hybrid, the payload is hybrid-sealed
+        and the negotiated suite is ``x25519-mlkem768``. Otherwise it falls back
+        to the *unchanged* classical PGP path (``encrypt_payload``) and the suite
+        is the classical wrap — a genuine negotiated downgrade, recorded honestly.
+
+        Returns:
+            ``(envelope, negotiated_suite)`` — the suite for the self-report.
+        """
+        suite = self.negotiated_suite(recipient_bundle)
+        from .pqdm import HYBRID_SUITE
+
+        if suite == HYBRID_SUITE:
+            return (
+                self.encrypt_payload_hybrid(
+                    envelope, recipient_bundle, sender=sender, recipient=recipient
+                ),
+                suite,
+            )
+        return self.encrypt_payload(envelope, recipient_public_armor), suite
+
+    @staticmethod
+    def is_hybrid_payload(envelope: MessageEnvelope) -> bool:
+        """Whether an envelope carries a hybrid-PQ sealed payload."""
+        c = envelope.payload.content or ""
+        return envelope.payload.encrypted and c.startswith(PQDM_SCHEME)
+
+    def decrypt_payload_hybrid(
+        self,
+        envelope: MessageEnvelope,
+        hybrid_private: bytes,
+        sender: str = "",
+        recipient: str = "",
+    ) -> MessageEnvelope:
+        """Open a hybrid-sealed payload with this agent's hybrid private key.
+
+        Reconstructs the downgrade-lock AAD from the suite carried in the token
+        and binds it on open; a stripped/downgraded payload fails to authenticate
+        (:class:`~skcomms.pqdm.DowngradeDetected`).
+
+        Args:
+            envelope: Envelope with a hybrid-sealed payload.
+            hybrid_private: This agent's 2432-byte hybrid private key.
+            sender / recipient: Party identifiers (must match the seal call).
+
+        Returns:
+            MessageEnvelope: Copy with the decrypted plaintext payload.
+        """
+        from .pqdm import open_sealed
+
+        c = envelope.payload.content or ""
+        if not c.startswith(PQDM_SCHEME):
+            raise ValueError("not a hybrid-sealed payload")
+        rest = c[len(PQDM_SCHEME) :]
+        suite, _, b64 = rest.partition(":")
+        sealed = base64.b64decode(b64)
+        plaintext = open_sealed(
+            sealed,
+            hybrid_private,
+            sender=sender,
+            recipient=recipient,
+            expected_suite=suite,
+        )
+        new_payload = MessagePayload(
+            content=plaintext.decode("utf-8"),
+            content_type=envelope.payload.content_type,
+            encrypted=False,
+            compressed=envelope.payload.compressed,
+            signature=envelope.payload.signature,
+        )
+        return envelope.model_copy(update={"payload": new_payload})
 
 
 class KeyStore:
