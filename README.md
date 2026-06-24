@@ -141,6 +141,7 @@ lifecycle, the trust model, the registry resolution flow, and the source map.
 | **[Architecture](docs/ARCHITECTURE.md)** | message lifecycle, TOFU trust model, registry resolution, consent grants, integration modes, source map (mermaids) |
 | **[Pairing](docs/PAIRING.md)** | end-to-end walkthrough: pair with another operator |
 | **[Syncthing topology](docs/SYNCTHING_TOPOLOGY.md)** | how the realm tree replicates over Syncthing (folders, directionality, ignore patterns) |
+| **[Crypto architecture](docs/crypto-architecture.md)** | quantum-resistance: honest claim status, current/future/gaps mermaids, per-surface remediation (S3/S4 → Q3/Q7) |
 
 ---
 
@@ -224,6 +225,37 @@ Enable with `pip install skcomms[skcapstone]` — no config change needed; packa
 presence is the signal. Alert topics follow `skcomms.<severity>`; the semantic
 event name lives in the payload `event` field so `skcapstone alerts` routes by
 severity.
+
+---
+
+## Security & Quantum-Resistance (requirement)
+
+skcomms is a **confidentiality** surface, so it carries a hard quantum-resistance
+requirement. The honest current status and the target:
+
+- **Already quantum-resistant (🟢):** the content-integrity hash (SHA-256,
+  `signing.py`) and the AES-256-GCM payload bulk cipher are symmetric/hash —
+  Grover-only, ≥128-bit worst case. **Do not touch them.**
+- **Classical today (🔴/🟡):** the `SignedEnvelope` signature (PGPy Ed25519/RSA) is
+  forgeable post-quantum (future-forgery, deferrable); the envelope **payload wrap**
+  (`crypto.py:EnvelopeCrypto`, PGP Curve25519/RSA over an AES-256 session key) is
+  **Harvest-Now-Decrypt-Later (HNDL)** vulnerable — recorded ciphertext is
+  retroactively decryptable once a CRQC exists.
+- **Target (going-forward bar):** hybrid post-quantum — **X25519 + ML-KEM-768 KEM**
+  (FIPS 203) for the payload wrap, with the universal combiner
+  `K = HKDF-SHA256(X25519_ss ‖ MLKEM768_ss)` (concatenate-then-KDF, never XOR, never
+  pure-PQ); **ML-DSA-65 + Ed25519 hybrid signatures** (FIPS 204) later. HNDL-first,
+  crypto-agile (machine-readable `sig_suite`/`kem_suite` ids + a suite registry).
+
+**Honest-claim rule:** every quantum-resistance claim cites the surface + FIPS # +
+hybrid-vs-classical, backed by a runtime self-report. Never say "quantum-proof,"
+unscoped "end-to-end quantum-resistant," or "CNSA-2.0" (we use the **-768 hybrid
+tier**). AES-256 is **not** "broken" by quantum.
+
+Full crypto views, the three architecture diagrams (current / future / gaps), and
+the per-surface remediation are in **[docs/crypto-architecture.md](docs/crypto-architecture.md)**.
+Master plan: [skchat `docs/quantum-resistance-architecture.md`](https://github.com/smilinTux/skchat/blob/main/docs/quantum-resistance-architecture.md);
+epic `PQC-MIGRATION` (coord `e1d6ba2a`).
 
 ---
 
