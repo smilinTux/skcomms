@@ -1,8 +1,15 @@
 # RFC-0001 — Post-Quantum Ratchet, Metadata Privacy & Dual Identity
 
-**Status:** Draft / for-implementation · **Date:** 2026-06-25 · **Owners:** Chef & Lumina
+**Status:** Draft / for-implementation · **Date:** 2026-06-25 (refreshed 2026-06-27) · **Owners:** Chef & Lumina
 **Repos:** skcomms (transport/envelope/routing) · skchat (DM/group ratchet, app) · capauth (identity) · sksecurity (self-report)
 **Standards:** [sk-standards](https://github.com/smilinTux/sk-standards) (crypto / doc-SOP / data-flow). Honest-claim rules apply throughout.
+
+> **2026-06-27 status delta:** the `sk-pqc` primitive family is now **published** (PyPI
+> `sk-pqc`, pub.dev `sk_pqc`, crates.io `sk-pqc` — all import as `sk_pqc`). The scaffolds
+> for P2 (padding), P3 (`pqroute1`), P4 (self-report), P5 (anon-queue) and the sovereign
+> prekey-signature exist in-tree. The next moves are (a) **utilize** the published lib from
+> skcomms/skchat via additive re-export shims (§6) and (b) **converge** on a single audited
+> Rust core (§7 / P7). See the refreshed status table in §4.
 
 > One sentence: **adopt the best ideas from SimpleX, Signal, Apple, and MLS — Level-3
 > post-quantum healing, metadata privacy, and a no-identity anonymity mode — as new
@@ -167,21 +174,26 @@ outruns the live suite. Forbidden-words discipline as ever.
 
 ## 4. Phased implementation plan
 
-| Phase | Deliverable | Effort | Repo | Suite-ids |
-|---|---|:--:|---|---|
-| **P1** | **Level-3 1:1 ratchet — periodic rekey** (`pqdr-periodic-v1`) + Triple-Ratchet KDF combine | M | skchat | `pqdr-periodic-v1` |
-| **P2** | **Content padding** ladder on the envelope (`pad=ladder-v1`) | S | skcomms | `pad-ladder-v1` |
-| **P3** | **Metadata-sealed envelope** (outer header / inner blob, hybrid ML-KEM) | M | skcomms | `pqroute1:` |
-| **P4** | **Self-report** extensions (mode/level/pad/route) | S | sksecurity | — |
-| **P5** | **Anonymous-queue mode** (opaque RID/SID, OOB invite links, deniable auth, queue rotation) | L | skcomms+skchat | `auth=anon-v1` |
-| **P6** | **2-hop onion private routing** (the full anonymity transport) | L | skcomms | `route=onion-v1` |
-| **P7** | **Shared Rust crypto core + FFI** (multi-client convergence) | XL | new `sk-core`? | — |
-| **P8** | **SPQR-style chunked braid** (`pqdr-braid-v1`, continuous PCS) | L | skchat | `pqdr-braid-v1` |
-| **P9** | **MLS-mapped group suite naming** + negotiation | M | skcomms | `skc-mlkem768x25519-…` |
+| Phase | Deliverable | Effort | Repo | Suite-ids | Status (2026-06-27) |
+|---|---|:--:|---|---|---|
+| **P1** | **Level-3 1:1 ratchet — periodic rekey** (`pqdr-periodic-v1`) + Triple-Ratchet KDF combine | M | skchat | `pqdr-periodic-v1` | 🟡 **wiring live** — primitive lands as `sk_pqc.DmRatchet`; default-OFF behind a new ratchet-level flag; live `SKCHAT_DM_RATCHET=1` path (L2 hybrid) untouched |
+| **P2** | **Content padding** ladder on the envelope (`pad=ladder-v1`) | S | skcomms | `pad-ladder-v1` | 🟢 **scaffold DONE** (`skcomms/padding.py`) → wiring into the envelope path next |
+| **P3** | **Metadata-sealed envelope** (outer header / inner blob, hybrid ML-KEM) | M | skcomms | `pqroute1:` | 🟢 **scaffold DONE** (`skcomms/pqroute.py` + `pqroute_transport.py`, mirrored `sk_pqc.pqroute`) → wiring next |
+| **P4** | **Self-report** extensions (mode/level/pad/route) | S | sksecurity | — | 🟢 **scaffold DONE** (suite-id/annotation surface in `sk_pqc.annotations` / `crypto_suites`) |
+| **P5** | **Anonymous-queue mode** (opaque RID/SID, OOB invite links, deniable auth, queue rotation) | L | skcomms+skchat | `auth=anon-v1` | 🟢 **scaffold DONE** (`skcomms/anon_queue.py` + `sk_pqc.anon_queue` RID/SID codec) — not yet wired into live transport |
+| **—** | **Sovereign prekey signature** (hybrid Ed25519+ML-DSA-65 identity sig) | S | skchat | `pqsig` | 🟢 **scaffold DONE** (`skchat/prekey_sig.py`) — feeds the sovereign branch of §2.1 |
+| **P6** | **2-hop onion private routing** (the full anonymity transport) | L | skcomms | `route=onion-v1` | ⚪ design only |
+| **P7** | **Shared Rust crypto core + FFI** (multi-client convergence) | XL | `sk-pqc-rs` (`sk_core`→renamed) | — | ⚪ roadmap — see §7 (coord `6db4a7c9`) |
+| **P8** | **SPQR-style chunked braid** (`pqdr-braid-v1`, continuous PCS) | L | skchat | `pqdr-braid-v1` | ⚪ design only |
+| **P9** | **MLS-mapped group suite naming** + negotiation | M | skcomms | `skc-mlkem768x25519-…` | ⚪ design only |
+
+Legend: 🟢 scaffold landed (lib primitive exists, default-OFF, not on the live message path) · 🟡 actively being wired live behind a flag · ⚪ design only.
 
 **Recommended start: P1** (Level-3 periodic rekey) — most self-contained, highest crypto
 value, pure agility-extension of the shipped `pqdm1:`/`pqsig` machinery. P2 (padding) is a
-trivial parallel quick-win.
+trivial parallel quick-win. **Discipline:** every 🟢/🟡 item is **additive + flag-gated and
+default-OFF**; the live ratchet (`SKCHAT_DM_RATCHET=1`) and the classical path must keep
+passing their existing tests unchanged.
 
 ---
 
@@ -197,7 +209,97 @@ trivial parallel quick-win.
 
 ---
 
-## 6. References
+## 6. Published libraries & utilization
+
+The `sk-pqc` family is **LIVE on the public registries** — one logical primitive set,
+three language surfaces, all importing as **`sk_pqc`**:
+
+| Surface | Registry | Package | Import |
+|---|---|---|---|
+| Python | PyPI | `sk-pqc` (0.1.0) | `import sk_pqc` |
+| Dart/Flutter | pub.dev | `sk_pqc` | `package:sk_pqc/sk_pqc.dart` |
+| Rust | crates.io | `sk-pqc` | `use sk_pqc;` |
+
+The Python surface already exposes the full primitive set the apps need —
+`HybridKeyPair` / `hybrid_encap` / `hybrid_decap` (the `x25519-mlkem768` KEM),
+`PrekeyBundle`, `DmRatchet`, `EpochRatchet`, `anon_queue` (RID/SID codec), `pqroute`,
+`crypto_suites` / `get_suite` / `active_suites`, and the suite/annotation surface for the
+self-report. These are **byte-for-byte the same constructions** already vetted in-tree
+(cross-impl vectors under `sk_pqc/test_vectors/…`), now versioned and installable instead of
+vendored.
+
+### 6.1 The utilization plan — re-export, don't rewrite
+
+The point of publishing was never to fork the live crypto — it was to stop duplicating it.
+So the plan (coord `0a1f0a51` / `3e5f1f16`) is **consume the published lib without
+destabilizing the live ratchet**:
+
+1. **Add `sk-pqc` as a dependency** of skcomms and skchat (pinned, e.g. `sk-pqc>=0.1,<0.2`).
+2. **Turn the in-app primitive modules into additive back-compat shims that RE-EXPORT
+   from `sk_pqc`** — e.g. `skcomms/pqkem.py`, `skcomms/pqdm.py`, `skcomms/crypto_suites.py`,
+   `skcomms/anon_queue.py`, `skcomms/pqroute.py`; `skchat/dm_ratchet.py`,
+   `skchat/group_ratchet.py`, `skchat/prekey_sig.py`. Every existing public symbol keeps its
+   current name and signature; the body becomes `from sk_pqc import …` (with a thin local
+   fallback only where the app wires app-specific glue).
+3. **No behaviour change on the live path.** The shims are pure re-exports, so the existing
+   `SKCHAT_DM_RATCHET=1` ratchet and the classical path keep their byte formats and keep
+   passing their existing tests. New `sk_pqc`-backed capabilities (L3 rekey, pqroute, anon)
+   stay **default-OFF** behind their own flags until deliberately wired.
+
+```mermaid
+flowchart LR
+    subgraph apps [apps consume — unchanged call sites]
+      A1["skcomms.pqkem / pqdm / pqroute / anon_queue"]
+      A2["skchat.dm_ratchet / group_ratchet / prekey_sig"]
+    end
+    A1 -- "re-export shim<br/>(additive, back-compat)" --> L["📦 sk_pqc<br/>(PyPI / pub.dev / crates.io)"]
+    A2 -- "re-export shim" --> L
+    L -. "single set of<br/>cross-impl test vectors" .-> L
+```
+
+**Honest claim:** this is a *packaging/consolidation* win (one place to audit and version the
+primitives), **not** a new cryptographic guarantee. The KEM is still **hybrid** — secure if
+**either** the X25519 leg **or** the ML-KEM-768 leg holds — never "quantum-proof".
+
+---
+
+## 7. The single-core endgame (P7 FFI)
+
+Re-exporting from `sk_pqc` removes Python↔Dart duplication, but there are still **three
+language implementations** of the same lattice/curve wiring (Python, Dart, Rust). The
+endgame is **one audited Rust core behind all three surfaces**.
+
+`sk-pqc-rs` (the renamed `sk_core`) is the full Rust toolkit. The roadmap (coord `6db4a7c9`)
+is to grow **two binding layers** over that one core:
+
+- **PyO3** → the Python `sk_pqc` becomes a thin binding over `sk-pqc-rs` (same idiom as
+  `sk_pgp`'s PyO3→sequoia backend).
+- **`flutter_rust_bridge`** → the Dart `sk_pqc` binds the *same* core for Flutter
+  mobile/web/desktop (the thin JSON command/event FFI of §2.5).
+
+```mermaid
+flowchart TD
+    core["🦀 sk-pqc-rs (sk_core)<br/>ONE audited Rust crypto/protocol core<br/>hybrid prekey · Triple Ratchet · epoch-ratchet<br/>hybrid sigs · suite-ids · CryptoBackend"]
+    core -->|PyO3| py["sk_pqc (Python) — skcomms/skchat/CLI"]
+    core -->|flutter_rust_bridge| dart["sk_pqc (Dart) — Flutter mobile/web/desktop"]
+    core -->|native crate| rs["sk-pqc (Rust consumers)"]
+    py -. retires .-> dup1["per-language KEM/ratchet duplication"]
+    dart -. retires .-> dup1
+```
+
+This is the convergence point already foreshadowed in §2.5: **audit the math once**, and the
+Python re-export shims of §6 quietly become bindings rather than reimplementations — no
+call-site churn in the apps. Until P7 lands, the §6 shims are the pragmatic interim: same
+import surface, single published source of truth, three independent (vector-cross-checked)
+implementations underneath.
+
+**Honest scope:** P7 is **roadmap, not shipped** — it is XL effort and gated on the PyO3 /
+`flutter_rust_bridge` bindings plus a static-link toolchain (the same class of blocker that
+`sk_pgp` hit). The §6 re-export shims are valuable on their own and do not depend on P7.
+
+---
+
+## 8. References
 
 SimpleX SMP/agent/pqdr specs (AGPL — read-only): `simplexmq/protocol/{simplex-messaging,agent-protocol,pqdr}.md` · SimpleX v5.6 PQ blog · v5.8 private-routing blog.
 Signal: [PQXDH spec](https://signal.org/docs/specifications/pqxdh/) · [SPQR blog](https://signal.org/blog/spqr/).

@@ -261,6 +261,10 @@ class Router:
         *,
         preferred_transports: Optional[list[str]] = None,
         mode: Optional[RoutingMode] = None,
+        pqroute: Optional[bool] = None,
+        dest_hybrid_pub: Optional[bytes] = None,
+        next_hop: Optional[str] = None,
+        pqroute_flags: Optional[list[str]] = None,
     ) -> DeliveryReport:
         """Route a canonical :class:`SignedEnvelope` to its ``to_fqid``.
 
@@ -268,8 +272,41 @@ class Router:
         node's ``POST /inbox`` parses the same ``SignedEnvelope`` and verifies
         it). Rail order comes from ``preferred_transports`` (peer-advertised) or
         the federation default chain.
+
+        **Opt-in pqroute (P3) metadata-sealing** — additive + flag-gated. When
+        ``pqroute`` resolves enabled (per :func:`skcomms.pqroute_transport.pqroute_enabled`,
+        e.g. ``SKCOMMS_PQROUTE=1`` or ``pqroute=True``) AND a destination hybrid
+        prekey (``dest_hybrid_pub``) and ``next_hop`` relay are supplied, the
+        FINAL destination FQID + flags + the whole signed envelope are
+        hybrid-sealed into the wire blob and only the ``next_hop`` stays
+        relay-readable; the envelope is then routed to ``next_hop`` (the relay)
+        instead of directly to ``to_fqid``. Default OFF / missing prekey -> the
+        exact verbatim-bytes behaviour above (byte-for-byte unchanged).
         """
         env = signed.envelope
+
+        # Default path: nothing new on the wire (verbatim signed bytes to to_fqid).
+        from .pqroute_transport import pqroute_enabled, wrap_signed
+
+        if pqroute_enabled(pqroute) and dest_hybrid_pub and next_hop:
+            wire = wrap_signed(
+                signed,
+                next_hop=next_hop,
+                dest_hybrid_pub=dest_hybrid_pub,
+                enabled=True,
+                flags=pqroute_flags,
+            )
+            # The relay only ever sees / resolves the next hop — the final
+            # destination is sealed inside the blob.
+            return self.route_bytes(
+                wire,
+                next_hop,
+                envelope_id=env.id,
+                sender=env.from_fqid,
+                preferred_transports=preferred_transports,
+                mode=mode,
+            )
+
         return self.route_bytes(
             signed.to_bytes(),
             env.to_fqid,
