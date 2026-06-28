@@ -28,6 +28,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from .capauth_validator import CapAuthValidator
 from .core import SKComms
+from . import skfed_directory
 from .discovery import PeerInfo, PeerStore
 from .heartbeat import HeartbeatConfig, HeartbeatPublisher
 from .models import (
@@ -999,6 +1000,142 @@ async def post_inbox(request: Request):
         ) from exc
 
     return {"ok": True, "id": env.id}
+
+
+# ---------------------------------------------------------------------------
+# SKFed sovereign realm directory (serve + announce)
+# ---------------------------------------------------------------------------
+
+# Cap on an announce body (a signed envelope wrapping a tiny JSON record).
+_MAX_ANNOUNCE_BYTES = 64 * 1024
+
+
+@app.get(
+    "/.well-known/skfed/directory",
+    tags=["federation"],
+)
+async def get_skfed_directory():
+    """Serve THIS realm's signed directory (the well-known discovery surface).
+
+    Returns the persisted :class:`skcomms.skfed_directory.SignedDirectory` bytes
+    verbatim so any sender can verify the operator signature and resolve an
+    agent with no local peer config. 404 when this node hosts no directory yet.
+    """
+    from fastapi.responses import Response
+
+    sd = skfed_directory.load_directory()
+    if sd is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="this node hosts no realm directory",
+        )
+    return Response(content=sd.to_bytes(), media_type="application/json")
+
+
+@app.post(
+    "/api/v1/skfed/announce",
+    tags=["federation"],
+)
+async def post_skfed_announce(request: Request):
+    """CapAuth-gated self-announce — upsert an agent's endpoints into the directory.
+
+    Body is a :class:`skcomms.envelope.SignedEnvelope` whose ``body`` is a JSON
+    record ``{fqid, inbox_url, prekey_url?, did?, caps?}``. The gate verifies the
+    envelope signature (against the announcer's pinned key, same as the S2S
+    inbox) plus freshness/replay, then enforces that the **announcer may only
+    announce its OWN fqid** (envelope ``from_fqid`` == announced ``fqid``). On
+    success the node upserts the entry, re-signs the whole directory with the
+    node/operator key, and persists it.
+
+    Returns:
+        ``{"ok": true, "fqid": <announced fqid>}``.
+
+    Raises:
+        HTTPException: 403 (untrusted/bad sig or fqid mismatch), 409 (replay),
+            422 (stale / unparseable / malformed record), 413 (too large),
+            429 (rate limited), 503 (no node signing key).
+    """
+    import json as _json
+
+    from .envelope import SignedEnvelope
+    from .federation import (
+        ReplayError,
+        SignatureError,
+        StaleError,
+        accept_signed,
+    )
+
+    raw = await request.body()
+    if len(raw) > _MAX_ANNOUNCE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"announce envelope exceeds {_MAX_ANNOUNCE_BYTES} bytes",
+        )
+
+    try:
+        signed = SignedEnvelope.from_bytes(raw)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"unparseable signed envelope: {exc}",
+        ) from exc
+
+    from_fqid = signed.envelope.from_fqid
+
+    if not _get_fed_rate_limiter().allow("https-s2s", from_fqid):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"rate limit exceeded for sender {from_fqid}",
+        )
+
+    verifier = _build_inbox_verifier(from_fqid)
+    nonce_cache = _get_nonce_cache()
+    try:
+        env = accept_signed(signed, verifier=verifier, nonce_cache=nonce_cache)
+    except SignatureError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except ReplayError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except StaleError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+    try:
+        record = _json.loads(env.body)
+        announced_fqid = record["fqid"]
+        inbox_url = record["inbox_url"]
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"malformed announce record: {exc}",
+        ) from exc
+
+    # An agent may only announce ITSELF (no cross-agent endpoint hijack).
+    if announced_fqid != from_fqid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"signer {from_fqid} may not announce {announced_fqid}",
+        )
+
+    try:
+        signer = skfed_directory.load_node_signer()
+    except FileNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"no node signing key to sign the realm directory: {exc}",
+        ) from exc
+
+    entry = skfed_directory.DirectoryEntry(
+        fqid=announced_fqid,
+        inbox_url=inbox_url,
+        prekey_url=record.get("prekey_url"),
+        did=record.get("did"),
+        caps=list(record.get("caps") or []),
+    )
+    skfed_directory.upsert_entry(entry, signer=signer)
+    logger.info("skfed announce accepted: %s -> %s", announced_fqid, inbox_url)
+    return {"ok": True, "fqid": announced_fqid}
 
 
 @app.get(

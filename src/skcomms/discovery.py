@@ -509,6 +509,11 @@ def inbox_url_for(
     fqid: str,
     store: Optional[PeerStore] = None,
     registry: Optional["NodeRegistry"] = None,
+    *,
+    http_get=None,
+    dns=None,
+    verifier=None,
+    cache=None,
 ) -> Optional[str]:
     """Resolve a reachable ``/api/v1/inbox`` URL for a peer *fqid*.
 
@@ -521,7 +526,14 @@ def inbox_url_for(
         2. **Peer transport** — FALLBACK. The ``inbox_url`` carried on the peer's
            ``https-s2s`` transport entry in the :class:`PeerStore` (the legacy
            hardcoded value), kept for back-compat and as a degrade path.
-        3. ``None`` — when neither resolves. Never raises.
+        3. **SKFed realm directory** (:mod:`skcomms.skfed_resolve`) — SOVEREIGN
+           FALLBACK. When no local peer record matches *and* an ``http_get`` is
+           available, resolve the FQID through its realm's signed directory
+           (DNS/`realms.yml` -> fetch -> verify operator sig -> entry). This is
+           the *no-local-config* path: deliver to anyone in any realm that runs
+           a directory. Purely additive — never consulted when steps 1/2 hit or
+           when no ``http_get`` is supplied.
+        4. ``None`` — when nothing resolves. Never raises.
 
     The peer is matched by ``fqid`` field first, then by ``name``, then by the
     agent component of the fqid.
@@ -532,6 +544,14 @@ def inbox_url_for(
         registry: Optional :class:`~skcomms.node_registry.NodeRegistry`. When
             ``None`` a default one is loaded from ``node_registry.yml`` (an empty
             registry if the file is absent — clean fallback to the transport).
+        http_get: Optional ``url -> bytes`` HTTP getter enabling the SKFed
+            directory fallback (step 3). When ``None`` the directory is never
+            consulted (behaviour is byte-for-byte the legacy path).
+        dns: Optional injected DNS resolver for the directory fallback.
+        verifier: Optional :class:`~skcomms.signing.EnvelopeVerifier` preloaded
+            with the realm operator's key (required for the directory fallback;
+            verification fails closed without it).
+        cache: Optional :class:`~skcomms.skfed_resolve.DirectoryCache`.
 
     Returns:
         A reachable S2S inbox URL, or ``None`` if the peer is unknown / has no
@@ -559,6 +579,21 @@ def inbox_url_for(
             url = peer.inbox_url()
             if url:
                 return url
+
+    # 3) SKFed realm directory (sovereign, no-local-config). Only when an
+    # http_get is provided; total — any failure leaves us at step 4 (None).
+    if http_get is not None and "@" in fqid:
+        try:
+            from .skfed_resolve import resolve_agent
+
+            rec = resolve_agent(
+                fqid, http_get=http_get, dns=dns, verifier=verifier, cache=cache
+            )
+            if rec and rec.get("inbox_url"):
+                return rec["inbox_url"]
+        except Exception as exc:  # never let directory resolution break delivery
+            logger.debug("skfed directory resolution failed for %s: %s", fqid, exc)
+
     return None
 
 

@@ -108,6 +108,23 @@ class EnvelopeSigner:
             sig = self._key.sign(pgp_message)
         return str(sig)
 
+    def sign_bytes(self, canonical: bytes) -> str:
+        """Produce an armored detached PGP signature over arbitrary *canonical* bytes.
+
+        Public wrapper around the same detached-signing path :meth:`sign` uses.
+        Lets non-envelope payloads (e.g. the SKFed realm directory) be CapAuth
+        signed with the SAME proven key + verifier, without inventing a parallel
+        crypto path. Verify with :meth:`EnvelopeVerifier.verify_bytes`.
+
+        Args:
+            canonical: The exact bytes to sign (caller is responsible for a
+                stable/canonical serialization).
+
+        Returns:
+            str: ASCII-armored PGP detached signature.
+        """
+        return self._detached_sig(canonical)
+
     def sign(self, envelope: Envelope) -> SignedEnvelope:
         """Sign an Envelope v1 with the loaded private key.
 
@@ -391,6 +408,49 @@ class EnvelopeVerifier:
                 reason=f"Hybrid verification error: {exc}",
                 fingerprint=signed.signer_fingerprint,
             )
+
+    def verify_bytes(
+        self,
+        canonical: bytes,
+        signature_armor: str,
+        *,
+        identity: Optional[str] = None,
+        fingerprint: Optional[str] = None,
+    ) -> bool:
+        """Verify an armored detached PGP signature over arbitrary *canonical* bytes.
+
+        The symmetric counterpart to :meth:`EnvelopeSigner.sign_bytes`. The
+        verifying key is resolved from this verifier's keyring by *fingerprint*
+        first, then by *identity*. Fails closed (returns ``False``) when no key
+        is registered or the signature does not cryptographically verify.
+
+        Args:
+            canonical: The exact bytes the signature is expected to cover.
+            signature_armor: ASCII-armored PGP detached signature.
+            identity: Registered identity label (e.g. operator name/fqid).
+            fingerprint: Signer's 40-char hex fingerprint.
+
+        Returns:
+            bool: ``True`` only if a known key validly signed *canonical*.
+        """
+        pub_armor: Optional[str] = None
+        if fingerprint and fingerprint in self._keys:
+            pub_armor = self._keys[fingerprint]
+        elif identity and identity in self._keys:
+            pub_armor = self._keys[identity]
+        if not pub_armor:
+            return False
+        try:
+            import pgpy
+
+            pub_key, _ = pgpy.PGPKey.from_blob(pub_armor)
+            sig = pgpy.PGPSignature.from_blob(signature_armor)
+            pgp_message = pgpy.PGPMessage.new(canonical, cleartext=False)
+            pgp_message |= sig
+            return bool(pub_key.verify(pgp_message))
+        except Exception as exc:
+            logger.warning("signing.py verify_bytes: %s", exc)
+            return False
 
     def _find_key(
         self, signed: Union[SignedEnvelope, "LegacySignedEnvelope"]
