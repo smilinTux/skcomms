@@ -1,0 +1,49 @@
+name: pytest
+
+# Runs the skcomms pytest suite on GitHub-hosted runners.
+#
+# GREEN-by-construction: this mirrors the repo's own known-passing invocation
+# (see qa.yml) — install the package with its `dev` extras, then run the WHOLE
+# suite. The suite is CI-clean: it requires no live external services and no
+# sibling sk* packages.
+#
+# Honest notes on scope (verified 2026-06-28):
+#   * There are NO custom pytest markers in this repo (no `integration`,
+#     `e2e_live`, `bunker`, etc. registered or applied). So there is nothing to
+#     exclude with `-m "not ..."` — adding such a filter would be fabricated.
+#   * Optional-transport tests (telegram/discord/webrtc/zeroconf/liboqs) and the
+#     capauth/skcapstone-dependent paths self-skip via pytest.importorskip /
+#     @pytest.mark.skipif when those packages are absent. The `dev` extras
+#     (pytest, pytest-asyncio, fastapi, httpx, pgpy, websockets, cryptography)
+#     are the deliberate known-green dependency set; sibling sk* packages
+#     (capauth, skcapstone, sk-pqc) are NOT installed and the suite stays green
+#     without them.
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install skcomms + dev extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Run pytest (full suite)
+        run: python -m pytest tests/ -q

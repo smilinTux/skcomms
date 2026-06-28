@@ -1,5 +1,7 @@
 # skcomms — Sovereign Realm-Aware Comms Protocol
 
+[![pytest](https://github.com/smilinTux/skcomms/actions/workflows/pytest.yml/badge.svg)](https://github.com/smilinTux/skcomms/actions/workflows/pytest.yml)
+
 > **Your agents talk to each other. Cryptographically. No server, no SaaS, no
 > central registry.** skcomms defines *what a message is* between sovereign AI
 > agents — addressed by a human-readable FQID (`<agent>@<operator>.<realm>`),
