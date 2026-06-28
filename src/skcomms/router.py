@@ -316,6 +316,120 @@ class Router:
             mode=mode,
         )
 
+    def route_anon(
+        self,
+        payload: bytes,
+        aqid: str,
+        secret: bytes,
+        *,
+        enabled: Optional[bool] = None,
+        nonce: Optional[bytes] = None,
+        preferred_transports: Optional[list[str]] = None,
+        mode: Optional[RoutingMode] = None,
+    ) -> DeliveryReport:
+        """Send ``payload`` to a no-identity ``aqid:`` address (RFC-0001 P5).
+
+        The **anonymous** send path: composes the vetted
+        :mod:`skcomms.anon_transport` framing (opaque ``aqid`` addressing +
+        deniable HMAC auth + length-padding) with the existing rail-selection /
+        failover / store-forward machinery via :meth:`route_bytes`. The opaque
+        anon frame goes on the wire addressed to the **relay** decoded from the
+        ``aqid``; there is NO fqid, DID, public key, or fingerprint anywhere on
+        the wire — the relay routes only on the opaque ``sender_id``.
+
+        **Flag-gated (additive guarantee).** This is a brand-new method that
+        does not touch the classical / sovereign / pqroute paths, so those stay
+        byte-identical. Within this method the gate is enforced by
+        :func:`skcomms.anon_transport.frame_anon`: with anon OFF (no
+        ``enabled=True`` and ``SKCOMMS_ANON`` unset/falsey) it raises
+        :class:`~skcomms.anon_transport.AnonDisabledError` and nothing is emitted.
+
+        **Confidentiality is composed, not provided here.** This layer does NOT
+        encrypt ``payload`` — a relay sees the padded body bytes. Pass an
+        ALREADY-sealed body (e.g. a hybrid X25519 || ML-KEM-768 ciphertext from
+        :mod:`skcomms.pqdm`/:mod:`skcomms.pqkem`, FIPS 203 — confidential if
+        EITHER leg holds; no "quantum-proof" claim) for end-to-end secrecy. The
+        deniable MAC gives authenticity + repudiation, never non-repudiation.
+
+        Durability, like :meth:`route_bytes`, is the caller's (no retry-queue
+        enqueue here): an anon frame carries no envelope identity to dedup on.
+
+        Args:
+            payload: The opaque (ideally already-sealed) body bytes to frame.
+            aqid: The recipient's published ``aqid:<relay>/<id>`` address.
+            secret: The shared per-queue deniable-auth secret (out-of-band).
+            enabled: Per-call override of the anon flag gate.
+            nonce: Optional explicit per-frame nonce (defaults to fresh CSPRNG).
+            preferred_transports: Peer-advertised ordered rail list.
+            mode: Routing-mode override (default the router's default).
+
+        Returns:
+            DeliveryReport for this attempt (routed to the relay).
+
+        Raises:
+            AnonDisabledError: the anon flag gate is OFF.
+            AnonFrameError: malformed ``aqid`` / ``secret`` / ``nonce``.
+        """
+        from .anon_transport import AnonChannel
+
+        chan = AnonChannel.from_address(aqid, secret)
+        # frame_anon (via seal) raises AnonDisabledError when the gate is OFF, so
+        # nothing reaches the transport unless anon was intentionally turned on.
+        wire = chan.seal(payload, nonce=nonce, enabled=enabled)
+        # The relay is the only address on the wire — never an fqid/identity.
+        return self.route_bytes(
+            wire,
+            chan.relay,
+            envelope_id="",
+            sender="aqid",
+            preferred_transports=preferred_transports,
+            mode=mode,
+        )
+
+    @staticmethod
+    def is_anon_inbound(wire: bytes) -> bool:
+        """True iff ``wire`` is an anon frame (carries the anon magic prefix).
+
+        Lets a receiver cleanly dispatch an inbound anon frame apart from a
+        plain JSON ``SignedEnvelope`` or a ``pqroute1`` blob before parsing.
+        """
+        from .anon_transport import is_anon_frame
+
+        return is_anon_frame(wire)
+
+    def parse_anon_inbound(
+        self,
+        wire: bytes,
+        secret: bytes,
+        *,
+        expected_sender_id: Optional[bytes] = None,
+    ):
+        """Parse + deniably-authenticate an inbound anon frame.
+
+        Delegates to :func:`skcomms.anon_transport.parse_anon`: recomputes the
+        deniable HMAC tag (constant-time), rejects on mismatch, and unpads back
+        to the exact opaque ``payload``. Parsing is **ungated** — a recipient
+        that opted into anon mode must be able to read what it receives.
+
+        Args:
+            wire: The inbound anon-frame bytes.
+            secret: The shared per-queue deniable-auth secret.
+            expected_sender_id: If given, the frame's routing id MUST equal it
+                (a wrong-queue frame is rejected before the body is touched).
+
+        Returns:
+            :class:`skcomms.anon_transport.AnonFrame` — opaque ``sender_id`` and
+            recovered ``payload``.
+
+        Raises:
+            AnonFrameError: malformed/truncated frame or wrong-queue id.
+            AnonAuthError: the deniable tag does not verify (wrong secret /
+                tampered frame).
+        """
+        from .anon_transport import parse_anon
+
+        return parse_anon(wire, secret, expected_sender_id=expected_sender_id)
+
     def receive_all(self) -> list[bytes]:
         """Poll all transports for incoming envelopes.
 
