@@ -858,12 +858,28 @@ def _build_inbox_verifier(from_fqid: str):
 def _fed_inbox_dir() -> Path:
     """The local file-transport inbox dir that ``comm.receive()`` polls.
 
-    Matches :class:`skcomms.transports.file.FileTransport`'s default inbox so a
-    verified envelope written here is delivered by the existing receive path.
+    Resolves the SAME inbox the deployment's :class:`~skcomms.transports.file.FileTransport`
+    actually reads — the config's ``transports.file.settings.inbox_path`` — so a
+    verified federation envelope written here is drained by the existing receive
+    path EVEN WHEN the config overrides the default inbox location. (Previously this
+    hardcoded ``skcomms_home()/inbox``; if a deployment's config pointed the file
+    transport elsewhere, S2S-delivered envelopes piled up unread because the API
+    wrote one place and the daemon polled another.) Falls back to the FileTransport
+    default (``skcomms_home()/inbox``) when the inbox is unconfigured.
     """
     from .home import skcomms_home
 
-    return skcomms_home() / "inbox"
+    default = skcomms_home() / "inbox"
+    try:
+        from .config import load_config
+
+        ft = load_config().transports.get("file")
+        configured = ft.settings.get("inbox_path") if ft else None
+        if configured:
+            return Path(configured).expanduser()
+    except Exception:  # noqa: BLE001 — best-effort; never break inbox delivery
+        pass
+    return default
 
 
 def _envelope_v1_to_message(env) -> MessageEnvelope:
