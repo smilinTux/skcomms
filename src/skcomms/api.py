@@ -893,6 +893,24 @@ def _envelope_v1_to_message(env) -> MessageEnvelope:
     )
 
 
+def _consent_classify(recipient: str, sender: str) -> str:
+    """Return ``'deliver'|'quarantine'|'drop'`` per ``SKCOMMS_CONSENT_MODE``.
+
+    Default (``off``/unset) and any error → ``'deliver'`` — the gate is opt-in and
+    **fail-open**, so a consent bug or missing config never blackholes federation.
+    """
+    mode = (_os.environ.get("SKCOMMS_CONSENT_MODE") or "off").strip().lower()
+    if mode in ("", "off") or not recipient or not sender:
+        return "deliver"
+    try:
+        from .consent import ConsentGate, ContactStore
+
+        return ConsentGate(ContactStore(agent=recipient), mode=mode).classify(sender).value
+    except Exception as exc:  # never let the gate break delivery
+        logger.debug("consent classify failed for %s (delivering): %s", recipient, exc)
+        return "deliver"
+
+
 def _write_to_recipient_inbox(env) -> str:
     """Write a verified Envelope v1 to the recipient's file-transport inbox.
 
@@ -910,6 +928,29 @@ def _write_to_recipient_inbox(env) -> str:
     # Falls back to the base inbox when no recipient agent can be derived (single-
     # agent nodes that poll the base directly stay unaffected if their subdir == "").
     recipient = (getattr(env, "to_fqid", "") or "").split("@")[0].split(":")[-1].strip()
+
+    # First-contact consent gate (skfed-consent-design gate 5). Opt-in via
+    # SKCOMMS_CONSENT_MODE (off|public|tailnet); default off = byte-for-byte the
+    # legacy deliver-everything path. DROP → discard, QUARANTINE → request queue
+    # (NOT the main inbox), DELIVER → fall through to the normal write.
+    decision = _consent_classify(recipient, getattr(env, "from_fqid", "") or "")
+    if decision == "drop":
+        logger.info("consent: dropped blocked sender %s → %s", env.from_fqid, recipient)
+        return ""
+    if decision == "quarantine":
+        from .consent import RequestQueue
+
+        RequestQueue(agent=recipient).enqueue(
+            env.from_fqid,
+            (getattr(env, "body", "") or "").encode("utf-8", "ignore"),
+            envelope_id=env.id,
+        )
+        logger.info(
+            "consent: quarantined first-contact %s → %s (request queue)",
+            env.from_fqid, recipient,
+        )
+        return f"quarantined:{env.id}"
+
     if recipient:
         inbox = inbox / recipient
     inbox.mkdir(parents=True, exist_ok=True)
