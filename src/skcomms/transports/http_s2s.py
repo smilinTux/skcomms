@@ -282,7 +282,42 @@ class HttpS2STransport(Transport):
             self._peer_urls[recipient] = url
             return url
 
+        # 3. SKFed realm directory (sovereign, no-local-config): reach an agent by
+        # FQID alone. Gated on a pinned realm-operator key — fails closed.
+        url = self._inbox_url_from_directory(recipient)
+        if url:
+            self._peer_urls[recipient] = url
+            return url
+
         return None
+
+    def _inbox_url_from_directory(self, recipient: str) -> Optional[str]:
+        """Resolve the recipient's inbox via its realm's signed SKFed directory.
+
+        Builds the FQID from a bare name using the local realm/operator, pins the
+        realm-operator verifier, and resolves through the :443-funnel directory
+        (``inbox_url_for`` step 3). Fails **closed** (None) when the realm is
+        unpinned / unresolvable — never raises.
+        """
+        try:
+            from skcomms.skfed_resolve import (_realm_of, default_http_get,
+                                               realm_verifier)
+
+            fqid = recipient
+            if "@" not in fqid:
+                from skcomms.cluster import get_operator, get_realm
+
+                fqid = f"{recipient}@{get_operator()}.{get_realm()}"
+            realm = _realm_of(fqid)
+            verifier = realm_verifier(realm) if realm else None
+            if verifier is None:
+                return None
+            from skcomms.discovery import inbox_url_for
+
+            return inbox_url_for(fqid, http_get=default_http_get, verifier=verifier)
+        except Exception as exc:  # never let directory resolution break delivery
+            logger.debug("skfed directory inbox_url for %s failed: %s", recipient, exc)
+            return None
 
     def _inbox_url_from_store(self, recipient: str) -> Optional[str]:
         """Look up the S2S inbox URL from the SKComms peer store.

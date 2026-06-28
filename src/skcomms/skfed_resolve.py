@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 from typing import Callable, Optional, Protocol
 
 from .home import skcomms_home
@@ -162,6 +163,51 @@ def _realms_config() -> dict:
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("realms.yml parse error: %s", exc)
         return {}
+
+
+# ---------------------------------------------------------------------------
+# Operator-key pin (so ANY node can verify a realm's directory)
+# ---------------------------------------------------------------------------
+
+
+def operator_pin_path(realm: str) -> Path:
+    """Path to the pinned operator pubkey for *realm* (the directory's signer).
+
+    A node verifies a realm's signed directory by pinning that realm's operator
+    public key here (the TOFU/bootstrap step). For our own realm this is just the
+    operator's ``public.asc`` copied in; for a remote realm it is pinned on first
+    trust. Verification fails closed when the pin is absent.
+    """
+    return skcomms_home() / "skfed" / "operators" / f"{realm}.asc"
+
+
+def realm_verifier(realm: str, operator_label: Optional[str] = None):
+    """Build an :class:`EnvelopeVerifier` from the pinned realm-operator pubkey.
+
+    Returns ``None`` when the realm has no pinned operator key — so the directory
+    fallback stays fail-closed (an unpinned realm is never trusted).
+    """
+    path = operator_pin_path(realm)
+    if not path.exists():
+        return None
+    try:
+        from .cluster import get_operator
+        from .signing import EnvelopeVerifier
+
+        v = EnvelopeVerifier()
+        v.add_key(operator_label or get_operator(), path.read_text(encoding="utf-8"))
+        return v
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("realm_verifier(%s) failed: %s", realm, exc)
+        return None
+
+
+def default_http_get(url: str, timeout: float = 10.0) -> bytes:
+    """Fetch *url* via urllib — the default :443-funnel HTTP getter for resolution."""
+    import urllib.request
+
+    with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 (https funnel)
+        return resp.read()
 
 
 # ---------------------------------------------------------------------------
