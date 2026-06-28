@@ -217,3 +217,74 @@ default community ban feed (Matrix); **no PoW anywhere**.
   pending round-3.
 - **Matrix invite-filtering MSCs** (MSC3847 ignore-invites, MSC4155) — mentioned,
   not verified; may offer invite-consent semantics worth adapting.
+
+---
+
+# Round-3 closeout — topology VERIFIED + the Funnel/Serve lever
+
+**Source:** round-3 `w93r331qu` (WireGuard whitepaper, Tailscale docs, Synapse
+config, Matrix MSCs, Nostr NIP-05 — all primary). Your priority (the tailnet mode)
+is now **verified, not just reasoned**.
+
+## "Network membership = consent" is real (verified)
+- **WireGuard cryptokey routing**: peers are identified *strictly by public key*;
+  the allowed-IPs list is simultaneously the send routing table AND the receive
+  ACL — a decrypted packet is accepted only if its source IP maps to the
+  decrypting key, else dropped. Only enrolled keys can place authenticated traffic.
+- **No public attack surface** (verbatim whitepaper): *"With no state stored for
+  unauthenticated packets, and with no response generated, WireGuard is invisible
+  to illegitimate peers and network scanners."* → **the verified analogue of
+  SimpleX's by-construction "no global address to target."**
+- **Tailscale** is the authz layer and *cannot read traffic* (E2EE point-to-point,
+  even over DERP); ACLs are **directional + default-deny**; Tailnet Lock keeps
+  signing keys admin-controlled so the control plane can't inject a rogue node. So
+  the property holds **without a trusted central message server.**
+
+## The implementation lever: Funnel vs Serve (verified)
+This is the clean switch our two modes map onto directly:
+
+| | **Funnel** (Mode A public) | **Serve** (Mode B tailnet) |
+|---|---|---|
+| Reach | public internet, **only :443/8443/10000** | tailnet only |
+| Identity | **no** identity headers (anonymous ingress) | **injects `Tailscale-User-Login`** (verified requester) |
+| ACLs | n/a (public) | tailnet ACLs apply, **default-deny** |
+| Consent | the **full settled stack** defends this one surface | **authenticated by construction** — minimal gating |
+
+So **Mode B = Serve + ACLs** (private, authenticated, ~zero gating needed) and
+**Mode A = Funnel + directory + the consent stack**. Not metaphor — it's the actual
+Tailscale primitive.
+
+## Hybrid isolation rule (verified — answers "do they bridge?")
+Allowlist private-federation is real (Synapse `federation_domain_whitelist` =
+"a group of servers all whitelist each other"; XMPP CLOSED+exceptions), **BUT it's
+application-layer only** — Synapse's own docs warn the whitelist *does not stop
+joining rooms that already contain non-whitelisted servers*. **Rule:** true
+public/private isolation needs **network-layer** separation (tailnet/firewall), not
+just config — therefore **a public directory MUST NOT list tailnet-only agents**,
+and public/private realms **stay isolated unless mutually allowlisted** at the
+network layer. (Confirms the round-1/2 "tailnet agents unlisted, outbound-only" call.)
+
+## Nostr + Matrix-invite (verified deltas)
+- **NIP-05** is *identification, not verification* (spec verbatim) — its only anchor
+  is DNS/domain control, so any throwaway domain self-attests. **ADOPT only as a
+  human-readable handle layer over the pubkey; never as a spam gate.**
+- **Matrix MSC4155** (merged in Synapse behind a flag): server-enforceable invite
+  filtering — allow/block/**ignore** at **user AND server** granularity, ignored
+  invites excluded from sync + push. **ADOPT the semantics** for our first-contact
+  gate (per-sender + per-realm allow/block/ignore; ignored = silent quarantine).
+  MSC3847 keeps ignore *client-side + reviewable* — good principle (don't make
+  blocks invisible to the user).
+
+## Still UNVERIFIED (do not cite as settled)
+Round-3 returned **no surviving claims** for: Nostr **paid relays**, **web-of-trust
+scoring**, **NIP-65 outbox**; and **all Matrix bridging / Application-Service /
+mautrix / EU-DMA** material. So:
+- The **introduction/vouching (web-of-trust) tier** stays a *design concept*.
+- The **Matrix-bridge gateway** verdict stays *engineering reasoning* (self-hosted
+  + opt-in + clearly-labeled reduced-assurance + bridged-inbound-is-gated), **not**
+  primary-source-verified. Fine for a parked, low-priority future capability.
+
+## Research arc CLOSED
+3 rounds, ~320 agents, ~11M tokens. The consent model + deployment topology are now
+**primary-source grounded end to end**; only the (low-priority) WoT tier and Matrix
+bridge remain as labeled-unverified future work. Ready to build.
