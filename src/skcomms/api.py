@@ -856,30 +856,17 @@ def _build_inbox_verifier(from_fqid: str):
 
 
 def _fed_inbox_dir() -> Path:
-    """The local file-transport inbox dir that ``comm.receive()`` polls.
+    """The federation inbox BASE — ``skcomms_home()/inbox`` (the canonical landing zone).
 
-    Resolves the SAME inbox the deployment's :class:`~skcomms.transports.file.FileTransport`
-    actually reads — the config's ``transports.file.settings.inbox_path`` — so a
-    verified federation envelope written here is drained by the existing receive
-    path EVEN WHEN the config overrides the default inbox location. (Previously this
-    hardcoded ``skcomms_home()/inbox``; if a deployment's config pointed the file
-    transport elsewhere, S2S-delivered envelopes piled up unread because the API
-    wrote one place and the daemon polled another.) Falls back to the FileTransport
-    default (``skcomms_home()/inbox``) when the inbox is unconfigured.
+    :func:`_write_to_recipient_inbox` appends ``/<recipient-agent>`` to this base so
+    each agent's daemon polls its own ``inbox/<agent>`` subdir (multi-agent nodes).
+    A single-agent deployment's daemon simply sets its FileTransport ``inbox_path`` to
+    ``inbox/<that-agent>`` to meet the API here. Fixed (NOT config-derived) so the API
+    write location is deterministic regardless of any per-agent ``inbox_path`` override.
     """
     from .home import skcomms_home
 
-    default = skcomms_home() / "inbox"
-    try:
-        from .config import load_config
-
-        ft = load_config().transports.get("file")
-        configured = ft.settings.get("inbox_path") if ft else None
-        if configured:
-            return Path(configured).expanduser()
-    except Exception:  # noqa: BLE001 — best-effort; never break inbox delivery
-        pass
-    return default
+    return skcomms_home() / "inbox"
 
 
 def _envelope_v1_to_message(env) -> MessageEnvelope:
@@ -915,6 +902,15 @@ def _write_to_recipient_inbox(env) -> str:
     from .transports.file import ENVELOPE_SUFFIX
 
     inbox = _fed_inbox_dir()
+    # Per-recipient routing: write to inbox/<recipient-agent> so MULTIPLE agents
+    # on one node (e.g. opus + jarvis on .41) each poll their OWN inbox and don't
+    # cannibalise each other via the shared FileTransport.receive() (which consumes
+    # every file it sees). Each agent's daemon sets inbox_path = inbox/<its-agent>.
+    # Falls back to the base inbox when no recipient agent can be derived (single-
+    # agent nodes that poll the base directly stay unaffected if their subdir == "").
+    recipient = (getattr(env, "to_fqid", "") or "").split("@")[0].split(":")[-1].strip()
+    if recipient:
+        inbox = inbox / recipient
     inbox.mkdir(parents=True, exist_ok=True)
     msg = _envelope_v1_to_message(env)
     filename = f"{env.id}{ENVELOPE_SUFFIX}"
