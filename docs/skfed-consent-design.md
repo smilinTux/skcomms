@@ -149,3 +149,71 @@ friction.** No single platform's answer — the *composition* is the answer.
 > (WoT scoring, paid-relay economics), email (greylisting/DMARC/PoW-economics), and
 > private-federation rows with verified primary-source detail. A final synthesis +
 > adversarial review pass produces the concrete, tiered build spec.
+
+---
+
+# FINAL synthesized spec (both research rounds folded in)
+
+**Source:** round-1 `w97gx0be7` (Signal+SimpleX, verified) + round-2 `wgr6329o3`
+(Matrix+email verified; Nostr partial; tailnet-topology unverified). Round-2 changed
+three things vs the draft above: **(a) DROP proof-of-work entirely** — Laurie &
+Clayton is the canonical, undisputed result that PoW difficulty needed to deter
+resourced/botnet spammers overlaps legitimate usage (~5.8–346 s/email) so it can't
+work; **(b) ADD greylisting** (temp-defer unknown first-contact — no central server,
+friction = a first-contact delay) as the cheap first-contact speed-bump PoW was
+meant to be; **(c) ADD subscribable signed ban/reputation feeds** (Matrix MSC2313
+model — anyone publishes, anyone subscribes+blends, no central blocklist).
+
+## Delivery = pass EVERY active gate for [mode] × [sender tier]
+
+Gate order (each borrowed from the platform that does it best):
+
+| # | Gate | From | Effect |
+|---|------|------|--------|
+| 1 | **Network membership** | SimpleX-by-construction / WireGuard | Mode B: only tailnet members can even connect. Binary wall. |
+| 2 | **Sender authentication** | email SPF/DKIM/DMARC → our **capauth sig + directory** | We already sign (= DKIM); directory binds identity→inbox (= SPF). Sets the sender's TIER. |
+| 3 | **Reputation / ban feed** | Matrix MSC2313 subscribable policy lists | On a signed ban feed I subscribe to → dropped. Sovereign federated moderation. |
+| 4 | **Capability token** | Signal sealed-sender delivery token | Holds a valid **per-contact** token (= established contact) → **deliver, skip 5**. |
+| 5 | **First-contact knock** | Signal Message Request + email greylisting | No token → quarantine queue (no-notify, capped ~1 msg, no receipts) **+ greylist temp-defer + per-sender rate-limit**. Accept → issue a token (promote). |
+| ~~6~~ | ~~Proof-of-work~~ | ~~Nostr NIP-13 / hashcash~~ | **REMOVED — verified failure.** |
+
+## The two open problems — forced to an answer
+
+**(A) Token issue/rotate/revoke in a PUBLIC federated directory.** Solve with
+**per-contact distinct tokens**, not Signal's single profile-key token. On accept,
+the recipient derives `token = HKDF(recipient_seed, contact_id)` and returns it in
+the accept; the contact attaches it to every later message; the inbox recomputes +
+checks. **Blocking one contact = drop that one token from the valid set** — no
+re-sharing with everyone (Signal's single-token weakness). The public directory
+entry is only ever a *knock* endpoint; tokens are the *delivery* credential, issued
+1-per-accepted-contact, independently revocable. Clean, sovereign, no central server.
+
+**(B) Anon-vs-sovereign friction thresholds (literature says unsettled).** Don't
+bake numbers into the *protocol* — make them **node POLICY** with safe defaults. The
+protocol supplies the *signals* (tier, prior-contact, ban-feed, rate); the node's
+policy decides. Default: **sovereign-signed → 1 knock to the request queue;
+anonymous → greylisted + rate-limited (N/day/sender) + queued**; recipient tunes.
+
+## Mode × tier (what actually runs)
+
+| Mode | Gates active | Net friction |
+|------|-------------|--------------|
+| **A — Public** | 2,3,4,5 (full stack) | Unknown → knock+greylist+ratelimit; known → token; sovereign → low |
+| **B — Tailnet-private** | 1 is the wall; 2–5 relaxed (members trusted) | ~zero — network membership IS consent |
+| **C — Hybrid** | tailnet agents UNLISTED in public dir; outbound-only to public | private topology never exposed |
+
+**OOTB defaults:** quarantine-by-default, accept-on-action (Signal); groups
+invite-only + captcha/knocking/moderator/shadow-block (SimpleX); subscribe to a
+default community ban feed (Matrix); **no PoW anywhere**.
+
+## Honest round-3 gaps (do NOT lean on these yet — unverified)
+- **Tailnet / private-federation topology** — round-2 found ZERO verified claims.
+  Our "network membership = consent" is sound first-principles security (a no-funnel
+  tailnet node has no public attack surface) but needs a round-3 against
+  Tailscale/WireGuard docs + Synapse `federation_domain_whitelist` + XMPP server
+  whitelisting before we cite it as best-practice.
+- **Nostr web-of-trust / paid relays / NIP-05** — unverified this pass (only NIP-13
+  PoW survived, and PoW is out). The introduction/vouching tier stays a *concept*
+  pending round-3.
+- **Matrix invite-filtering MSCs** (MSC3847 ignore-invites, MSC4155) — mentioned,
+  not verified; may offer invite-consent semantics worth adapting.
