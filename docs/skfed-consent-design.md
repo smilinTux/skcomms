@@ -92,3 +92,60 @@ question are unsupported here and need a follow-up pass before we lean on them.
    rate limit at the `:443` inbox.
 4. **Group-join consent** (captcha + knocking + moderator + shadow-block).
 5. Follow-up research pass on Matrix/email/Nostr; settle tiering thresholds.
+
+---
+
+# Why this is hard, and the best-of-each-platform synthesis
+
+## The hard corner of the design space (the honest framing)
+
+We are deliberately standing in the corner **no existing platform fully occupies**:
+**open + discoverable + decentralized/sovereign + E2EE + spam-resistant.** Pick any
+four — the fifth is what each platform gave up:
+
+| Platform | Gives up | To get |
+|---|---|---|
+| **Signal** | decentralization (central server + phone#) | scale + behavioral spam defense |
+| **SimpleX** | discoverability (no identifiers) | spam-resistance by construction |
+| **Matrix** | spam-resistance (open federation IS spammy) | open federation |
+| **Email** | decentralization-in-practice + E2EE | universal reach (reputation centralized at big providers) |
+| **Nostr** | spam-resistance (open relays spammy; paid relays reintroduce friction) | censorship-resistance |
+
+Three structural facts make it hard, not just fiddly:
+1. **E2EE removes content filtering.** The server can't read messages, so the gate
+   must be *structural/behavioral/cryptographic*, never content-based.
+2. **Sovereignty removes the crutches.** No phone# anchor (Signal), no big-provider
+   reputation (email). We must authenticate senders ourselves (we do: **capauth
+   signatures = our SPF/DKIM**) and build trust from scratch.
+3. **Proof-of-work is known to fail** (Laurie & Clayton, *"Proof-of-Work proves not
+   to work"*): botnets out-compute legit users, and the PoW that deters spam also
+   taxes the innocent. So the "obvious crypto fix" is a *minor speed-bump*, not a
+   foundation. (Round-2 verifies this.)
+
+**Conclusion: there is no single setting that wins.** The answer is a **layered,
+tiered, MODE-AWARE** design that borrows the *best primitive from each platform for
+the specific sub-problem*, and lets the **deployment mode** select which layers run.
+
+## Best-of-each → our setup (the synthesis map)
+
+| Borrow from | Their best idea | How it maps onto OUR setup |
+|---|---|---|
+| **SimpleX** | consent *by construction* (no public address) | **Tailnet-only mode** (network membership = consent) + an **unlisted/invite-link** option in public mode. The strongest gate; default for private realms. |
+| **Signal** | recipient-side **message-request quarantine** + per-contact **capability token** | Node-side request queue (no-notify, capped, no receipts) + a **delivery token issued only on accept**, so a public directory entry only lets you *knock*, not deliver. |
+| **Matrix** | **subscribable shared policy/ban lists** (community moderation that scales WITHOUT central control) | Realms publish/subscribe **signed ban + reputation lists** — sovereign moderation that federates. This is Matrix's genuinely good idea and fits our signed-directory model. |
+| **Nostr** | **web-of-trust / follow-graph** filtering + optional **economic gate** | Tier first-contact by **vouching/introduction depth** (a contact-of-a-contact gets less friction); optional stake/payment only where warranted. |
+| **Email** | **sender authentication + reputation**; the **PoW-fails** lesson | We already sign (capauth). Add **per-sender + per-realm reputation**; use PoW only as a thin speed-bump, never the wall. |
+
+## The unifying principle
+**Reachability is one layer; delivery is the product of independent gates.** A
+message is delivered only if it passes the gates active *for this node's mode and
+this sender's tier*: network-membership (tailnet) OR [capability-token AND/OR
+introduction/web-of-trust AND/OR not-on-a-subscribed-ban-list AND rate/PoW
+speed-bump]. Sovereign-signed + introduced senders sail through; anonymous
+unknowns hit every gate. **Mode picks the gate stack; identity tier picks the
+friction.** No single platform's answer — the *composition* is the answer.
+
+> Round-2 research `wgr6329o3` populates the Matrix (policy-list mechanics), Nostr
+> (WoT scoring, paid-relay economics), email (greylisting/DMARC/PoW-economics), and
+> private-federation rows with verified primary-source detail. A final synthesis +
+> adversarial review pass produces the concrete, tiered build spec.
