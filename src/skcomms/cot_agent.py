@@ -136,12 +136,32 @@ def run(host, port, package, *, callsign="LUMINA", lat=40.758, lon=-73.986, inte
         time.sleep(interval)
 
 
+def _agent_defaults() -> dict:
+    """Name-agnostic CoT identity derived from SKAGENT.
+
+    So multiple agents (lumina/opus/jarvis) can each run a CoT agent and join the
+    one shared CoT service — callsign and the per-agent capability package both
+    follow the agent, with a lumina fallback when SKAGENT is unset.
+    """
+    agent = os.environ.get("SKAGENT") or "lumina"
+    return {
+        "agent": agent,
+        "callsign": agent.upper(),
+        "package": os.path.expanduser(
+            f"~/.skcapstone/skcomms/cot-pki/packages/{agent}-box.zip"
+        ),
+    }
+
+
 def main(argv=None):
-    ap = argparse.ArgumentParser(description="LUMINA CoT chat agent")
+    d = _agent_defaults()
+    ap = argparse.ArgumentParser(
+        description="SKFed CoT agent (name-agnostic — identity from SKAGENT)"
+    )
     ap.add_argument("--host", required=True)
     ap.add_argument("--port", type=int, default=8089)
-    ap.add_argument("--package", required=True)
-    ap.add_argument("--callsign", default="LUMINA")
+    ap.add_argument("--package", default=d["package"])
+    ap.add_argument("--callsign", default=d["callsign"])
     ap.add_argument("--lat", type=float, default=40.758)
     ap.add_argument("--lon", type=float, default=-73.986)
     ap.add_argument("--interval", type=float, default=20.0)
