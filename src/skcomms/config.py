@@ -19,7 +19,10 @@ from .models import RoutingMode
 
 logger = logging.getLogger("skcomms.config")
 
-SKCOMMS_HOME = "~/.skcapstone/skcomms"
+# Env-aware so per-agent daemons (e.g. jarvis on .41) can load their OWN config
+# (and thus their own inbox_path) via SKCOMMS_HOME, while the default agent + the
+# S2S API use ~/.skcapstone/skcomms. Matches skcomms.home.skcomms_home()'s override.
+SKCOMMS_HOME = os.environ.get("SKCOMMS_HOME") or "~/.skcapstone/skcomms"
 
 
 class IdentityConfig(BaseModel):
