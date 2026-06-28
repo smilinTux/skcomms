@@ -265,6 +265,7 @@ class Router:
         dest_hybrid_pub: Optional[bytes] = None,
         next_hop: Optional[str] = None,
         pqroute_flags: Optional[list[str]] = None,
+        pqroute_pad: bool = True,
     ) -> DeliveryReport:
         """Route a canonical :class:`SignedEnvelope` to its ``to_fqid``.
 
@@ -282,6 +283,12 @@ class Router:
         relay-readable; the envelope is then routed to ``next_hop`` (the relay)
         instead of directly to ``to_fqid``. Default OFF / missing prekey -> the
         exact verbatim-bytes behaviour above (byte-for-byte unchanged).
+
+        When the pqroute path is taken, the body is additionally length-hidden
+        with the P2 size-class padding ladder *under* the seal (``pqroute_pad``,
+        default ``True``) so the on-wire length leaks only a coarse size class.
+        Set ``pqroute_pad=False`` to keep the un-padded wrapped form. The OFF
+        path is unaffected (no padding, byte-for-byte unchanged).
         """
         env = signed.envelope
 
@@ -295,6 +302,7 @@ class Router:
                 dest_hybrid_pub=dest_hybrid_pub,
                 enabled=True,
                 flags=pqroute_flags,
+                pad=pqroute_pad,
             )
             # The relay only ever sees / resolves the next hop — the final
             # destination is sealed inside the blob.

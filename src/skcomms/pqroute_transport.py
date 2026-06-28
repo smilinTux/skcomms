@@ -38,6 +38,20 @@ Wire framing (wrapped form only)::
         where pqroute1_blob = hdr_len(4) || route_hdr_json || ct || nonce || sealed
 
 The unwrapped form is just the plain ``SignedEnvelope`` JSON bytes (no magic).
+
+Length hiding (P2 padding ladder, composed UNDER the seal)
+----------------------------------------------------------
+An AEAD ciphertext is the same length as its plaintext, so even a sealed body
+leaks its length (a traffic-analysis fingerprint). In the wrapped path the body
+is therefore run through the P2 size-class padding ladder
+(:mod:`skcomms.padding`) *before* it is hybrid-sealed (default ``pad=True``):
+two different small bodies pad to the same coarse bucket and produce an
+identical on-wire length. The pad runs under the seal (the filler is
+indistinguishable from the sealed body) and the sealed inner metadata advertises
+the suite (``{"pad": "pad-ladder-v1"}``) so :func:`unwrap_signed` un-pads
+self-describingly. Composition is confined to the gated wrapped path — the OFF
+path stays byte-for-byte identical, and ``pad=False`` keeps the un-padded form
+for legacy blobs / callers that do not want length normalisation.
 """
 
 from __future__ import annotations
@@ -46,6 +60,7 @@ import os
 from typing import Optional
 
 from .envelope import SignedEnvelope
+from .padding import PAD_SUITE, pad_to_bucket, unpad
 from .pqroute import (
     PqRouteFormatError,
     open_routed,
@@ -67,6 +82,12 @@ PQROUTE_MAGIC = b"SKCPQR1\x00"
 
 #: Routing-envelope wire version carried in the outer next-hop header.
 _ROUTE_HDR_VERSION = 1
+
+#: Sealed-inner metadata key advertising the P2 padding suite applied to the
+#: content *under* the seal. Self-describing: :func:`unwrap_signed` only un-pads
+#: when this key is present, so un-padded (legacy / ``pad=False``) wrapped blobs
+#: keep round-tripping unchanged.
+_INNER_PAD_KEY = "pad"
 
 _TRUTHY = {"1", "true", "yes", "on"}
 
@@ -128,6 +149,7 @@ def wrap_signed(
     enabled: Optional[bool] = None,
     flags: Optional[list] = None,
     extra_inner_meta: Optional[dict] = None,
+    pad: bool = True,
 ) -> bytes:
     """Produce the outbound wire bytes for a :class:`SignedEnvelope`.
 
@@ -135,6 +157,17 @@ def wrap_signed(
     identical to today. ON *and* a ``dest_hybrid_pub`` present -> returns a
     framed pqroute1 blob where the FINAL destination FQID + flags + the whole
     signed envelope are hybrid-sealed inside, and only ``next_hop`` is outer.
+
+    When the wrapped path is taken, the signed-envelope body is also run through
+    the P2 **size-class padding ladder** (:mod:`skcomms.padding`) *before* it is
+    sealed (``pad=True``, the default). This normalises the on-wire length to a
+    coarse bucket so a passive observer cannot fingerprint content by its exact
+    length — an AEAD ciphertext is otherwise the same length as its plaintext.
+    The pad runs UNDER the seal, so the filler is indistinguishable from the
+    sealed body. The sealed inner metadata advertises the pad suite
+    (``{"pad": "pad-ladder-v1"}``) so :func:`unwrap_signed` is self-describing.
+    Padding is composed only inside the (gated, additive) wrapped path — the OFF
+    path stays byte-for-byte identical.
 
     Args:
         signed: The canonical signed envelope to put on the wire.
@@ -146,6 +179,10 @@ def wrap_signed(
         flags: Optional sensitive routing flags sealed into the inner metadata.
         extra_inner_meta: Optional extra sensitive fields merged into the sealed
             inner metadata (e.g. timestamps). Never relay-visible.
+        pad: Apply the P2 size-class padding ladder to the body under the seal
+            (default ``True``). ``False`` keeps the un-padded wrapped behaviour
+            (escape hatch / legacy-blob compatibility); the inner then carries no
+            pad suite and :func:`unwrap_signed` returns the content verbatim.
 
     Returns:
         Wire bytes — plain ``SignedEnvelope`` JSON (OFF) or ``PQROUTE_MAGIC ||
@@ -162,10 +199,17 @@ def wrap_signed(
     if extra_inner_meta:
         inner_meta.update(extra_inner_meta)
 
+    content = signed.to_bytes()
+    if pad:
+        # Length-hide the body BEFORE sealing; advertise the suite so the opener
+        # un-pads self-describingly (legacy / pad=False blobs carry no suite).
+        content = pad_to_bucket(content)
+        inner_meta[_INNER_PAD_KEY] = PAD_SUITE
+
     route_hdr = {"to_relay": next_hop, "v": _ROUTE_HDR_VERSION}
     blob = seal_routed(
         inner_meta,
-        signed.to_bytes(),
+        content,
         bytes(dest_hybrid_pub),
         route_hdr=route_hdr,
     )
@@ -196,6 +240,10 @@ def unwrap_signed(
     _route_hdr, inner_meta, content = open_routed(
         bytes(wire)[len(PQROUTE_MAGIC):], dest_hybrid_priv
     )
+    # Self-describing un-pad: only strip the P2 ladder when the sealed inner
+    # advertised it (legacy / pad=False blobs carry the content verbatim).
+    if inner_meta.get(_INNER_PAD_KEY) == PAD_SUITE:
+        content = unpad(content)
     return inner_meta, SignedEnvelope.from_bytes(content)
 
 
