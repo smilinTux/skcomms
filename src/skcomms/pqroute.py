@@ -57,8 +57,10 @@ Hybrid sealing only. If liboqs is missing the underlying KEM raises loudly
 (:class:`skcomms.pqkem.PqKemUnavailable`); this module never silently downgrades
 to a classical-only routing layer.
 
-CLEAN-ROOM: the routing-split *idea* is inspired by mix/relay designs (incl.
-SimpleX) but no third-party code was used — only the SK primitives above.
+Design lineage: the routing-split *idea* is inspired by no-identity /
+mix-network messaging designs (clean-room, original implementation) — only the
+SK primitives above are used. The technical departure is that we hybrid-seal the
+routing metadata rather than leaving it classical.
 """
 
 from __future__ import annotations

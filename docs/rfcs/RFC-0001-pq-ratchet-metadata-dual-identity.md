@@ -56,24 +56,54 @@ are **AGPL-3.0**. We are **Apache-2.0**. Therefore:
 
 ## 2. Design
 
-### 2.1 Dual identity — `auth_mode` is a suite-id, not an architecture
+### 2.1 Identity mode switch (DID ↔ anonymous) — a first-class capability
 
-One envelope, one ratchet, one transport. The *identity layer* flips by a per-conversation
-(or per-deployment-default) suite-id:
+**This is a headline plan item, not a sub-feature** (implementation tracked under coord
+`c0f105a1`). The stack runs **one envelope, one ratchet, one transport**, and the *identity
+layer* flips at runtime between two modes. The flip is a single **`auth_mode` suite-id / mode
+flag selected at session establishment** — there is no second protocol stack, no fork: the KEM,
+the ratchet, the padding, and the metadata seal are byte-identical in both modes; only how (or
+whether) the session is *attributed* changes.
 
 ```mermaid
 flowchart TD
-    msg[outbound message] --> mode{auth_mode suite-id}
-    mode -->|"anonymous (default)"| AN["🕶️ no capauth identity<br/>ephemeral per-queue keys<br/>deniable X25519/crypto_box-style MAC<br/>opaque queue IDs (RID/SID)"]
-    mode -->|"sovereign (enterprise flag)"| SV["🪪 capauth FQID<br/>hybrid Ed25519+ML-DSA-65 sig<br/>federated, non-repudiable, auditable"]
-    AN --> core[shared KEM + ratchet core]
+    est["session establishment<br/>(per-conversation, default = per-deployment policy)"] --> mode{"auth_mode<br/>suite-id / mode flag"}
+    mode -->|"ANONYMOUS / deniable<br/>(default)"| AN["🕶️ <b>no DID</b> · no capauth identity<br/>ephemeral per-queue keys<br/>opaque queue IDs (RID/SID)<br/>deniable HMAC auth (repudiable)<br/>MITM-resisted by OOB/QR link"]
+    mode -->|"SOVEREIGN / attributable<br/>(enterprise flag)"| SV["🪪 <b>capauth DID + FQID</b><br/>hybrid Ed25519+ML-DSA-65<br/>signed prekeys + envelope identity sig<br/>federated · non-repudiable · auditable"]
+    AN --> core["shared KEM + ratchet core<br/>(IDENTICAL in both modes —<br/>ratchet steps stay signature-free)"]
     SV --> core
-    core --> tx[padded, metadata-sealed transport]
+    core --> tx["padded, metadata-sealed transport"]
+    SV -. "❌ never silently downgrades<br/>(enforced + self-reported)" .-x AN
 ```
 
-- **anonymous** (default) — SimpleX topology: pairwise opaque queue IDs, **no capauth identity**, **deniable** auth (no signatures on content), MITM-resisted by OOB/QR link exchange (secrets in the URI hash fragment, never sent to the relay).
-- **sovereign** (flag) — our FQID + **hybrid Ed25519+ML-DSA-65** identity signature, federated, auditable.
-- **Invariants (enforced + self-reported):** a *sovereign* conversation **never silently downgrades** to anonymous; signatures stay **off the ratchet steps** in both modes so **content deniability** survives even in sovereign mode (identity is asserted only at session establishment). `sksecurity` self-report declares the active mode + what the relay can/can't see.
+**The two modes:**
+
+- **ANONYMOUS / deniable** (default) — **no DID**, no capauth identity. Pairwise **opaque queue
+  IDs (RID/SID)**, **deniable HMAC** auth (a symmetric MAC: authentic to the participants,
+  repudiable to any third party — never a signature on content). MITM is resisted by OOB/QR link
+  exchange (the shared secret rides in the URI **hash fragment**, never sent to the relay). This
+  is the deniability-first posture.
+- **SOVEREIGN / attributable** (flag) — **capauth DID + FQID**, with **hybrid Ed25519+ML-DSA-65**
+  signed prekeys and an identity signature on the *envelope establishment*. Federated,
+  non-repudiable, auditable. This is the enterprise / accountability posture.
+
+**Granularity:** the mode is selectable **per-conversation** *and* has a **per-deployment
+default** (a sovereign deployment can default every new conversation to sovereign; the personal
+default is anonymous). Both are policy over the *same* mechanism.
+
+**Security invariants (enforced + machine-self-reported by `sksecurity`):**
+
+1. **Sovereign never silently downgrades.** A conversation negotiated as sovereign cannot be
+   flipped to anonymous mid-session by a stripping relay or peer; a downgrade attempt fails the
+   establishment check and surfaces in the self-report as a refused/mismatched mode — it never
+   silently becomes the weaker thing.
+2. **Ratchet steps stay signature-free in BOTH modes.** Identity is asserted **only at session
+   establishment** (the signed prekey / DID exchange). The per-message ratchet carries no
+   signatures in either mode — so **content deniability survives even in sovereign mode**:
+   sovereign proves *who set up the session*, never *who authored a given message*. Anonymous
+   mode adds the deniable HMAC on top of the same signature-free ratchet.
+3. **The self-report declares the active mode** (`auth_mode`) and **what the relay can/can't
+   see**, so the privacy posture is auditable and no claim outruns the live suite.
 
 ### 2.2 Level-3 post-quantum ratchet for 1:1 DMs
 
@@ -181,6 +211,7 @@ outruns the live suite. Forbidden-words discipline as ever.
 | **P3** | **Metadata-sealed envelope** (outer header / inner blob, hybrid ML-KEM) | M | skcomms | `pqroute1:` | 🟢 **scaffold DONE** (`skcomms/pqroute.py` + `pqroute_transport.py`, mirrored `sk_pqc.pqroute`) → wiring next |
 | **P4** | **Self-report** extensions (mode/level/pad/route) | S | sksecurity | — | 🟢 **scaffold DONE** (suite-id/annotation surface in `sk_pqc.annotations` / `crypto_suites`) |
 | **P5** | **Anonymous-queue mode** (opaque RID/SID, OOB invite links, deniable auth, queue rotation) | L | skcomms+skchat | `auth=anon-v1` | 🟢 **scaffold DONE** (`skcomms/anon_queue.py` + `sk_pqc.anon_queue` RID/SID codec) — not yet wired into live transport |
+| **PID** | **Identity mode switch (DID ↔ anonymous)** — runtime `auth_mode` flag at session establishment; per-conversation + per-deployment default; downgrade-refusal + signature-free-ratchet invariants (§2.1) | M | skcomms+skchat+capauth+sksecurity | `auth_mode` (`anon-v1` / `sovereign-v1`) | 🟡 **first-class plan item — coord `c0f105a1`** (composes P4 self-report + P5 anon branch + sovereign prekey sig; mode-flag plumbing + invariant enforcement next) |
 | **—** | **Sovereign prekey signature** (hybrid Ed25519+ML-DSA-65 identity sig) | S | skchat | `pqsig` | 🟢 **scaffold DONE** (`skchat/prekey_sig.py`) — feeds the sovereign branch of §2.1 |
 | **P6** | **2-hop onion private routing** (the full anonymity transport) | L | skcomms | `route=onion-v1` | ⚪ design only |
 | **P7** | **Shared Rust crypto core + FFI** (multi-client convergence) | XL | `sk-pqc-rs` (`sk_core`→renamed) | — | ⚪ roadmap — see §7 (coord `6db4a7c9`) |

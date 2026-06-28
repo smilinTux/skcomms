@@ -7,12 +7,13 @@ of a few coarse buckets so a passive observer learns a size *class*, not the
 exact byte count (a classic traffic-analysis leak: an encrypted body still
 reveals its length, which fingerprints the content).
 
-Why a ladder, not SimpleX's single bucket
-------------------------------------------
-SimpleX pads every message to one fixed ~16 KB block. That perfectly hides
-size *within* the block, but (a) wastes ~16 KB of bandwidth on a one-line DM and
-(b) cannot represent anything larger without a separate mechanism. We instead
-use a short **bucket ladder** (:data:`PAD_LADDER`). The trade-off is explicit:
+Why a ladder, not a single fixed bucket
+---------------------------------------
+A single-fixed-bucket scheme pads every message to one block (e.g. ~16 KB).
+That perfectly hides size *within* the block, but (a) wastes bandwidth on a
+one-line DM and (b) cannot represent anything larger without a separate
+mechanism. We instead use a short **bucket ladder** (:data:`PAD_LADDER`).
+The trade-off is explicit:
 the ladder leaks only a coarse size class (which of four buckets), while keeping
 small messages cheap. Payloads larger than the top bucket grow to the next
 *multiple* of the top bucket — so even oversize bodies pad to a coarse multiple
@@ -42,7 +43,7 @@ from __future__ import annotations
 
 import os
 
-#: A small bucket ladder (bytes). NOT SimpleX's single 16 KB bucket: a ladder
+#: A small bucket ladder (bytes). Unlike a single-fixed-bucket scheme, a ladder
 #: leaks only a coarse size class while keeping small DMs cheap (a one-line
 #: message pads to 4 KB, not 16 KB), and still covers large payloads via
 #: coarse-multiple growth past the top bucket.
