@@ -1,0 +1,36 @@
+# skcomms node registry — durable cross-node inbox addressing
+# ---------------------------------------------------------------------------
+# Copy to ~/.skcapstone/skcomms/node_registry.yml to ENABLE.
+# (Honors the SKCOMMS_HOME env override.)
+#
+# Why: the cross-node ratchet used to HARDCODE a tailnet IP inside each peer
+# file's transports[].settings.inbox_url. When a node's tailnet IP changed,
+# every peer file went stale and delivery silently broke. This registry is the
+# SINGLE place to map a node's short agent name -> how to reach its daemon, so
+# inbox_url_for() prefers it and you only update one file.
+#
+# Resolution for each entry (skcomms.node_registry.NodeRegistry):
+#   1. ts_ip set      -> used verbatim (preferred).
+#   2. ts_host set     -> used literally (magicDNS is reachable as-is), OR
+#                         derived to a tailnet IPv4 from `tailscale status`
+#                         when a status provider is supplied to the resolver.
+#   3. neither         -> None (the caller falls back to the peer's transport
+#                         inbox_url, then to None — never crashes).
+#
+# The :8765 daemon-proxy serves BOTH /api/v1/inbox and /api/v1/prekey, so one
+# entry covers envelope delivery and PQ prekey fetch.
+#
+# Absent file == feature OFF (clean fallback to legacy transport inbox_url).
+# ---------------------------------------------------------------------------
+
+nodes:
+  # Explicit tailnet IP (most durable against magicDNS / DNS hiccups).
+  jarvis:
+    ts_ip: 100.86.156.5
+    daemon_port: 8765        # optional; 8765 is the default
+
+  # Tailnet / magicDNS hostname. Used literally, or resolved to an IP when the
+  # resolver is given a `tailscale status` provider.
+  lumina:
+    ts_host: noroc2027
+    # daemon_port omitted -> 8765

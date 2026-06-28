@@ -505,21 +505,51 @@ def discover_all(
 # ---------------------------------------------------------------------------
 
 
-def inbox_url_for(fqid: str, store: Optional[PeerStore] = None) -> Optional[str]:
-    """Resolve the ``https-s2s`` inbox URL for a peer *fqid*.
+def inbox_url_for(
+    fqid: str,
+    store: Optional[PeerStore] = None,
+    registry: Optional["NodeRegistry"] = None,
+) -> Optional[str]:
+    """Resolve a reachable ``/api/v1/inbox`` URL for a peer *fqid*.
 
-    Looks the peer up in the :class:`PeerStore` (by ``fqid`` field first, then
-    by ``name``, then by the agent component of the fqid) and returns the
-    ``inbox_url`` carried on its ``https-s2s`` transport entry, if any.
+    Resolution order (durable cross-node addressing):
+
+        1. **Node registry** (:mod:`skcomms.node_registry`) — PREFERRED. Maps the
+           peer's short agent name to ``{ts_host|ts_ip, daemon_port}`` and emits
+           ``http://<ts-ip-or-host>:<port>/api/v1/inbox``. This is durable across
+           tailnet IP changes (the registry is the single place to update).
+        2. **Peer transport** — FALLBACK. The ``inbox_url`` carried on the peer's
+           ``https-s2s`` transport entry in the :class:`PeerStore` (the legacy
+           hardcoded value), kept for back-compat and as a degrade path.
+        3. ``None`` — when neither resolves. Never raises.
+
+    The peer is matched by ``fqid`` field first, then by ``name``, then by the
+    agent component of the fqid.
 
     Args:
         fqid: The peer's ``<agent>@<operator>.<realm>`` handle (or bare name).
         store: Optional :class:`PeerStore` (a default one is used otherwise).
+        registry: Optional :class:`~skcomms.node_registry.NodeRegistry`. When
+            ``None`` a default one is loaded from ``node_registry.yml`` (an empty
+            registry if the file is absent — clean fallback to the transport).
 
     Returns:
-        The peer's S2S inbox URL, or ``None`` if the peer is unknown or has no
-        ``https-s2s`` transport.
+        A reachable S2S inbox URL, or ``None`` if the peer is unknown / has no
+        resolvable address.
     """
+    # 1) Node registry (preferred, durable). Total — any failure -> fallback.
+    agent_short = fqid.split("@", 1)[0] if "@" in fqid else fqid
+    try:
+        from .node_registry import NodeRegistry
+
+        reg = registry if registry is not None else NodeRegistry.load()
+        url = reg.inbox_url(agent_short)
+        if url:
+            return url
+    except Exception as exc:  # never let registry resolution break delivery
+        logger.debug("node_registry lookup failed for %s: %s", fqid, exc)
+
+    # 2) Peer transport (legacy/back-compat fallback).
     store = store or PeerStore()
     candidates = [fqid]
     if "@" in fqid:

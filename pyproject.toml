@@ -64,6 +64,14 @@ pqc = [
     "liboqs-python>=0.12",
     "cryptography>=42.0,<44.0",
 ]
+sk-pqc = [
+    # coord 0a1f0a51: OPTIONAL re-export of the published sk_pqc lib. When present,
+    # the in-app primitive modules (pqkem/pqdm/pqroute/anon_queue/crypto_suites)
+    # re-export sk_pqc's vetted code; when ABSENT (e.g. .41) they fall back to the
+    # local impl unchanged. This is NOT a hard runtime dep — never required to run.
+    # Install: pip install "skcomms[sk-pqc]"
+    "sk-pqc>=0.1",
+]
 nostr = [
     "websockets>=12.0",
     "cryptography>=42.0,<44.0",
