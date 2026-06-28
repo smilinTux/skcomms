@@ -118,9 +118,11 @@ def test_inbox_happy_path_stores_and_200(client, jarvis_keys, tmp_path):
     assert body["ok"] is True
     env_id = body["id"]
 
-    # Verified envelope was written to the file-transport inbox dir.
+    # Verified envelope was written to the recipient's file-transport inbox.
+    # Per-recipient routing (multi-agent nodes) writes to inbox/<recipient-agent>/,
+    # so recurse rather than globbing only the base dir.
     inbox = tmp_path / "inbox"
-    files = list(inbox.glob("*.skc.json"))
+    files = list(inbox.rglob("*.skc.json"))
     assert len(files) == 1
     assert files[0].name == f"{env_id}.skc.json"
 
