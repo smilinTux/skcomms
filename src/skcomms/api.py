@@ -899,7 +899,9 @@ def _consent_classify(recipient: str, sender: str) -> str:
     Default (``off``/unset) and any error → ``'deliver'`` — the gate is opt-in and
     **fail-open**, so a consent bug or missing config never blackholes federation.
     """
-    mode = (_os.environ.get("SKCOMMS_CONSENT_MODE") or "off").strip().lower()
+    import os
+
+    mode = (os.environ.get("SKCOMMS_CONSENT_MODE") or "off").strip().lower()
     if mode in ("", "off") or not recipient or not sender:
         return "deliver"
     try:
