@@ -68,9 +68,9 @@ def llm_reply(text: str, context: str = "", *, timeout: float = 20.0) -> str:
 
 
 def run(host, port, package, *, callsign="LUMINA", lat=40.758, lon=-73.986, interval=20.0):
-    my_uid = "LUMINA-" + uuid.uuid4().hex[:10]
+    my_uid = f"{callsign}-" + uuid.uuid4().hex[:10]
     sock = _connect(host, port, package=package)
-    print(f"LUMINA agent connected to {host}:{port} as {callsign} (uid {my_uid})", flush=True)
+    print(f"CoT agent connected to {host}:{port} as {callsign} (uid {my_uid})", flush=True)
     lock = threading.Lock()
     seen: set[str] = set()
     geo = GeoStore()  # CB4 situational-awareness store (replaces ad-hoc dict)
