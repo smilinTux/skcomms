@@ -2585,3 +2585,98 @@ def pqc_report_cmd(output_format, static):
 
 if __name__ == "__main__":
     main()
+
+
+# ---------------------------------------------------------------------------
+# consent — first-contact request management (skfed-consent-design gate 5+)
+# ---------------------------------------------------------------------------
+
+
+def _consent_agent() -> str:
+    """Resolve this CLI's agent (SKAGENT, else the self identity, else 'local')."""
+    import os
+
+    a = os.environ.get("SKAGENT")
+    if a:
+        return a
+    try:
+        from .identity import resolve_self_identity
+
+        return resolve_self_identity().get("agent") or "local"
+    except Exception:
+        return "local"
+
+
+@main.group("consent")
+def consent_group():
+    """First-contact consent — manage quarantined requests and contacts."""
+
+
+@consent_group.command("requests")
+def consent_requests_cmd():
+    """List quarantined first-contact requests (the knock queue)."""
+    from .consent_requests import list_requests
+
+    reqs = list_requests(_consent_agent())
+    if not reqs:
+        click.echo("No pending requests.")
+        return
+    for r in reqs:
+        click.echo(f"  {r['sender']}  (env {r['envelope_id']})")
+
+
+@consent_group.command("accept")
+@click.argument("sender")
+def consent_accept_cmd(sender):
+    """Accept a request → promote to a known contact and mint its delivery token."""
+    from .consent_requests import accept_request
+    from .consent_tokens import TokenStore
+
+    agent = _consent_agent()
+    accept_request(agent, sender)
+    token = TokenStore(agent).issue(sender)
+    click.echo(f"Accepted {sender}. Delivery token: {token}")
+
+
+@consent_group.command("decline")
+@click.argument("sender")
+@click.option("--block", is_flag=True, help="Also block the sender.")
+def consent_decline_cmd(sender, block):
+    """Decline a request; with --block, also block the sender."""
+    from .consent_requests import decline_request
+
+    decline_request(_consent_agent(), sender, block=block)
+    click.echo(f"Declined {sender}" + (" + blocked" if block else ""))
+
+
+@consent_group.command("block")
+@click.argument("sender")
+def consent_block_cmd(sender):
+    """Block a sender (its traffic is dropped)."""
+    from .consent_requests import block_sender
+
+    block_sender(_consent_agent(), sender)
+    click.echo(f"Blocked {sender}")
+
+
+@consent_group.command("unblock")
+@click.argument("sender")
+def consent_unblock_cmd(sender):
+    """Unblock a previously-blocked sender."""
+    from .consent_requests import unblock
+
+    unblock(_consent_agent(), sender)
+    click.echo(f"Unblocked {sender}")
+
+
+@consent_group.command("known")
+def consent_known_cmd():
+    """List known/accepted contacts."""
+    from .consent_requests import list_known
+
+    known = list_known(_consent_agent())
+    if not known:
+        click.echo("No known contacts.")
+        return
+    for k in known:
+        click.echo(f"  {k}")
