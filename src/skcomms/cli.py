@@ -2680,3 +2680,148 @@ def consent_known_cmd():
         return
     for k in known:
         click.echo(f"  {k}")
+
+
+# ---------------------------------------------------------------------------
+# consent policy — MSC4155 invite filter management (consent_policy.InvitePolicy)
+# ---------------------------------------------------------------------------
+
+
+@consent_group.group("policy")
+def consent_policy_group():
+    """Manage the MSC4155 invite filter (allow / block / ignore)."""
+
+
+def _policy_set_verb(fqid: str, verb) -> None:
+    """Move *fqid* to a single verb's user-set (removing it from the others) + enable."""
+    from .consent_policy import InvitePolicy
+
+    agent = _consent_agent()
+    pol = InvitePolicy.load(agent)
+    for s in (pol.allowed_users, pol.ignored_users, pol.blocked_users):
+        s.discard(fqid)
+    verb(pol)
+    pol.enabled = True
+    pol.save()
+
+
+@consent_policy_group.command("show")
+def consent_policy_show_cmd():
+    """Show the current invite filter."""
+    from .consent_policy import InvitePolicy
+
+    pol = InvitePolicy.load(_consent_agent())
+    click.echo(f"invite policy: {'ENABLED' if pol.enabled else 'disabled (pass-through)'}")
+
+    def _emit(label, users, servers):
+        if users or servers:
+            click.echo(f"  {label}:")
+            for u in sorted(users):
+                click.echo(f"    user   {u}")
+            for s in sorted(servers):
+                click.echo(f"    server {s}")
+
+    _emit("allow", pol.allowed_users, pol.allowed_servers)
+    _emit("ignore", pol.ignored_users, pol.ignored_servers)
+    _emit("block", pol.blocked_users, pol.blocked_servers)
+
+
+@consent_policy_group.command("allow")
+@click.argument("fqid")
+def consent_policy_allow_cmd(fqid):
+    """Explicitly allow *fqid* (overrides a broader block)."""
+    _policy_set_verb(fqid, lambda p: p.allowed_users.add(fqid))
+    click.echo(f"allow {fqid}")
+
+
+@consent_policy_group.command("block")
+@click.argument("fqid")
+def consent_policy_block_cmd(fqid):
+    """Hard-reject *fqid* (user-visible)."""
+    _policy_set_verb(fqid, lambda p: p.blocked_users.add(fqid))
+    click.echo(f"block {fqid}")
+
+
+@consent_policy_group.command("ignore")
+@click.argument("fqid")
+def consent_policy_ignore_cmd(fqid):
+    """Silently quarantine *fqid* (no sync, no push)."""
+    _policy_set_verb(fqid, lambda p: p.ignored_users.add(fqid))
+    click.echo(f"ignore {fqid}")
+
+
+# ---------------------------------------------------------------------------
+# consent feeds — trusted ban-feed publishers in runtime.yml (consent_runtime)
+# ---------------------------------------------------------------------------
+
+
+@consent_group.group("feeds")
+def consent_feeds_group():
+    """Manage trusted, pinned ban-feed publishers (gate-3)."""
+
+
+@consent_feeds_group.command("list")
+def consent_feeds_list_cmd():
+    """List the trusted ban-feed publishers."""
+    from .consent_runtime import list_feeds
+
+    feeds = list_feeds(_consent_agent())
+    if not feeds:
+        click.echo("No trusted ban feeds.")
+        return
+    for f in feeds:
+        feed = f.get("feed", "")
+        suffix = f"  (feed: {feed})" if feed else "  (key pinned, no feed)"
+        click.echo(f"  {f.get('publisher')}{suffix}")
+
+
+@consent_feeds_group.command("subscribe")
+@click.argument("publisher")
+@click.argument("pubkey_file", type=click.Path(exists=True, dir_okay=False))
+@click.option("--feed", "feed_path", default=None,
+              help="Path to a signed BanFeed JSON to blend.")
+def consent_feeds_subscribe_cmd(publisher, pubkey_file, feed_path):
+    """Pin *publisher*'s ban-feed key from PUBKEY_FILE (fail-closed at use)."""
+    from .consent_runtime import add_feed
+
+    armor = Path(pubkey_file).read_text(encoding="utf-8")
+    add_feed(_consent_agent(), publisher, armor, feed=feed_path)
+    click.echo(f"subscribed {publisher}")
+
+
+@consent_feeds_group.command("unsubscribe")
+@click.argument("publisher")
+def consent_feeds_unsubscribe_cmd(publisher):
+    """Un-pin (unsubscribe) *publisher*."""
+    from .consent_runtime import remove_feed
+
+    if remove_feed(_consent_agent(), publisher):
+        click.echo(f"unsubscribed {publisher}")
+    else:
+        click.echo(f"No such feed: {publisher}")
+
+
+# ---------------------------------------------------------------------------
+# consent tier — show sender tiering + friction (consent_tiering)
+# ---------------------------------------------------------------------------
+
+
+@consent_group.command("tier")
+@click.argument("fqid")
+@click.option("--verified", is_flag=True, help="Sender's capauth/DID signature checked + valid.")
+@click.option("--introduced", is_flag=True, help="Sender is vouched (contact-of-a-contact).")
+def consent_tier_cmd(fqid, verified, introduced):
+    """Show *fqid*'s tier (classify_tier) and the friction the node would apply."""
+    from .consent_runtime import build_pipeline
+    from .consent_tiering import classify_tier, friction_for
+
+    agent = _consent_agent()
+    tier = classify_tier(fqid, verified=verified, introduced=introduced)
+    # Honor any node friction overrides from runtime.yml.
+    overrides = getattr(build_pipeline(agent), "_node_policy", None)
+    fr = friction_for(tier, overrides=overrides)
+    click.echo(f"{fqid}")
+    click.echo(f"  tier: {tier.value}")
+    click.echo(f"  greylist:     {fr.greylist}")
+    click.echo(f"  rate_per_day: {fr.rate_per_day}")
+    click.echo(f"  require_token: {fr.require_token}")

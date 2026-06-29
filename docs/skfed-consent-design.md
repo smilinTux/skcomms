@@ -288,3 +288,42 @@ mautrix / EU-DMA** material. So:
 3 rounds, ~320 agents, ~11M tokens. The consent model + deployment topology are now
 **primary-source grounded end to end**; only the (low-priority) WoT tier and Matrix
 bridge remain as labeled-unverified future work. Ready to build.
+
+---
+
+# Group consent — wired (the `GroupConsentGate`)
+
+Sections 4 & 5 above describe the *primitives*. They are built as separate,
+independently-tested modules and then **composed into one gate** so that a group
+implementation gets the SAME knock -> review -> admit + moderation protection the
+1:1 DM gate (`consent.py` / `consent_pipeline.py`) already provides.
+
+**Modules wired** (each owns its own SQLite store under `skcomms_home()/consent/…`):
+- `consent_groups.GroupJoinPolicy` — admission state machine (`invite_only` /
+  `knock` / `open`) + owner / moderator / member roles.
+- `consent_captcha.Captcha` — sovereign, bot-issued, no-3rd-party captcha.
+- `consent_moderation.ShadowBlockSet` — hidden-from-all-but-self message filter.
+- `consent_moderation.ReportLog` — consent-gated, metadata-only abuse reports.
+
+**The seam:** `consent_group_gate.GroupConsentGate` — pure composition, owns no
+persistence of its own (mirrors `ConsentPipeline`). A group implementation calls:
+
+- **JOIN** — `join_decision(group_id, fqid)`:
+  - `invite_only` → admit a pre-invited fqid, else **reject the stranger**.
+  - `knock` → **queue** the joiner PENDING for moderator review.
+  - `open` (no captcha) → admit immediately.
+  - `open` + `require_captcha` → **issue** a `Captcha` challenge and hold the
+    joiner PENDING; `admit(group_id, fqid, challenge_id=…, captcha_answer=…)`
+    admits **only on verify**.
+  - moderator approves a knock via `admit(group_id, fqid, by=<moderator>)`
+    (role-gated — a plain member raises `PermissionError`).
+- **MESSAGE** — `visible(group_id, viewer, sender)` filters through the per-group
+  `ShadowBlockSet`: a shadow-blocked sender is hidden from everyone but themselves.
+  `shadow_block(group_id, member, by=<moderator>)` is the moderator action.
+- **REPORT** — `report(group_id, message_id=…, reporter=…, reason=…)` files a
+  minimal `ReportLog` record (never content); `list_reports(group_id)` is the
+  moderator queue.
+
+**Opt-in / additive:** the gate touches nothing in `api.py` / `cli.py` and, like
+the 1:1 gate, changes nothing live until `SKCOMMS_CONSENT_MODE` is set — a group
+implementation only reaches for `GroupConsentGate` when consent is switched on.

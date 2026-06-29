@@ -905,11 +905,13 @@ def _consent_classify(recipient: str, sender: str) -> str:
     if mode in ("", "off") or not recipient or not sender:
         return "deliver"
     try:
-        from .consent_pipeline import ConsentPipeline
+        from .consent_runtime import build_pipeline
 
-        # Full gate stack: MSC4155 policy → ban-feeds → blocked → tailnet →
-        # known(+token) → tier+greylist → knock. Returns deliver|quarantine|drop|defer.
-        return ConsentPipeline(recipient, mode=mode).decide(sender).decision
+        # Config-driven gate: build_pipeline loads runtime.yml (trusted ban-feeds +
+        # per-tier friction) and wires the full stack — MSC4155 policy → ban-feeds →
+        # blocked → tailnet → known(+token) → tier+greylist → knock. SKCOMMS_CONSENT_MODE
+        # still wins for the mode. Returns deliver|quarantine|drop|defer.
+        return build_pipeline(recipient).decide(sender).decision
     except Exception as exc:  # never let the gate break delivery
         logger.debug("consent pipeline failed for %s (delivering): %s", recipient, exc)
         return "deliver"
@@ -1050,6 +1052,160 @@ async def post_inbox(request: Request):
         ) from exc
 
     return {"ok": True, "id": env.id}
+
+
+# ---------------------------------------------------------------------------
+# Operator consent surface (skfed-consent-design gate 5) — LOCAL ONLY
+# ---------------------------------------------------------------------------
+#
+# These verbs let the RECIPIENT agent's own operator drive its first-contact
+# message-request quarantine: review the queue, accept (promote + mint a
+# per-contact delivery token), decline, block, unblock, and read the known
+# roster. They are the inverse of the public ``POST /api/v1/inbox`` gate — they
+# mutate the node's OWN consent state, so they must NEVER be reachable from the
+# public federation funnel. We gate them to loopback (the same intent as the
+# ``--host 127.0.0.1`` bind the daemon ships with), with the existing
+# ``SKCOMMS_DEV_AUTH`` flag (the broker's dev escape hatch) as the only override.
+#
+# Everything here is additive + opt-in: the consent gate itself stays OFF unless
+# ``SKCOMMS_CONSENT_MODE`` is set, so a node with no quarantined knocks simply
+# returns empty lists. No new persistence — these reuse the P1 primitives via
+# :mod:`skcomms.consent_requests` / :class:`skcomms.consent_pipeline.ConsentPipeline`.
+
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
+def _self_agent() -> str:
+    """The recipient agent = this node's self identity.
+
+    Uses the same resolver the rest of the API uses
+    (:func:`skcomms.identity.resolve_self_identity`); falls back to ``"local"``
+    when no identity is resolvable. Indirected through a module-level function so
+    the consent endpoints and tests address one canonical agent.
+    """
+    from .identity import resolve_self_identity
+
+    return resolve_self_identity().get("agent") or "local"
+
+
+def _require_local(request: Request) -> None:
+    """Reject any caller that is not loopback (unless dev-auth is enabled).
+
+    The consent surface manages the node's OWN state, so it must not be drivable
+    from the public funnel. Allowed when the request originates on the loopback
+    interface, or when ``SKCOMMS_DEV_AUTH`` is set (the same flag the WebRTC
+    broker honours for local development). Otherwise → 403.
+    """
+    import os as _os
+
+    dev_auth_val = _os.environ.get("SKCOMMS_DEV_AUTH", "").lower()
+    if dev_auth_val in {"1", "true", "yes", "i_know_what_im_doing"}:
+        return
+
+    host = request.client.host if request.client else None
+    if host in _LOOPBACK_HOSTS:
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=(
+            "consent endpoints are local/operator-only "
+            "(loopback or SKCOMMS_DEV_AUTH required)"
+        ),
+    )
+
+
+class ConsentSenderRequest(BaseModel):
+    """A consent operation targeting a single sender FQID.
+
+    Attributes:
+        sender: The sender FQID to accept / block / unblock.
+    """
+
+    sender: str
+
+
+class ConsentDeclineRequest(BaseModel):
+    """Decline a first-contact request, optionally blocking the sender.
+
+    Attributes:
+        sender: The sender FQID whose queued knock to clear.
+        block: When ``True``, also block the sender (gate 5 → DROP); when
+            ``False`` the sender simply returns to UNKNOWN.
+    """
+
+    sender: str
+    block: bool = False
+
+
+@app.get("/api/v1/consent/requests", tags=["consent"])
+async def consent_requests(request: Request):
+    """List the recipient agent's quarantined first-contact requests (oldest first).
+
+    Quiet by default (Signal Message-Request semantics): the operator reviews the
+    queue on their own time. Empty list when nothing is quarantined.
+    """
+    _require_local(request)
+    from . import consent_requests as cr
+
+    agent = _self_agent()
+    return {"agent": agent, "requests": cr.list_requests(agent)}
+
+
+@app.get("/api/v1/consent/known", tags=["consent"])
+async def consent_known(request: Request):
+    """List the recipient agent's accepted-contact roster (known sender FQIDs)."""
+    _require_local(request)
+    from . import consent_requests as cr
+
+    agent = _self_agent()
+    return {"agent": agent, "known": cr.list_known(agent)}
+
+
+@app.post("/api/v1/consent/accept", tags=["consent"])
+async def consent_accept(request: Request, body: ConsentSenderRequest):
+    """Accept a first-contact: promote *sender* to known + mint its delivery token.
+
+    Drives :meth:`skcomms.consent_pipeline.ConsentPipeline.on_accept` (the
+    promote-and-issue step of gate 5). The returned token is the per-contact
+    capability the sender presents on future traffic to skip re-quarantine.
+    """
+    _require_local(request)
+    from .consent_pipeline import ConsentPipeline
+
+    agent = _self_agent()
+    token = ConsentPipeline(agent).on_accept(body.sender)
+    return {"agent": agent, "sender": body.sender, "token": token}
+
+
+@app.post("/api/v1/consent/decline", tags=["consent"])
+async def consent_decline(request: Request, body: ConsentDeclineRequest):
+    """Decline a first-contact: clear *sender*'s queued knock (optionally block)."""
+    _require_local(request)
+    from . import consent_requests as cr
+
+    agent = _self_agent()
+    return cr.decline_request(agent, body.sender, block=body.block)
+
+
+@app.post("/api/v1/consent/block", tags=["consent"])
+async def consent_block(request: Request, body: ConsentSenderRequest):
+    """Block *sender* outright; its future traffic is dropped (gate 5 → DROP)."""
+    _require_local(request)
+    from . import consent_requests as cr
+
+    agent = _self_agent()
+    return cr.block_sender(agent, body.sender)
+
+
+@app.post("/api/v1/consent/unblock", tags=["consent"])
+async def consent_unblock(request: Request, body: ConsentSenderRequest):
+    """Lift a block on *sender*, returning it to UNKNOWN (not auto-trusted)."""
+    _require_local(request)
+    from . import consent_requests as cr
+
+    agent = _self_agent()
+    return cr.unblock(agent, body.sender)
 
 
 # ---------------------------------------------------------------------------
