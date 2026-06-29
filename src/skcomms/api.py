@@ -905,11 +905,13 @@ def _consent_classify(recipient: str, sender: str) -> str:
     if mode in ("", "off") or not recipient or not sender:
         return "deliver"
     try:
-        from .consent import ConsentGate, ContactStore
+        from .consent_pipeline import ConsentPipeline
 
-        return ConsentGate(ContactStore(agent=recipient), mode=mode).classify(sender).value
+        # Full gate stack: MSC4155 policy → ban-feeds → blocked → tailnet →
+        # known(+token) → tier+greylist → knock. Returns deliver|quarantine|drop|defer.
+        return ConsentPipeline(recipient, mode=mode).decide(sender).decision
     except Exception as exc:  # never let the gate break delivery
-        logger.debug("consent classify failed for %s (delivering): %s", recipient, exc)
+        logger.debug("consent pipeline failed for %s (delivering): %s", recipient, exc)
         return "deliver"
 
 
@@ -939,6 +941,11 @@ def _write_to_recipient_inbox(env) -> str:
     if decision == "drop":
         logger.info("consent: dropped blocked sender %s → %s", env.from_fqid, recipient)
         return ""
+    if decision == "defer":
+        # greylist temp-defer: don't write, don't queue — the sender's outbox retries
+        # and is admitted on the next attempt past the greylist window.
+        logger.info("consent: greylist-deferred first-contact %s → %s", env.from_fqid, recipient)
+        return f"deferred:{env.id}"
     if decision == "quarantine":
         from .consent import RequestQueue
 
