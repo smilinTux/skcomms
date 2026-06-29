@@ -2825,3 +2825,109 @@ def consent_tier_cmd(fqid, verified, introduced):
     click.echo(f"  greylist:     {fr.greylist}")
     click.echo(f"  rate_per_day: {fr.rate_per_day}")
     click.echo(f"  require_token: {fr.require_token}")
+
+
+# ---------------------------------------------------------------------------
+# skfed — sovereign realm directory: self-announce + inspect
+# ---------------------------------------------------------------------------
+
+
+def _skfed_agent() -> Optional[str]:
+    """Resolve this CLI's agent name (SKAGENT/SKCAPSTONE_AGENT), else identity, else None."""
+    import os as _os
+
+    return (
+        _os.environ.get("SKAGENT")
+        or _os.environ.get("SKCAPSTONE_AGENT")
+        or None
+    )
+
+
+@main.group("skfed")
+def skfed_group():
+    """SKFed realm directory — announce this node's live endpoints + inspect it."""
+
+
+@skfed_group.command("announce")
+@click.option("--agent", default=None, help="Agent to announce (default: SKAGENT / self identity).")
+@click.option("--base", default=None, help="Node base URL (e.g. https://node.tailXYZ.ts.net). "
+              "Falls back to SKFED_BASE_URL, then a read-only tailscale probe.")
+@click.option("--inbox-url", "inbox_url", default=None, help="Explicit S2S inbox URL (overrides --base).")
+@click.option("--prekey-url", "prekey_url", default=None, help="Explicit hybrid-prekey URL (overrides --base).")
+@click.option("--did", default=None, help="DID to advertise for this agent.")
+@click.option("--cap", "caps", multiple=True, help="Capability tag (repeatable, e.g. --cap dm --cap files).")
+@click.option("--dry-run", is_flag=True, help="Resolve + print what WOULD be announced; do not sign/persist.")
+def skfed_announce_cmd(agent, base, inbox_url, prekey_url, did, caps, dry_run):
+    """Refresh THIS node's directory entry (call on daemon startup / after a re-serve)."""
+    from . import skfed_announce as sa
+    from .identity import resolve_self_identity
+
+    agent = agent or _skfed_agent()
+    cap_list = list(caps) or None
+
+    if dry_run:
+        fqid = resolve_self_identity(agent).get("fqid")
+        resolved_base = sa.resolve_base(base)
+        eff_inbox = inbox_url or (sa._join(resolved_base, sa.INBOX_PATH) if resolved_base else None)
+        eff_prekey = prekey_url or (sa._join(resolved_base, sa.PREKEY_PATH) if resolved_base else None)
+        click.echo("DRY-RUN — would announce (nothing signed/persisted):")
+        click.echo(f"  fqid:       {fqid}")
+        click.echo(f"  base:       {resolved_base}")
+        click.echo(f"  inbox_url:  {eff_inbox}")
+        click.echo(f"  prekey_url: {eff_prekey}")
+        click.echo(f"  caps:       {cap_list or []}")
+        return
+
+    try:
+        sd = sa.announce_self(
+            agent,
+            base=base,
+            inbox_url=inbox_url,
+            prekey_url=prekey_url,
+            did=did,
+            caps=cap_list,
+        )
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    entry = None
+    fqid = resolve_self_identity(agent).get("fqid")
+    for e in sd.entries:
+        if e.fqid == fqid:
+            entry = e
+            break
+    click.echo(f"announced {fqid or '<self>'} into realm '{sd.realm}' "
+               f"({len(sd.entries)} entr{'y' if len(sd.entries) == 1 else 'ies'}, "
+               f"signer {sd.signer_fingerprint[:16]})")
+    if entry is not None:
+        click.echo(f"  inbox_url:  {entry.inbox_url}")
+        click.echo(f"  prekey_url: {entry.prekey_url}")
+
+
+@skfed_group.command("show")
+@click.option("--json", "as_json", is_flag=True, help="Emit the raw signed directory JSON.")
+def skfed_show_cmd(as_json):
+    """Print the current realm directory entries (from SKCOMMS_HOME/skfed/directory.json)."""
+    from .skfed_directory import load_directory
+
+    sd = load_directory()
+    if sd is None:
+        click.echo("No realm directory yet (run `skcomms skfed announce`).")
+        return
+
+    if as_json:
+        click.echo(sd.to_bytes().decode("utf-8"))
+        return
+
+    click.echo(f"realm: {sd.realm}   operator: {sd.operator}")
+    click.echo(f"signed_at: {sd.signed_at}   signer: {sd.signer_fingerprint[:16]}")
+    if not sd.entries:
+        click.echo("  (no entries)")
+        return
+    for e in sorted(sd.entries, key=lambda x: x.fqid):
+        click.echo(f"  {e.fqid}")
+        click.echo(f"    inbox_url:  {e.inbox_url}")
+        click.echo(f"    prekey_url: {e.prekey_url}")
+        if e.caps:
+            click.echo(f"    caps:       {', '.join(e.caps)}")
+        click.echo(f"    updated_at: {e.updated_at}")

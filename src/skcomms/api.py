@@ -893,11 +893,19 @@ def _envelope_v1_to_message(env) -> MessageEnvelope:
     )
 
 
-def _consent_classify(recipient: str, sender: str) -> str:
+def _consent_classify(recipient: str, sender: str, *, token: Optional[str] = None) -> str:
     """Return ``'deliver'|'quarantine'|'drop'`` per ``SKCOMMS_CONSENT_MODE``.
 
     Default (``off``/unset) and any error → ``'deliver'`` — the gate is opt-in and
     **fail-open**, so a consent bug or missing config never blackholes federation.
+
+    ``token`` is the OUTER-envelope gate-4 capability token the sender lifted from
+    its :class:`skchat.token_wallet.TokenWallet` (see
+    :attr:`skcomms.envelope.Envelope.consent_token`). It is plumbed straight into
+    :meth:`skcomms.consent_pipeline.ConsentPipeline.decide` so a known contact who
+    presents a VALID held token fast-paths DELIVER instead of re-quarantining, while
+    a forged token for a known contact is dropped (``bad-token``). ``None`` (no
+    token presented) preserves the exact prior known-contact behaviour.
     """
     import os
 
@@ -911,7 +919,7 @@ def _consent_classify(recipient: str, sender: str) -> str:
         # per-tier friction) and wires the full stack — MSC4155 policy → ban-feeds →
         # blocked → tailnet → known(+token) → tier+greylist → knock. SKCOMMS_CONSENT_MODE
         # still wins for the mode. Returns deliver|quarantine|drop|defer.
-        return build_pipeline(recipient).decide(sender).decision
+        return build_pipeline(recipient).decide(sender, token=token).decision
     except Exception as exc:  # never let the gate break delivery
         logger.debug("consent pipeline failed for %s (delivering): %s", recipient, exc)
         return "deliver"
@@ -939,7 +947,15 @@ def _write_to_recipient_inbox(env) -> str:
     # SKCOMMS_CONSENT_MODE (off|public|tailnet); default off = byte-for-byte the
     # legacy deliver-everything path. DROP → discard, QUARANTINE → request queue
     # (NOT the main inbox), DELIVER → fall through to the normal write.
-    decision = _consent_classify(recipient, getattr(env, "from_fqid", "") or "")
+    # Gate-4: lift the OUTER-envelope consent_token (sender's held per-contact
+    # capability token) into the gate so a now-known contact fast-paths DELIVER.
+    # It rides outside the (ratchet-sealed) body, so it is readable here. None ⇒
+    # unchanged legacy behaviour.
+    decision = _consent_classify(
+        recipient,
+        getattr(env, "from_fqid", "") or "",
+        token=getattr(env, "consent_token", None),
+    )
     if decision == "drop":
         logger.info("consent: dropped blocked sender %s → %s", env.from_fqid, recipient)
         return ""

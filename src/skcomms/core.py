@@ -486,6 +486,7 @@ class SKComms:
         thread_id: Optional[str] = None,
         in_reply_to: Optional[str] = None,
         mode: Optional[RoutingMode] = None,
+        consent_token: Optional[str] = None,
     ) -> DeliveryReport:
         """Send a canonical signed Envelope v1 to a remote agent (federation).
 
@@ -533,6 +534,7 @@ class SKComms:
                 body=message,
                 thread_id=thread_id,
                 reply_to=in_reply_to,
+                consent_token=consent_token,
             )
         )
         # SKFed P3: if the recipient is an unknown fqid, try to auto-discover it

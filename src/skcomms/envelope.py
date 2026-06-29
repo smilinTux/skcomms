@@ -46,6 +46,18 @@ class Envelope(BaseModel):
         thread_id: Optional conversation/thread grouping id.
         reply_to: Optional id of the message this one replies to.
         headers: Optional free-form string header map.
+        consent_token: Optional gate-4 per-contact capability token (hex), carried
+            UNENCRYPTED on the OUTER envelope so the recipient node's consent gate
+            can read it. It MUST live here (not in ``body``) because an established
+            contact's DM body is ratchet-sealed and therefore opaque to the
+            receiving node — only the envelope is inspectable before delivery. The
+            sender lifts the token here from its :class:`skchat.token_wallet.TokenWallet`;
+            the recipient's gate-4 (:meth:`skcomms.consent_pipeline.ConsentPipeline.decide`)
+            recomputes + constant-time-compares it against
+            :class:`skcomms.consent_tokens.TokenStore`. Additive + inert: ``None``
+            (the default / legacy case) leaves :meth:`canonical_bytes` byte-for-byte
+            unchanged. When present it IS folded into the signed transcript, so a
+            forged/swapped token after signing breaks the signature.
     """
 
     version: str = "1"
@@ -60,6 +72,7 @@ class Envelope(BaseModel):
     thread_id: Optional[str] = None
     reply_to: Optional[str] = None
     headers: dict[str, str] = Field(default_factory=dict)
+    consent_token: Optional[str] = None
 
     def canonical_bytes(self) -> bytes:
         """Produce a stable byte serialization for signing.
@@ -68,10 +81,18 @@ class Envelope(BaseModel):
         sorted and separators are compact. The signature is never part of
         the envelope itself, so nothing is excluded here beyond that.
 
+        ``consent_token`` is dropped from the transcript when ``None`` so a
+        legacy / no-token envelope hashes byte-for-byte identically to before
+        the field existed (additive + inert). When a token IS present it stays
+        in the transcript, so the signature covers it and a forged or swapped
+        token cannot survive verification.
+
         Returns:
             bytes: Canonical UTF-8 JSON of the envelope.
         """
         data = self.model_dump(mode="json")
+        if data.get("consent_token") is None:
+            data.pop("consent_token", None)
         return json.dumps(
             data, sort_keys=True, separators=(",", ":"), ensure_ascii=False
         ).encode("utf-8")

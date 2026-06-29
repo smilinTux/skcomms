@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 # mode-b-setup.sh — stand up a Mode-B (tailnet-only, NO funnel) skcomms realm on
-# this node. Idempotent recipe distilled from docs/mode-b-tailnet-deploy.md.
+# this node. Production-grade, IDEMPOTENT installer distilled from
+# docs/mode-b-tailnet-deploy.md.
 #
-# WHAT IT DOES (4 steps), all idempotent + additive + opt-in:
+# WHAT IT DOES, all idempotent + additive + opt-in:
+#   PREFLIGHT. Verify prerequisites (tailscale present + up, skcomms-api reachable,
+#      operator key present). Read-only; reports PASS/WARN before any change.
 #   1. `tailscale serve` (NOT funnel) the inbox + skfed directory → tailnet only.
 #   2. Write SKCOMMS_CONSENT_MODE=tailnet into the agent's skcomms-api + daemon
 #      systemd drop-ins (network membership becomes the consent gate).
@@ -10,22 +13,31 @@
 #      realm operator's public key so its signed directory verifies.
 #   4. Seed the realm's mutual known-contacts (so accepted peers DELIVER even if
 #      consent ever tightens past tailnet mode).
+#   5. POST-APPLY VERIFY. Curl the (tailnet) directory + confirm the live
+#      SKCOMMS_CONSENT_MODE=tailnet env on both units.
 #
 # SAFETY MODEL:
-#   * --dry-run prints the exact PLAN and changes NOTHING (hermetic: needs neither
-#     tailscale nor systemd nor the skcomms venv).
-#   * Without --dry-run it APPLIES, guarding every step idempotently (re-running
-#     converges; matching state is left alone).
+#   * DEFAULT is --dry-run: prints the exact PLAN and changes NOTHING (hermetic:
+#     needs neither tailscale nor systemd nor the skcomms venv).
+#   * --apply makes real changes and is GATED behind an interactive confirmation
+#     (type "apply"); pass --yes/-y to confirm non-interactively (automation).
+#   * Every step is guarded idempotently — re-running converges; matching state is
+#     left alone ("already converged").
 #   * Steps that need the tailscale CLI, an authed node, or admin-console ACLs are
 #     OUT-OF-BAND and are flagged honestly — this script cannot do them for you.
 #
 # Companion doc: docs/mode-b-tailnet-deploy.md   (coord 5967eb6f)
 #
 # Usage:
+#   # 1) Preview the plan (default, safe, changes nothing):
+#   scripts/mode-b-setup.sh --realm myrealm --tailnet-host node1.tailXYZ.ts.net
+#   # 2) Execute for real (interactive confirm, or add --yes for automation):
 #   scripts/mode-b-setup.sh --realm myrealm --tailnet-host node1.tailXYZ.ts.net \
-#       [--agent lumina] [--known alice@op.realmA] [--known bob@op.realmB] \
-#       [--operator-key /path/public.asc] [--local-port 9384] \
-#       [--daemon-unit skchat-daemon@lumina] [--dry-run]
+#       --agent lumina --operator-key /path/public.asc --apply
+#
+#   Flags: [--agent lumina] [--known alice@op.realmA] [--known bob@op.realmB]
+#          [--operator-key /path/public.asc] [--local-port 9384]
+#          [--daemon-unit skchat-daemon@lumina] [--apply] [--yes|-y] [--dry-run]
 #
 set -euo pipefail
 
@@ -46,10 +58,11 @@ TAILNET_HOST=""
 LOCAL_PORT="9384"
 OPERATOR_KEY=""
 DAEMON_UNIT=""
-DRY_RUN=0
+DRY_RUN=1            # SAFE DEFAULT: dry-run. --apply flips this to 0 (real changes).
+ASSUME_YES=0        # --yes/-y bypasses the interactive apply confirmation.
 KNOWN=()
 
-usage() { sed -n '2,30p' "$0"; exit "${1:-0}"; }
+usage() { sed -n '2,41p' "$0"; exit "${1:-0}"; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -60,7 +73,9 @@ while [ $# -gt 0 ]; do
     --operator-key) OPERATOR_KEY="${2:-}"; shift ;;
     --daemon-unit)  DAEMON_UNIT="${2:-}"; shift ;;
     --known)        KNOWN+=("${2:-}"); shift ;;
+    --apply)        DRY_RUN=0 ;;
     --dry-run)      DRY_RUN=1 ;;
+    --yes|-y)       ASSUME_YES=1 ;;
     -h|--help)      usage 0 ;;
     *) echo "unknown arg: $1" >&2; usage 2 ;;
   esac
@@ -120,16 +135,73 @@ write_if_changed() {
   did "wrote $path"
 }
 
+# http_code <url>  -> prints the HTTP status (or 000 if unreachable); never fails.
+http_code() {
+  command -v curl >/dev/null 2>&1 || { printf '000'; return 0; }
+  curl -s -o /dev/null -m 4 -w '%{http_code}' "$1" 2>/dev/null || printf '000'
+}
+
 if [ "$DRY_RUN" = 1 ]; then
-  printf '\n*** DRY-RUN — printing the plan; NO changes will be made ***\n'
+  printf '\n*** DRY-RUN (default) — printing the plan; NO changes will be made. Re-run with --apply to execute. ***\n'
+else
+  printf '\n*** APPLY — real, idempotent changes will be made to this node. ***\n'
 fi
 printf 'realm=%s  agent=%s  tailnet-host=%s  local=%s\n' \
   "$REALM" "$AGENT" "$TAILNET_HOST" "$LOCAL_BASE"
 
 # ---------------------------------------------------------------------------
+# Preflight — verify prerequisites (read-only; runs in BOTH modes)
+# ---------------------------------------------------------------------------
+section "Preflight: prerequisites"
+pf_pass() { printf '  PASS  %s\n' "$*"; }
+pf_warn() { printf '  WARN  %s\n' "$*"; }
+
+# tailscale present + up
+if command -v tailscale >/dev/null 2>&1; then
+  if tailscale status >/dev/null 2>&1; then
+    pf_pass "tailscale present and up"
+  else
+    pf_warn "tailscale present but not 'up' — run: tailscale up   (serve step needs an authed node)"
+  fi
+else
+  pf_warn "tailscale not on PATH — Step 1 (serve) will be skipped; run the PLAN lines by hand"
+fi
+
+# skcomms-api reachable (any HTTP response = up; 000 = could not connect)
+PF_API_CODE="$(http_code "$LOCAL_BASE/.well-known/skfed/directory")"
+if [ "$PF_API_CODE" = "000" ]; then
+  pf_warn "skcomms-api NOT reachable at $LOCAL_BASE — start it before serving / verifying"
+else
+  pf_pass "skcomms-api reachable at $LOCAL_BASE (HTTP $PF_API_CODE)"
+fi
+
+# operator key present (source given, or already pinned)
+if [ -n "$OPERATOR_KEY" ] && [ -f "$OPERATOR_KEY" ]; then
+  pf_pass "operator key source present: $OPERATOR_KEY"
+elif [ -f "$OPERATOR_PIN" ]; then
+  pf_pass "operator key already pinned: $OPERATOR_PIN"
+else
+  pf_warn "operator key NOT present — skfed directory verification FAILS CLOSED until pinned"
+fi
+
+# ---------------------------------------------------------------------------
+# Confirmation gate — APPLY makes real changes; require explicit consent.
+# ---------------------------------------------------------------------------
+if [ "$DRY_RUN" = 0 ] && [ "$ASSUME_YES" = 0 ]; then
+  printf '\n*** APPLY MODE — this writes systemd drop-ins + realms.yml + serve state\n'
+  printf '    and restarts skcomms-api + %s. ***\n' "${DAEMON_UNIT}.service"
+  printf 'Type "apply" to proceed (anything else aborts): '
+  IFS= read -r _confirm || _confirm=""
+  if [ "$_confirm" != "apply" ]; then
+    printf '\nAborted — confirmation not given; NO changes made. (use --apply --yes for non-interactive.)\n'
+    exit 1
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # Step 1 — tailscale serve (tailnet-only, NOT funnel)
 # ---------------------------------------------------------------------------
-section "Step 1/4: tailscale serve (tailnet-only, NOT funnel)"
+section "Step 1/5: tailscale serve (tailnet-only, NOT funnel)"
 SERVE_INBOX="tailscale serve --bg --https=443 --set-path=/api/v1/inbox $LOCAL_BASE/api/v1/inbox"
 SERVE_DIR="tailscale serve --bg --https=443 --set-path=/.well-known/skfed/directory $LOCAL_BASE/.well-known/skfed/directory"
 plan "$SERVE_INBOX"
@@ -155,7 +227,7 @@ fi
 # ---------------------------------------------------------------------------
 # Step 2 — consent-mode systemd drop-ins (SKCOMMS_CONSENT_MODE=tailnet)
 # ---------------------------------------------------------------------------
-section "Step 2/4: consent-mode systemd drop-ins (SKCOMMS_CONSENT_MODE=tailnet)"
+section "Step 2/5: consent-mode systemd drop-ins (SKCOMMS_CONSENT_MODE=tailnet)"
 DROPIN_CONTENT="$(render_tmpl "$TMPL_DIR/consent-mode.conf.tmpl" \
   __REALM__ "$REALM" __AGENT__ "$AGENT" __CONSENT_MODE__ "tailnet")"
 plan "write $API_DROPIN  (Environment=SKCOMMS_CONSENT_MODE=tailnet)"
@@ -180,7 +252,7 @@ fi
 # ---------------------------------------------------------------------------
 # Step 3 — realms.yml + operator-key pin
 # ---------------------------------------------------------------------------
-section "Step 3/4: realms.yml + operator-key pin"
+section "Step 3/5: realms.yml + operator-key pin"
 plan "set in $REALMS_FILE :  ${REALM}: ${DIRECTORY_URL}"
 plan "pin operator key -> $OPERATOR_PIN"
 
@@ -224,7 +296,7 @@ fi
 # ---------------------------------------------------------------------------
 # Step 4 — seed mutual known-contacts
 # ---------------------------------------------------------------------------
-section "Step 4/4: seed mutual known-contacts (agent=${AGENT})"
+section "Step 4/5: seed mutual known-contacts (agent=${AGENT})"
 if [ "${#KNOWN[@]}" -eq 0 ]; then
   note "no --known contacts given — nothing to seed (tailnet mode delivers all non-blocked anyway)."
 fi
@@ -256,10 +328,56 @@ PY
 fi
 
 # ---------------------------------------------------------------------------
+# Step 5 — post-apply verification (curl the directory + confirm consent env)
+# ---------------------------------------------------------------------------
+section "Step 5/5: post-apply verification"
+VERIFY_DIR_TAILNET="curl -fsS ${DIRECTORY_URL}/.well-known/skfed/directory"
+VERIFY_ENV_API="systemctl --user show -p Environment skcomms-api.service"
+VERIFY_ENV_DAEMON="systemctl --user show -p Environment ${DAEMON_UNIT}.service"
+plan "tailnet directory reachable: $VERIFY_DIR_TAILNET   (tailnet members only)"
+plan "local directory reachable:   curl -s $LOCAL_BASE/.well-known/skfed/directory"
+plan "confirm consent env: $VERIFY_ENV_API | grep SKCOMMS_CONSENT_MODE=tailnet"
+plan "confirm consent env: $VERIFY_ENV_DAEMON | grep SKCOMMS_CONSENT_MODE=tailnet"
+note "the tailnet directory curl only succeeds FROM a tailnet member (expected to fail off-net)."
+
+if [ "$DRY_RUN" = 0 ]; then
+  # Local directory reachability (works without tailscale; proves the API serves it).
+  LOCAL_CODE="$(http_code "$LOCAL_BASE/.well-known/skfed/directory")"
+  case "$LOCAL_CODE" in
+    000) note "local directory probe: skcomms-api not reachable at $LOCAL_BASE" ;;
+    200) did "local directory serves HTTP 200" ;;
+    404) note "local directory HTTP 404 — API up but no directory PUBLISHED yet (publish_self_to_realm_directory)" ;;
+    *)   note "local directory probe HTTP $LOCAL_CODE (API up)" ;;
+  esac
+  # Tailnet directory (best-effort; off-net this is expected to fail — that's the isolation working).
+  TAILNET_CODE="$(http_code "$DIRECTORY_URL/.well-known/skfed/directory")"
+  if [ "$TAILNET_CODE" = "200" ]; then
+    did "tailnet directory reachable at $DIRECTORY_URL (HTTP 200)"
+  else
+    note "tailnet directory not reachable from here (HTTP $TAILNET_CODE) — expected unless this host is a tailnet member"
+  fi
+  # Confirm the live consent env on both units.
+  if command -v systemctl >/dev/null 2>&1; then
+    if systemctl --user show -p Environment skcomms-api.service 2>/dev/null | grep -q "SKCOMMS_CONSENT_MODE=tailnet"; then
+      did "skcomms-api: SKCOMMS_CONSENT_MODE=tailnet confirmed"
+    else
+      note "skcomms-api: consent env NOT visible yet — ensure the restart picked up the drop-in"
+    fi
+    if systemctl --user show -p Environment "${DAEMON_UNIT}.service" 2>/dev/null | grep -q "SKCOMMS_CONSENT_MODE=tailnet"; then
+      did "${DAEMON_UNIT}: SKCOMMS_CONSENT_MODE=tailnet confirmed"
+    else
+      note "${DAEMON_UNIT}: consent env NOT visible yet — ensure the restart picked up the drop-in"
+    fi
+  else
+    note "systemctl not found — verify by hand: $VERIFY_ENV_API"
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 section "Summary"
 if [ "$DRY_RUN" = 1 ]; then
-  echo "  DRY-RUN complete — no changes made. Re-run without --dry-run to APPLY."
+  echo "  DRY-RUN complete — no changes made. Re-run with --apply to execute."
 else
-  echo "  Apply complete. Verify: tailscale serve status ; systemctl --user show -p Environment skcomms-api.service"
+  echo "  Apply complete. Verify: tailscale serve status ; $VERIFY_ENV_API"
 fi
 note "Reminder (out-of-band, admin console): default-deny tailnet ACL + allow only this realm's nodes."
