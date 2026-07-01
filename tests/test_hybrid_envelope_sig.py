@@ -40,6 +40,13 @@ pq = pytest.mark.skipif(not pqsig.is_available(), reason="liboqs (oqs) not avail
 # ---------------------------------------------------------------------------
 
 
+def _bound_verifier(kp) -> EnvelopeVerifier:
+    """A verifier with the hybrid signer pinned to the envelope's from_fqid."""
+    v = EnvelopeVerifier()
+    v.add_hybrid_key("lumina@chef.skworld", kp.mldsa_pub)
+    return v
+
+
 @pq
 def test_hybrid_sign_and_verify():
     kp = pqsig.generate_keypair()
@@ -49,7 +56,7 @@ def test_hybrid_sign_and_verify():
     assert signed.is_hybrid is True
     assert signed.hybrid_ed25519_pub and signed.hybrid_mldsa_pub
 
-    res = EnvelopeVerifier().verify(signed)
+    res = _bound_verifier(kp).verify(signed)
     assert res.valid is True
     assert "ML-DSA-65" in res.reason and "FIPS 204" in res.reason
 
@@ -60,7 +67,7 @@ def test_hybrid_survives_json_roundtrip():
     signed = HybridEnvelopeSigner(keypair=kp, signer_id="lumina").sign(_env())
     restored = SignedEnvelope.from_bytes(signed.to_bytes())
     assert restored.is_hybrid is True
-    assert EnvelopeVerifier().verify(restored).valid is True
+    assert _bound_verifier(kp).verify(restored).valid is True
 
 
 @pq
@@ -69,7 +76,34 @@ def test_hybrid_tampered_body_fails():
     signed = HybridEnvelopeSigner(keypair=kp, signer_id="lumina").sign(_env())
     tampered = SignedEnvelope.from_bytes(signed.to_bytes())
     tampered.envelope.body = "MALICIOUSLY ALTERED"
-    assert EnvelopeVerifier().verify(tampered).valid is False
+    assert _bound_verifier(kp).verify(tampered).valid is False
+
+
+@pq
+def test_hybrid_unpinned_identity_is_rejected():
+    """A cryptographically-valid hybrid envelope from an identity with NO pinned
+    hybrid key must FAIL CLOSED — the inline keys are attacker-controlled."""
+    kp = pqsig.generate_keypair()
+    signed = HybridEnvelopeSigner(keypair=kp, signer_id="lumina").sign(_env())
+    res = EnvelopeVerifier().verify(signed)  # no add_hybrid_key
+    assert res.valid is False
+    assert "Unknown hybrid signer" in res.reason
+
+
+@pq
+def test_hybrid_forged_inline_keys_impersonation_is_rejected():
+    """The core CRITICAL: attacker signs with THEIR OWN hybrid keypair but sets
+    from_fqid to the victim. The verifier has the victim pinned to a DIFFERENT
+    key. Verification must reject (no universal forgery)."""
+    victim_kp = pqsig.generate_keypair()
+    attacker_kp = pqsig.generate_keypair()
+    # Attacker forges a message "from" the victim, signed with attacker's keys.
+    forged = HybridEnvelopeSigner(keypair=attacker_kp, signer_id="attacker").sign(_env())
+    v = EnvelopeVerifier()
+    v.add_hybrid_key("lumina@chef.skworld", victim_kp.mldsa_pub)  # victim's real key
+    res = v.verify(forged)
+    assert res.valid is False
+    assert "mismatch" in res.reason.lower()
 
 
 @pq

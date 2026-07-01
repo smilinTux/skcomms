@@ -266,6 +266,10 @@ class EnvelopeVerifier:
 
     def __init__(self) -> None:
         self._keys: dict[str, str] = {}
+        # Hybrid (mldsa65-ed25519-v2) identity→expected-ML-DSA-fingerprint pins.
+        # The hybrid verify path is dormant (no live emitter) but remotely
+        # reachable, so it must bind inline keys to a claimed identity too.
+        self._hybrid_keys: dict[str, str] = {}
 
     def add_key(self, identity: str, public_key_armor: str) -> str:
         """Register a sender's public key.
@@ -283,6 +287,27 @@ class EnvelopeVerifier:
         fp = str(key.fingerprint).replace(" ", "")
         self._keys[fp] = public_key_armor
         self._keys[identity] = public_key_armor
+        return fp
+
+    @staticmethod
+    def hybrid_fingerprint(mldsa_pub) -> str:
+        """Derive the stable hybrid signer fingerprint from an ML-DSA pubkey."""
+        if isinstance(mldsa_pub, str):
+            mldsa_pub = base64.b64decode(mldsa_pub)
+        return "mldsa65:" + hashlib.sha256(bytes(mldsa_pub)).hexdigest()[:32]
+
+    def add_hybrid_key(self, identity: str, mldsa_pub) -> str:
+        """Pin the expected ML-DSA public key for a hybrid signer *identity*.
+
+        Binds a hybrid (``mldsa65-ed25519-v2``) signer to *identity* so a forged
+        hybrid envelope carrying attacker-chosen inline pubkeys is rejected by
+        :meth:`_verify_hybrid`. Accepts raw bytes or base64.
+
+        Returns:
+            str: The derived hybrid fingerprint pinned for the identity.
+        """
+        fp = self.hybrid_fingerprint(mldsa_pub)
+        self._hybrid_keys[identity] = fp
         return fp
 
     def has_key(self, identity_or_fingerprint: str) -> bool:
@@ -391,6 +416,31 @@ class EnvelopeVerifier:
             composite = base64.b64decode(signed.signature)
             ed_pub = base64.b64decode(signed.hybrid_ed25519_pub)
             mldsa_pub = base64.b64decode(signed.hybrid_mldsa_pub)
+
+            # SECURITY: bind the inline hybrid keys to the CLAIMED identity.
+            # hybrid_verify only proves the signature matches the pubkeys carried
+            # in THIS envelope — attacker-supplied — so without a binding any
+            # from_fqid is forgeable (universal impersonation, unauthenticated
+            # federation ingress). Require the ML-DSA pubkey to match the
+            # fingerprint pinned for from_fqid; fail closed when the identity has
+            # no pinned hybrid key (mirrors the classical "unknown signer" reject).
+            env = signed.envelope
+            sender = getattr(env, "from_fqid", None) or getattr(env, "sender", None)
+            pinned_fp = self._hybrid_keys.get(sender) if sender else None
+            derived_fp = self.hybrid_fingerprint(mldsa_pub)
+            if pinned_fp is None:
+                return VerificationResult(
+                    valid=False,
+                    reason=f"Unknown hybrid signer: no pinned key for {sender!r}",
+                    fingerprint=signed.signer_fingerprint,
+                )
+            if pinned_fp != derived_fp:
+                return VerificationResult(
+                    valid=False,
+                    reason="Hybrid key mismatch (inline keys != pinned identity key)",
+                    fingerprint=signed.signer_fingerprint,
+                )
+
             ok = pqsig.hybrid_verify(canonical, composite, ed_pub, mldsa_pub)
             return VerificationResult(
                 valid=bool(ok),
@@ -455,15 +505,32 @@ class EnvelopeVerifier:
     def _find_key(
         self, signed: Union[SignedEnvelope, "LegacySignedEnvelope"]
     ) -> Optional[str]:
-        """Look up the public key for a signed envelope's signer."""
-        if signed.signer_fingerprint in self._keys:
-            return self._keys[signed.signer_fingerprint]
+        """Look up the public key for a signed envelope's signer.
 
+        SECURITY: the key is resolved from the CLAIMED IDENTITY (``from_fqid`` /
+        legacy ``sender``), NEVER from the self-asserted ``signer_fingerprint``.
+        Resolving by fingerprint first let a holder of ANY registered key sign a
+        message while claiming another identity's ``from_fqid``: the signature
+        verified against the attacker's own key, but authorization keyed off the
+        forged ``from_fqid`` — spoofing / privilege-escalation → exec (RCE on the
+        access plane). We bind key↔identity: a claimed identity with no
+        registered key is an unknown signer (reject); we only fall back to the
+        fingerprint when the envelope carries no identity at all (legacy edge).
+        """
         env = signed.envelope
         # Envelope v1 uses from_fqid; legacy uses .sender
         sender = getattr(env, "from_fqid", None) or getattr(env, "sender", None)
-        if sender and sender in self._keys:
-            return self._keys[sender]
+        if sender:
+            if sender in self._keys:
+                return self._keys[sender]
+            # Verifiers pin peers under both fqid and local-part name.
+            name = sender.split("@", 1)[0]
+            if name and name in self._keys:
+                return self._keys[name]
+            return None  # unknown signer — do NOT fall back to signer_fingerprint
+        # No claimed identity at all (rare legacy) → fingerprint is the only handle.
+        if signed.signer_fingerprint and signed.signer_fingerprint in self._keys:
+            return self._keys[signed.signer_fingerprint]
         return None
 
 
