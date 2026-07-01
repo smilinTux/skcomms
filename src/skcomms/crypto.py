@@ -322,8 +322,15 @@ class EnvelopeCrypto:
             return envelope.model_copy(update={"payload": new_payload})
 
         except Exception as exc:
-            logger.warning("Signing failed: %s — sending unsigned", exc)
-            return envelope
+            # FAIL CLOSED. Signing was requested (PGP available + private key
+            # present) and it threw. Returning the envelope here would put an
+            # UNSIGNED message on the wire with only a log line — a silent
+            # authenticity/integrity failure (and the legacy inbound path never
+            # re-verifies it). Raise so the caller drops the send, mirroring the
+            # encrypt_payload fail-closed contract.
+            logger.error("Signing failed for %s — refusing to send unsigned: %s",
+                         envelope.recipient, exc)
+            raise CryptoError(f"payload signing failed: {exc}") from exc
 
     def verify_signature(
         self,
