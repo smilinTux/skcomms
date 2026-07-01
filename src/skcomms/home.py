@@ -135,4 +135,18 @@ def peer_inbox(to_fqid: str) -> Path:
         raise ValueError(f"invalid fqid: {to_fqid!r} (expected <agent>@<operator>.<realm>)")
     agent, rest = to_fqid.split("@", 1)
     operator, realm = rest.split(".", 1)
-    return skcomms_home() / realm / operator / agent / "inbox"
+
+    # SECURITY: the FQID is peer-controlled (a remote sender's to_fqid reaches
+    # here via store-forward). Reject any component that could escape the home
+    # tree — a value like "x@../../../../tmp/evil.z" would otherwise resolve
+    # outside skcomms_home() into an attacker-chosen directory (arbitrary file
+    # write of attacker-controlled .json content).
+    for part in (agent, operator, realm):
+        if not part or part in (".", "..") or "/" in part or "\\" in part or "\x00" in part:
+            raise ValueError(f"invalid fqid component in {to_fqid!r}: {part!r}")
+
+    home = skcomms_home().resolve()
+    target = (home / realm / operator / agent / "inbox").resolve()
+    if home not in target.parents:
+        raise ValueError(f"fqid {to_fqid!r} escapes the skcomms home tree")
+    return target
