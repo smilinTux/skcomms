@@ -162,6 +162,79 @@ def test_report_files_minimal_record():
     assert [r.message_id for r in g.list_reports(GID)] == ["msg-42"]
 
 
+# --- SECURITY: captcha seed must not be computable from public inputs --------
+
+def test_captcha_seed_not_derivable_from_public_inputs():
+    """An attacker who knows only PUBLIC inputs (group_id + fqid) must NOT be
+    able to precompute the captcha answer and self-admit without human/bot
+    interaction. The join seed must mix a per-group server-side secret so
+    ``derive_challenge(public_only)`` does not yield the real answer.
+    """
+    g = _gate()
+    g.configure_group(GID, mode="open", owner=OWNER, require_captcha=True)
+    res = g.join_decision(GID, STRANGER)
+    assert res.status is JoinStatus.PENDING
+    assert res.challenge_id
+
+    # The attacker knows the group_id and their own fqid — nothing else.
+    # If the seed were public (f"{group_id}:{fqid}") they could compute the
+    # answer offline and self-admit. That MUST fail now.
+    attacker_seed = f"{GID}:{STRANGER}"
+    _, _, attacker_answer = derive_challenge(attacker_seed)
+    admitted = g.admit(
+        GID, STRANGER, challenge_id=res.challenge_id, captcha_answer=attacker_answer
+    )
+    assert admitted.status is not JoinStatus.MEMBER
+    assert not g.is_member(GID, STRANGER)
+
+
+def test_per_group_secret_persists_and_verify_still_works():
+    """The per-group secret is persisted (survives fresh gate handles) and the
+    legitimate issuer/bot path (verify via the surfaced seed) still admits.
+    """
+    g = _gate()
+    g.configure_group(GID, mode="open", owner=OWNER, require_captcha=True)
+    res = g.join_decision(GID, STRANGER)
+
+    # A fresh gate over the same home re-reads the same secret → same answer.
+    g2 = _gate()
+    g2.configure_group(GID, mode="open", owner=OWNER, require_captcha=True)
+    _, _, answer = derive_challenge(res.seed)
+    ok = g2.admit(GID, STRANGER, challenge_id=res.challenge_id, captcha_answer=answer)
+    assert ok.status is JoinStatus.MEMBER
+    assert g2.is_member(GID, STRANGER)
+
+
+# --- SECURITY: ban-gate must fail closed independent of mode -----------------
+
+def test_banned_fqid_rejected_on_captcha_admit_path():
+    """A block-for-all'd FQID must be rejected at admit BEFORE any captcha
+    verification — the open/captcha path must not fail open on a ban.
+    """
+    g = _gate()
+    g.configure_group(GID, mode="open", owner=OWNER, require_captcha=True)
+    res = g.join_decision(GID, STRANGER)
+    # Moderator bans the stranger while they hold a live challenge.
+    g.block_for_all(GID, STRANGER, by=OWNER)
+
+    # Even with a *correct* answer, a banned peer is never admitted.
+    _, _, answer = derive_challenge(res.seed)
+    out = g.admit(GID, STRANGER, challenge_id=res.challenge_id, captcha_answer=answer)
+    assert out.status is JoinStatus.BLOCKED
+    assert not g.is_member(GID, STRANGER)
+
+
+def test_banned_fqid_rejected_on_moderator_admit_path():
+    """A ban also fails closed on the moderator-approval admit path."""
+    g = _gate()
+    g.configure_group(GID, mode="knock", owner=OWNER)
+    g.join_decision(GID, STRANGER)
+    g.block_for_all(GID, STRANGER, by=OWNER)
+    out = g.admit(GID, STRANGER, by=OWNER)
+    assert out.status is JoinStatus.BLOCKED
+    assert not g.is_member(GID, STRANGER)
+
+
 # --- persistence: a fresh gate re-reads admitted state -----------------------
 
 def test_membership_persists_across_gate_handles():
