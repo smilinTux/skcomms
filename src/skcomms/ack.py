@@ -151,6 +151,30 @@ class AckTracker:
             logger.warning("Failed to read pending ACK %s: %s", original_id[:8], exc)
             return None
 
+        # Replay/dedupe protection: only a still-pending entry may be confirmed.
+        # A replayed ACK (or an ACK for an already-resolved envelope) is rejected
+        # so it cannot re-confirm or mutate the entry.
+        if pending.status != AckStatus.PENDING:
+            logger.warning(
+                "Duplicate/replayed ACK for %s (status=%s) — ignoring",
+                original_id[:8],
+                pending.status.value,
+            )
+            return None
+
+        # Binding: the ACK must come from the identity the original message was
+        # delivered to. The transport already verified the envelope signature, so
+        # ack_envelope.sender is an authenticated identity — reject any ACK whose
+        # sender is not the intended recipient (forgery by a third party).
+        if ack_envelope.sender != pending.recipient:
+            logger.warning(
+                "ACK for %s from unauthorized sender %r (expected recipient %r) — rejecting",
+                original_id[:8],
+                ack_envelope.sender,
+                pending.recipient,
+            )
+            return None
+
         pending.status = AckStatus.CONFIRMED
         pending.confirmed_at = datetime.now(timezone.utc)
         pending.confirmed_via = ack_envelope.metadata.delivered_via
