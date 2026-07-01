@@ -325,6 +325,13 @@ class GroupConsentGate:
         """
         pol = self._policy(group_id)
 
+        # SECURITY (ban-gate fails closed): a block-for-all'd FQID is rejected
+        # UNCONDITIONALLY, before any captcha verification or moderator approval,
+        # regardless of admission mode. Without this the open/captcha admit path
+        # fails open — a banned peer holding a live challenge could self-admit.
+        if pol.is_blocked(fqid):
+            return GroupJoinResult(group_id, fqid, JoinStatus.BLOCKED)
+
         if challenge_id is not None:
             if self._captcha(group_id).verify(challenge_id, captcha_answer or ""):
                 pol.add_member(fqid)
@@ -352,6 +359,14 @@ class GroupConsentGate:
     def is_member(self, group_id: str, fqid: str) -> bool:
         """Whether *fqid* is an admitted member of *group_id*."""
         return self._policy(group_id).is_member(fqid)
+
+    def block_for_all(self, group_id: str, fqid: str, *, by: str) -> None:
+        """Block *fqid* for the whole group (moderator action; may never re-join).
+
+        Raises:
+            PermissionError: *by* is not an owner/moderator of the group.
+        """
+        self._policy(group_id).block_for_all(fqid, by=by)
 
     def list_pending(self, group_id: str) -> list[JoinRequest]:
         """The moderator's review queue (queued knocks / captcha-waiters)."""

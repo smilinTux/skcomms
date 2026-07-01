@@ -205,6 +205,36 @@ def test_per_group_secret_persists_and_verify_still_works():
     assert g2.is_member(GID, STRANGER)
 
 
+# --- SECURITY: ban-gate must fail closed independent of mode -----------------
+
+def test_banned_fqid_rejected_on_captcha_admit_path():
+    """A block-for-all'd FQID must be rejected at admit BEFORE any captcha
+    verification — the open/captcha path must not fail open on a ban.
+    """
+    g = _gate()
+    g.configure_group(GID, mode="open", owner=OWNER, require_captcha=True)
+    res = g.join_decision(GID, STRANGER)
+    # Moderator bans the stranger while they hold a live challenge.
+    g.block_for_all(GID, STRANGER, by=OWNER)
+
+    # Even with a *correct* answer, a banned peer is never admitted.
+    _, _, answer = derive_challenge(res.seed)
+    out = g.admit(GID, STRANGER, challenge_id=res.challenge_id, captcha_answer=answer)
+    assert out.status is JoinStatus.BLOCKED
+    assert not g.is_member(GID, STRANGER)
+
+
+def test_banned_fqid_rejected_on_moderator_admit_path():
+    """A ban also fails closed on the moderator-approval admit path."""
+    g = _gate()
+    g.configure_group(GID, mode="knock", owner=OWNER)
+    g.join_decision(GID, STRANGER)
+    g.block_for_all(GID, STRANGER, by=OWNER)
+    out = g.admit(GID, STRANGER, by=OWNER)
+    assert out.status is JoinStatus.BLOCKED
+    assert not g.is_member(GID, STRANGER)
+
+
 # --- persistence: a fresh gate re-reads admitted state -----------------------
 
 def test_membership_persists_across_gate_handles():
