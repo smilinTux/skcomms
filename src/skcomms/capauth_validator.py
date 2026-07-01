@@ -202,12 +202,17 @@ class CapAuthValidator:
         # ------------------------------------------------------------------ #
         # Require exactly 3 parts for signed tokens.                          #
         # ------------------------------------------------------------------ #
+        # SECURITY (fail-closed): a token that *looks* signed (>1 part) but is
+        # missing its signature CANNOT be verified. Deny it in every mode —
+        # even permissive — so a peer can never be upgraded to a claimed
+        # identity it did not prove. The only permissive convenience is the
+        # explicit single-part dev token handled above.
         if len(parts) != 3:
             logger.warning(
-                "CapAuth local: expected fingerprint.timestamp.sig, got %d parts",
+                "CapAuth local: expected fingerprint.timestamp.sig, got %d parts — rejecting",
                 len(parts),
             )
-            return None if self._require_auth else fingerprint_raw
+            return None
 
         fingerprint, timestamp_str, sig_b64url = fingerprint_raw, parts[1], parts[2]
 
@@ -243,8 +248,14 @@ class CapAuthValidator:
 
             pub_key = self._load_public_key(fingerprint)
             if pub_key is None:
-                logger.warning("CapAuth local: public key not found for %s", fingerprint)
-                return None if self._require_auth else fingerprint
+                # SECURITY (fail-closed): without the signer's public key we
+                # cannot verify the signature. Deny in every mode — never trust
+                # the self-asserted fingerprint just because we lack its key.
+                logger.warning(
+                    "CapAuth local: public key not found for %s — rejecting (cannot verify)",
+                    fingerprint,
+                )
+                return None
 
             # The message that was signed: "capauth:<FINGERPRINT>:<TIMESTAMP>"
             signed_text = f"capauth:{fingerprint}:{timestamp_str}"
@@ -258,17 +269,24 @@ class CapAuthValidator:
 
         except ImportError:
             logger.warning(
-                "pgpy not installed — skipping PGP signature check. "
+                "pgpy not installed — cannot verify CapAuth signature; rejecting. "
                 "Install skcomms[crypto] for full CapAuth PGP verification."
             )
-            # Without pgpy we cannot verify; in strict mode this is a hard
-            # failure. In permissive mode we pass the fingerprint through
-            # (format already validated above).
-            return None if self._require_auth else fingerprint
+            # SECURITY (fail-closed): without pgpy we cannot verify the
+            # signature. Deny in every mode. Passing the fingerprint through in
+            # permissive mode would let any peer authenticate as any identity
+            # simply because a dependency was missing.
+            return None
 
         except Exception as exc:
-            logger.error("CapAuth local: PGP verification error for %s: %s", fingerprint, exc)
-            return None if self._require_auth else fingerprint
+            # SECURITY (fail-closed): any error mid-verification is a denial,
+            # never a fall-through to the claimed identity.
+            logger.error(
+                "CapAuth local: PGP verification error for %s: %s — rejecting",
+                fingerprint,
+                exc,
+            )
+            return None
 
     def _load_public_key(self, fingerprint: str) -> "Optional[pgpy.PGPKey]":
         """Load a PGP public key by fingerprint.
