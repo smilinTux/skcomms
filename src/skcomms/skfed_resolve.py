@@ -21,10 +21,13 @@ unreachable directory yields ``None`` (delivery falls back to other rails).
 
 from __future__ import annotations
 
+import ipaddress
 import logging
+import socket
 import time
 from pathlib import Path
 from typing import Callable, Optional, Protocol
+from urllib.parse import urlsplit
 
 from .home import skcomms_home
 from .skfed_directory import SignedDirectory
@@ -202,11 +205,107 @@ def realm_verifier(realm: str, operator_label: Optional[str] = None):
         return None
 
 
+# ---------------------------------------------------------------------------
+# SSRF guard
+# ---------------------------------------------------------------------------
+#
+# The realm-directory URL is derived from **attacker-controllable DNS** (the
+# SRV/TXT records of the attacker's own realm) and is fetched *before* the
+# directory signature is verified. Without a guard a malicious realm can point
+# ``_skfed._tcp.<realm>`` / ``_skfed.<realm>`` at ``127.0.0.1``,
+# ``169.254.169.254`` (cloud metadata) or an internal host and make this node
+# connect to it — SSRF. We therefore resolve the host and refuse any
+# non-public destination *before* opening the socket. All resolved addresses
+# are checked (and the connection is pinned to a vetted one) to close the
+# DNS-rebind window between our check and urllib's own resolution.
+
+#: URL schemes the resolver is ever allowed to fetch.
+_ALLOWED_SCHEMES = frozenset({"http", "https"})
+
+
+def _ip_is_public(ip: "ipaddress._BaseAddress") -> bool:
+    """True only for globally-routable unicast addresses.
+
+    Rejects loopback, private (RFC1918 / ULA), link-local (incl. the
+    169.254.169.254 metadata range), reserved, multicast, and unspecified
+    (``0.0.0.0`` / ``::``) addresses.
+    """
+    return not (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
+def _assert_url_safe(url: str) -> tuple[str, int]:
+    """Validate *url*'s scheme and resolve+vet its host for SSRF.
+
+    Returns the ``(host, port)`` that passed the check. Raises ``ValueError``
+    for a disallowed scheme, a missing host, an unresolvable host, or any host
+    that resolves to a non-public address.
+    """
+    parts = urlsplit(url)
+    scheme = (parts.scheme or "").lower()
+    if scheme not in _ALLOWED_SCHEMES:
+        raise ValueError(f"SSRF guard: scheme {scheme!r} not allowed (http/https only)")
+
+    host = parts.hostname
+    if not host:
+        raise ValueError("SSRF guard: URL has no host")
+
+    port = parts.port or (443 if scheme == "https" else 80)
+
+    # A literal IP is checked directly; a name is resolved and *every* returned
+    # address must be public (a single private answer blocks the fetch).
+    try:
+        literal = ipaddress.ip_address(host)
+    except ValueError:
+        literal = None
+
+    if literal is not None:
+        if not _ip_is_public(literal):
+            raise ValueError(f"SSRF guard: blocked non-public address {host}")
+        return host, port
+
+    try:
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except socket.gaierror as exc:
+        raise ValueError(f"SSRF guard: host {host!r} did not resolve: {exc}") from exc
+
+    if not infos:
+        raise ValueError(f"SSRF guard: host {host!r} did not resolve")
+
+    for family, _type, _proto, _canon, sockaddr in infos:
+        addr = sockaddr[0]
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            raise ValueError(f"SSRF guard: could not parse resolved address {addr!r}")
+        if not _ip_is_public(ip):
+            raise ValueError(
+                f"SSRF guard: host {host!r} resolves to non-public address {addr}"
+            )
+
+    return host, port
+
+
 def default_http_get(url: str, timeout: float = 10.0) -> bytes:
-    """Fetch *url* via urllib — the default :443-funnel HTTP getter for resolution."""
+    """Fetch *url* via urllib — the default :443-funnel HTTP getter for resolution.
+
+    SSRF-guarded: the scheme must be http/https and the host must resolve
+    exclusively to globally-routable addresses, or a ``ValueError`` is raised
+    before any socket is opened. Callers of :func:`resolve_agent` swallow
+    resolution errors and fall through to other rails, so a blocked host simply
+    yields no directory (fail-closed).
+    """
     import urllib.request
 
-    with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 (https funnel)
+    _assert_url_safe(url)
+
+    with urllib.request.urlopen(url, timeout=timeout) as resp:  # noqa: S310 (https funnel, guarded)
         return resp.read()
 
 
