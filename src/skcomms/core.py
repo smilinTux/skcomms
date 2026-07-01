@@ -29,7 +29,8 @@ from .models import (
 )
 from .outbox import PersistentOutbox
 from .router import Router
-from .transport import DeliveryReport, Transport
+from .crypto import CryptoError
+from .transport import DeliveryReport, SendResult, Transport
 from . import integration as _integration
 
 logger = logging.getLogger("skcomms.core")
@@ -607,7 +608,32 @@ class SKComms:
         )
 
         envelope = self._apply_compression(envelope)
-        envelope = self._apply_outbound_crypto(envelope)
+        try:
+            envelope = self._apply_outbound_crypto(envelope)
+        except CryptoError as exc:
+            # Confidentiality was requested and could not be provided. Do NOT
+            # route, do NOT enqueue (that would persist plaintext to disk):
+            # fail closed with a clear not-delivered report.
+            logger.error(
+                "Refusing to send %s → %s: %s", envelope.envelope_id[:8], recipient, exc
+            )
+            _integration.alert(
+                "encryption_failed",
+                {"envelope_id": envelope.envelope_id[:8], "recipient": recipient, "error": str(exc)},
+                level="error",
+            )
+            return DeliveryReport(
+                envelope_id=envelope.envelope_id,
+                delivered=False,
+                attempts=[
+                    SendResult(
+                        success=False,
+                        transport_name="<crypto>",
+                        envelope_id=envelope.envelope_id,
+                        error=f"encryption failed, not sent: {exc}",
+                    )
+                ],
+            )
 
         logger.info(
             "Sending %s to %s [%s] via %s (compressed=%s, encrypted=%s, signed=%s)",

@@ -31,6 +31,17 @@ logger = logging.getLogger("skcomms.crypto")
 PQDM_SCHEME = "pqdm1:"
 
 
+class CryptoError(Exception):
+    """Raised when an *attempted* encryption/decryption fails.
+
+    This is deliberately distinct from the graceful-degradation paths
+    (PGP unavailable, no recipient key) which return the envelope
+    unchanged. A ``CryptoError`` means confidentiality was requested and
+    could NOT be provided — callers MUST fail closed and never transmit
+    the plaintext payload.
+    """
+
+
 class EnvelopeCrypto:
     """PGP encryption and signing engine for SKComms envelopes.
 
@@ -167,6 +178,13 @@ class EnvelopeCrypto:
         if not self._pgp_available:
             logger.debug("PGPy not available — skipping encryption")
             return envelope
+        if not recipient_public_armor or not recipient_public_armor.strip():
+            # No key material available for this recipient. This is the CHECKED
+            # graceful-degradation path (mirrors the caller's ``if pub_armor:``
+            # guard), NOT an encryption failure — return unchanged. A non-empty
+            # key that then fails to load still falls through to the raise below.
+            logger.debug("No recipient key armor — skipping encryption")
+            return envelope
 
         try:
             import pgpy
@@ -190,8 +208,13 @@ class EnvelopeCrypto:
             return envelope.model_copy(update={"payload": new_payload})
 
         except Exception as exc:
-            logger.warning("Encryption failed: %s — sending plaintext", exc)
-            return envelope
+            # FAIL CLOSED. Encryption was requested (PGP available + recipient
+            # key present) and it threw. Returning the envelope here would put
+            # the plaintext payload on the wire with only a log line — a silent
+            # confidentiality failure. Raise so the caller drops the send.
+            logger.error("Encryption failed for %s — refusing to send plaintext: %s",
+                         envelope.recipient, exc)
+            raise CryptoError(f"payload encryption failed: {exc}") from exc
 
     def decrypt_payload(self, envelope: MessageEnvelope) -> MessageEnvelope:
         """Decrypt an envelope's payload content with our private key.
