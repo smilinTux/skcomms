@@ -73,7 +73,9 @@ def signing_patch(lumina_keys):
     }
     with patch("skcomms.mailbox.resolve_self_identity", return_value=ident), patch(
         "skcomms.mailbox._load_signer", return_value=EnvelopeSigner(priv, "")
-    ), patch("skcomms.mailbox._load_verifier_key", return_value=pub):
+    ), patch("skcomms.mailbox._load_verifier_key", return_value=pub), patch(
+        "skcomms.mailbox._load_private_armor", return_value=priv
+    ):
         yield priv, pub
 
 
@@ -92,7 +94,8 @@ class TestSend:
         scaffold(agent="lumina")
         result = send_message("opus@chef.skworld", "hello opus")
 
-        # sender outbox copy
+        # sender outbox copy — the sender's own LOCAL record (not replicated to
+        # the peer) stays a readable SignedEnvelope.
         out_path = Path(result["outbox_path"])
         assert out_path.exists()
         # peer inbox drop
@@ -103,11 +106,18 @@ class TestSend:
 
         from skcomms.envelope import SignedEnvelope
 
-        signed = SignedEnvelope.from_bytes(peer_path.read_bytes())
+        signed = SignedEnvelope.from_bytes(out_path.read_bytes())
         assert signed.envelope.from_fqid == "lumina@chef.skworld"
         assert signed.envelope.to_fqid == "opus@chef.skworld"
         assert signed.envelope.body == "hello opus"
         assert signed.is_signed
+
+        # SECURITY: the peer inbox drop is Syncthing-replicated, so it MUST be
+        # sealed at rest — never a plaintext body, never a bare SignedEnvelope.
+        raw = peer_path.read_bytes()
+        assert b"hello opus" not in raw
+        with pytest.raises(Exception):
+            SignedEnvelope.from_bytes(raw)
 
     def test_invalid_fqid_rejected(self, cluster_env, signing_patch):
         from skcomms.mailbox import send_message
@@ -143,15 +153,20 @@ class TestInbox:
         info = scaffold(agent="lumina")
         send_message("lumina@chef.skworld", "original")
 
-        # tamper with the persisted inbox envelope body
+        # The inbox file is now SEALED at rest. Unseal it, tamper the signed
+        # envelope body, then re-seal so read_inbox decrypts a tampered-but-
+        # signed envelope and the signature check flags it.
         inbox_files = list(Path(info["inbox"]).glob("*.json"))
         assert inbox_files
-        from skcomms.envelope import SignedEnvelope
+        from skcomms.mailbox import _seal_for_recipient, _unseal_at_rest
+        from skcomms.crypto import EnvelopeCrypto
 
-        signed = SignedEnvelope.from_bytes(inbox_files[0].read_bytes())
+        priv, pub = signing_patch
+        reader_crypto = EnvelopeCrypto(private_key_armor=priv, passphrase="")
+        signed = _unseal_at_rest(inbox_files[0].read_bytes(), reader_crypto)
         tampered_env = signed.envelope.model_copy(update={"body": "EVIL"})
         tampered = signed.model_copy(update={"envelope": tampered_env})
-        inbox_files[0].write_bytes(tampered.to_bytes())
+        inbox_files[0].write_bytes(_seal_for_recipient(tampered, pub))
 
         items = read_inbox(agent="lumina")
         assert len(items) == 1
