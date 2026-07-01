@@ -40,12 +40,15 @@ implementation only reaches for it when consent is switched on.
 """
 from __future__ import annotations
 
+import secrets
+import sqlite3
 from dataclasses import dataclass
 from typing import Optional
 
 from .consent_captcha import Captcha, derive_challenge
 from .consent_groups import GroupJoinPolicy, JoinRequest, JoinStatus, Role
 from .consent_moderation import Report, ReportLog, ShadowBlockSet
+from .home import skcomms_home
 
 
 @dataclass
@@ -89,6 +92,9 @@ class GroupConsentGate:
             :class:`~skcomms.consent_pipeline.ConsentPipeline`).
     """
 
+    #: Bytes of CSPRNG entropy in a per-group captcha secret (256-bit).
+    _SECRET_NBYTES = 32
+
     def __init__(self, agent: str = "default") -> None:
         self.agent = agent
         self._configs: dict[str, _GroupConfig] = {}
@@ -96,6 +102,8 @@ class GroupConsentGate:
         self._captchas: dict[str, Captcha] = {}
         self._shadow: dict[str, ShadowBlockSet] = {}
         self._reports: dict[str, ReportLog] = {}
+        #: In-memory secrets for ``persisted=False`` groups (never hit disk).
+        self._mem_secrets: dict[str, str] = {}
 
     # -- configuration ---------------------------------------------------------
 
@@ -172,6 +180,56 @@ class GroupConsentGate:
             self._reports[group_id] = rl
         return rl
 
+    def _group_secret(self, group_id: str) -> str:
+        """Return the per-group captcha secret, generating+persisting on first use.
+
+        A server-side random nonce (``secrets.token_hex``) that is mixed into the
+        captcha seed so the expected answer is NOT computable from public inputs
+        (group_id + fqid) alone. It is generated once per group (on first
+        configure/join), persisted alongside the group's policy store, and NEVER
+        surfaced to a joiner. Fresh gate handles over the same home re-read it, so
+        the issuer/bot verifies deterministically while the joiner cannot
+        precompute.
+
+        Uses the same on-disk layout as :class:`GroupJoinPolicy`
+        (``consent/groups/<group_id>/secret.db``); ``persisted=False`` groups keep
+        an ephemeral in-memory secret (tests / transient rooms).
+        """
+        cfg = self._cfg(group_id)
+        if not cfg.persisted:
+            sec = self._mem_secrets.get(group_id)
+            if sec is None:
+                sec = secrets.token_hex(self._SECRET_NBYTES)
+                self._mem_secrets[group_id] = sec
+            return sec
+
+        d = skcomms_home() / "consent" / "groups" / group_id
+        d.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(d / "secret.db"))
+        try:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS group_secret "
+                "(group_id TEXT PRIMARY KEY, secret TEXT NOT NULL)"
+            )
+            row = conn.execute(
+                "SELECT secret FROM group_secret WHERE group_id=?", (group_id,)
+            ).fetchone()
+            if row is not None:
+                return row[0]
+            # First touch (or an upgrade of a pre-secret group): mint + persist.
+            sec = secrets.token_hex(self._SECRET_NBYTES)
+            conn.execute(
+                "INSERT OR IGNORE INTO group_secret (group_id, secret) VALUES (?,?)",
+                (group_id, sec),
+            )
+            conn.commit()
+            # Re-read to win any race (another handle may have inserted first).
+            return conn.execute(
+                "SELECT secret FROM group_secret WHERE group_id=?", (group_id,)
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
     # -- JOIN path -------------------------------------------------------------
 
     def join_decision(
@@ -205,7 +263,13 @@ class GroupConsentGate:
                 return GroupJoinResult(group_id, fqid, JoinStatus.MEMBER)
             if pol.is_blocked(fqid):
                 return GroupJoinResult(group_id, fqid, JoinStatus.BLOCKED)
-            use_seed = seed if seed is not None else f"{group_id}:{fqid}"
+            # Public part of the seed (deterministic per-join handle).
+            public_seed = seed if seed is not None else f"{group_id}:{fqid}"
+            # SECURITY: mix a per-group SERVER-SIDE secret so the expected answer
+            # cannot be precomputed from public inputs (group_id + fqid) alone.
+            # The joiner never sees this secret; only the issuer/bot (which reads
+            # the persisted secret via the surfaced seed) can verify.
+            use_seed = f"{self._group_secret(group_id)}:{public_seed}"
             challenge_id, prompt = self._captcha(group_id).generate(use_seed)
             # Park them PENDING (knock-style) until the captcha verifies.
             self._set_pending(group_id, fqid)
