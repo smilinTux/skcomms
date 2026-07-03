@@ -258,7 +258,7 @@ class AccessServer:
             server=self,
         )
 
-    def authenticate_session(self, token: Any) -> ToolContext:
+    def authenticate_session(self, token: Any, *, same_node: bool = False) -> ToolContext:
         """Authenticate an MCP **session** (the /sse handshake hook, A6/F1).
 
         An MCP client opening an /sse session presents a capauth-signed *hello*
@@ -289,12 +289,21 @@ class AccessServer:
                 missing/unsigned/untrusted.
         """
         if token is None or token == "":
-            if self.config.sse_require_auth and not self.config.dev_bypass:
+            # Same-node trust: a connection that ORIGINATES from this node itself
+            # (loopback, or the node's own tailnet bind IP — see _is_same_node) is
+            # the node talking to its own access plane, so it is granted a
+            # node-local session without a hello even when sse_require_auth is ON.
+            # Remote tailnet peers (any other source IP) still MUST present a
+            # capauth-signed hello — Tailscale/WireGuard authenticates source IPs,
+            # so a peer cannot forge the node's own IP. This keeps the network
+            # gated while letting the operator test/use it locally. `dev_bypass`
+            # remains the (LOCAL-DEV-ONLY) blanket escape hatch.
+            if self.config.sse_require_auth and not self.config.dev_bypass and not same_node:
                 raise AccessAuthError(
                     "sse session requires a capauth-signed hello "
                     "(sse_require_auth is ON)"
                 )
-            # Dev/loopback fallback: node-local trusted session.
+            # Same-node / dev / loopback: node-local trusted session.
             ident = self.config.node_fqid or self.config.node_name
             return ToolContext(
                 identity=ident,
@@ -557,6 +566,28 @@ def _extract_sse_hello(request) -> Any:
     return None
 
 
+def _is_same_node(request, config) -> bool:
+    """True when the /sse connection originates from THIS node itself.
+
+    Same-node == the request's client IP is loopback OR equals the node's own
+    bind host (its tailnet IP). This is the standard "trust localhost/self, gate
+    the network" pattern: the operator can use/test the access plane locally
+    without minting a capauth hello, while remote tailnet peers stay gated.
+
+    Safe because the only sources that can present these addresses are the node
+    itself: loopback is not network-reachable, and Tailscale/WireGuard
+    authenticates tailnet source IPs so a peer cannot forge the node's own IP.
+    """
+    try:
+        host = (request.client.host if getattr(request, "client", None) else "") or ""
+    except Exception:  # pragma: no cover - defensive
+        return False
+    if host in ("127.0.0.1", "::1", "localhost"):
+        return True
+    bind = str(getattr(config, "host", "") or "").strip()
+    return bool(bind) and bind not in ("0.0.0.0", "::") and host == bind
+
+
 def _mount_mcp_sse(app, srv: AccessServer) -> None:
     """Mount the MCP SSE transport, exposing registered tools to MCP clients.
 
@@ -623,7 +654,7 @@ def _mount_mcp_sse(app, srv: AccessServer) -> None:
         # Authenticate the SESSION before the MCP protocol starts.
         token = _extract_sse_hello(request)
         try:
-            ctx = srv.authenticate_session(token)
+            ctx = srv.authenticate_session(token, same_node=_is_same_node(request, srv.config))
         except AccessAuthError as exc:
             srv.audit.record(
                 transport="sse", identity=None, tool="<session>", scope=None,
