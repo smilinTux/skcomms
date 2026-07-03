@@ -54,6 +54,61 @@ SEND_TIMEOUT = 5.0  # seconds for send future.result()
 CONNECT_SETTLE = 0.3  # seconds to wait after starting the loop thread
 
 
+def summarize_ice_candidate(candidate: str):
+    """Summarize a single ICE candidate line for debug logging.
+
+    Extracts only non-sensitive, network-level fields useful for
+    connection debugging — candidate type (host/srflx/prflx/relay),
+    transport protocol, and connection address/port. Session credentials
+    such as the ICE ``ufrag`` are deliberately NOT parsed out so they can
+    never leak into logs.
+
+    Args:
+        candidate: A candidate line with or without the ``candidate:``
+            prefix (e.g. from an SDP ``a=candidate:`` attribute or a
+            trickle-ICE payload).
+
+    Returns:
+        A dict with ``type``/``protocol``/``address``/``port``/``component``
+        keys, or None if the line could not be parsed.
+    """
+    if not candidate:
+        return None
+    line = candidate.strip()
+    if line.startswith("candidate:"):
+        line = line[len("candidate:") :]
+    parts = line.split()
+    # RFC 5245: foundation component transport priority address port typ <type>
+    if len(parts) < 8 or parts[6] != "typ":
+        return None
+    return {
+        "type": parts[7],
+        "protocol": parts[2].lower(),
+        "address": parts[4],
+        "port": parts[5],
+        "component": parts[1],
+    }
+
+
+def iter_sdp_candidate_summaries(sdp: str):
+    """Yield candidate summaries for every ``a=candidate:`` line in an SDP.
+
+    Args:
+        sdp: A full SDP offer/answer string.
+
+    Yields:
+        Non-None summaries from :func:`summarize_ice_candidate`.
+    """
+    if not sdp:
+        return
+    for raw in sdp.splitlines():
+        raw = raw.strip()
+        if raw.startswith("a=candidate:"):
+            summary = summarize_ice_candidate(raw[len("a=") :])
+            if summary:
+                yield summary
+
+
 @dataclass
 class PeerConnection:
     """State for a single WebRTC peer connection.
@@ -567,6 +622,11 @@ class WebRTCTransport(Transport):
             offer = await peer.pc.createOffer()
             await peer.pc.setLocalDescription(offer)
             await self._wait_for_ice_gathering(peer.pc)
+            self._log_ice_candidates(
+                peer.pc.localDescription.sdp if peer.pc.localDescription else "",
+                peer_id,
+                direction="local",
+            )
 
             sdp_payload = {
                 "sdp": {
@@ -676,9 +736,15 @@ class WebRTCTransport(Transport):
                     await peer.pc.setRemoteDescription(
                         RTCSessionDescription(sdp=sdp_str, type="offer")
                     )
+                    self._log_ice_candidates(sdp_str, from_id, direction="remote")
                     answer = await peer.pc.createAnswer()
                     await peer.pc.setLocalDescription(answer)
                     await self._wait_for_ice_gathering(peer.pc)
+                    self._log_ice_candidates(
+                        peer.pc.localDescription.sdp if peer.pc.localDescription else "",
+                        from_id,
+                        direction="local",
+                    )
 
                     sdp_payload = {
                         "sdp": {
@@ -697,6 +763,7 @@ class WebRTCTransport(Transport):
                         await peer.pc.setRemoteDescription(
                             RTCSessionDescription(sdp=sdp_str, type="answer")
                         )
+                        self._log_ice_candidates(sdp_str, from_id, direction="remote")
                         logger.info("WebRTC: applied SDP answer from %s", from_id[:8])
 
             ice_data = data.get("ice")
@@ -721,9 +788,21 @@ class WebRTCTransport(Transport):
                             ice_candidate.sdpMid = ice_data.get("sdpMid")
                             ice_candidate.sdpMLineIndex = ice_data.get("sdpMLineIndex")
                             await peer.pc.addIceCandidate(ice_candidate)
-                            logger.debug(
-                                "WebRTC: applied trickle ICE candidate from %s", from_id[:8]
-                            )
+                            _summary = summarize_ice_candidate(candidate_str)
+                            if _summary:
+                                logger.debug(
+                                    "WebRTC: applied trickle ICE candidate from %s: "
+                                    "type=%s proto=%s addr=%s:%s",
+                                    from_id[:8],
+                                    _summary["type"],
+                                    _summary["protocol"],
+                                    _summary["address"],
+                                    _summary["port"],
+                                )
+                            else:
+                                logger.debug(
+                                    "WebRTC: applied trickle ICE candidate from %s", from_id[:8]
+                                )
                         except Exception as exc:
                             logger.warning(
                                 "WebRTC: failed to apply ICE candidate from %s: %s",
@@ -753,17 +832,73 @@ class WebRTCTransport(Transport):
         with self._peers_lock:
             self._peers[peer_id] = peer
 
+        # Track previous ICE connection-state so transitions can be logged
+        # for connection debugging (purely diagnostic — no behaviour change).
+        prev_ice_state = {"value": None}
+
         @pc.on("iceconnectionstatechange")
         async def _on_ice_state_change():
             state = pc.iceConnectionState
-            logger.debug("WebRTC: ICE state with %s: %s", peer_id[:8], state)
+            old = prev_ice_state["value"]
+            prev_ice_state["value"] = state
+            logger.info(
+                "WebRTC: ICE connection-state %s -> %s with %s",
+                old,
+                state,
+                peer_id[:8],
+            )
             if state == "failed":
                 peer.negotiating = False
                 logger.warning("WebRTC: ICE failed with %s", peer_id[:8])
             elif state in ("connected", "completed"):
                 peer.negotiating = False
 
+        @pc.on("icegatheringstatechange")
+        def _on_ice_gathering_state_change():
+            gstate = pc.iceGatheringState
+            logger.debug(
+                "WebRTC: ICE gathering-state with %s: %s", peer_id[:8], gstate
+            )
+            if gstate == "complete":
+                logger.info("WebRTC: ICE gathering complete for %s", peer_id[:8])
+
         return peer
+
+    def _log_ice_candidates(self, sdp: str, peer_id: str, direction: str) -> None:
+        """Log the ICE candidates embedded in an SDP for connection debugging.
+
+        Purely diagnostic — emits one DEBUG line per candidate (type /
+        protocol / address / port) plus a single INFO summary with the
+        total count and the distinct candidate types. No behaviour change
+        and no secrets (ufrag/pwd/tokens) are ever logged. Verbosity is
+        governed entirely by the module logger's configuration.
+
+        Args:
+            sdp: SDP offer/answer whose candidates should be logged.
+            peer_id: Fingerprint of the remote peer (truncated in logs).
+            direction: ``"local"`` (gathered) or ``"remote"`` (received).
+        """
+        summaries = list(iter_sdp_candidate_summaries(sdp))
+        if not summaries:
+            return
+        for cand in summaries:
+            logger.debug(
+                "WebRTC: %s ICE candidate for %s: type=%s proto=%s addr=%s:%s",
+                direction,
+                peer_id[:8],
+                cand["type"],
+                cand["protocol"],
+                cand["address"],
+                cand["port"],
+            )
+        types = ",".join(sorted({c["type"] for c in summaries}))
+        logger.info(
+            "WebRTC: %d %s ICE candidate(s) for %s (types=%s)",
+            len(summaries),
+            direction,
+            peer_id[:8],
+            types,
+        )
 
     def _wire_channel(self, peer: PeerConnection, channel) -> None:
         """Register event handlers on an RTCDataChannel.
