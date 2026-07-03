@@ -27,6 +27,20 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# Canonical content types the current protocol renders with a specific view.
+# Anything NOT in this set is still a valid message: it falls back to the plain
+# ``body`` text (see :meth:`Envelope.render`) so a newer message kind never
+# breaks an older client. Extend this set as new typed views are added.
+KNOWN_CONTENT_TYPES: frozenset[str] = frozenset(
+    {
+        "text/plain",
+        "text/markdown",
+        "application/cot+xml",
+        "application/geo+json",
+    }
+)
+
+
 class Envelope(BaseModel):
     """Envelope v1 — a FQID-addressed, content-typed message.
 
@@ -114,6 +128,23 @@ class Envelope(BaseModel):
     def from_bytes(cls, data: bytes) -> "Envelope":
         """Deserialize an envelope from UTF-8 JSON bytes."""
         return cls.model_validate_json(data)
+
+    def is_known_content_type(
+        self, registry: frozenset[str] = KNOWN_CONTENT_TYPES
+    ) -> bool:
+        """Whether ``content_type`` has a recognized rich view."""
+        return self.content_type in registry
+
+    def render(self, registry: frozenset[str] = KNOWN_CONTENT_TYPES) -> str:
+        """Return display text for this envelope, with plain-body fallback.
+
+        Unknown content types fall back to the raw ``body`` so a newer message
+        kind is shown as plain text rather than breaking an older client. Known
+        types also return ``body`` here; a caller with a rich view branches on
+        :meth:`is_known_content_type`. This is the typed-message contract at the
+        canonical Envelope-v1 layer (mirrors ``MessagePayload.render``).
+        """
+        return self.body
 
 
 # Default classical signature suite id (PQC Q0 crypto-agility scaffolding).
