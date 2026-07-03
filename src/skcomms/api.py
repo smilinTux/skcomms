@@ -19,7 +19,7 @@ from collections import defaultdict
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -330,7 +330,7 @@ class SendMessageRequest(BaseModel):
         description="The message content (plaintext)",
         examples=["Hello from the SKComms API!"],
     )
-    message_type: MessageType = Field(
+    message_type: Union[MessageType, str] = Field(
         default=MessageType.TEXT,
         description="Type of content being sent",
     )
@@ -380,7 +380,7 @@ class MessageEnvelopeResponse(BaseModel):
     sender: str
     recipient: str
     content: str
-    content_type: MessageType
+    content_type: Union[MessageType, str]
     encrypted: bool
     compressed: bool
     signature: Optional[str] = None

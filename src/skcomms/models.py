@@ -11,9 +11,9 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
+from typing import Optional, Union
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class RoutingMode(str, Enum):
@@ -74,10 +74,51 @@ class MessagePayload(BaseModel):
     """
 
     content: str
-    content_type: MessageType = MessageType.TEXT
+    content_type: Union[MessageType, str] = MessageType.TEXT
     encrypted: bool = False
     compressed: bool = False
     signature: Optional[str] = None
+
+    @field_validator("content_type", mode="before")
+    @classmethod
+    def _coerce_content_type(cls, v: object) -> object:
+        """Forward-compatible content_type coercion (typed-message contract).
+
+        Known values are normalized to the :class:`MessageType` enum; any
+        value we do not recognize is preserved verbatim as a plain string so
+        a message kind introduced by a newer client round-trips losslessly
+        and never fails validation on an older one. Unknown types degrade to
+        a plain-body view (see :meth:`render`) instead of breaking.
+        """
+        if isinstance(v, MessageType):
+            return v
+        if isinstance(v, str):
+            try:
+                return MessageType(v)
+            except ValueError:
+                return v
+        return v
+
+    @property
+    def is_known_type(self) -> bool:
+        """True iff ``content_type`` is a recognized :class:`MessageType`."""
+        return isinstance(self.content_type, MessageType)
+
+    @property
+    def content_type_str(self) -> str:
+        """``content_type`` as a plain string, enum or not (display-safe)."""
+        ct = self.content_type
+        return ct.value if isinstance(ct, MessageType) else str(ct)
+
+    def render(self) -> str:
+        """Display text for this payload, with plain-body fallback.
+
+        A recognized type may later gain a rich sub-view; an unrecognized
+        type always falls back to the raw ``content`` body so an older client
+        shows plain text instead of erroring on a newer message kind. Callers
+        branch on :attr:`is_known_type` to pick a rich view.
+        """
+        return self.content
 
 
 class MessageMetadata(BaseModel):

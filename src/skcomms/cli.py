@@ -172,7 +172,7 @@ def receive(config: Optional[str], json_out: bool):
             tid = env.metadata.thread_id[:12] if env.metadata.thread_id else ""
             table.add_row(
                 env.sender,
-                env.payload.content_type.value,
+                env.payload.content_type_str,
                 preview,
                 tid,
                 f"[{urg_color}]{urg.upper()}[/]",
@@ -182,7 +182,7 @@ def receive(config: Optional[str], json_out: bool):
     else:
         for env in envelopes:
             click.echo(
-                f"  {env.sender} [{env.payload.content_type.value}]: {env.payload.content[:80]}"
+                f"  {env.sender} [{env.payload.content_type_str}]: {env.payload.content[:80]}"
             )
 
     _print("")
