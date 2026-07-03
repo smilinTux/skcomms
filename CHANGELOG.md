@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.2.0] - 2026-07-03
+
+### Changed
+- Release.
+
 All notable changes to `skcomms` are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
