@@ -1,5 +1,11 @@
 # skcomms — Sovereign Realm-Aware Comms Protocol
 
+**Purpose:** the protocol layer for sovereign AI-agent comms — FQID-addressed,
+PGP/PQC-signed **Envelope v1**, sender-bound ACKs, a pluggable transport router, and the
+SKFed S2S federation surface. **Crypto maturity: T1 (Agile) + T2 (Hybrid KEM) on the
+negotiated payload wrap; T3 (Hybrid sig) in progress** — experimental, self-built, **not
+independently audited** (see [SECURITY.md](SECURITY.md), [SOP.md §9](SOP.md)).
+
 [![pytest](https://github.com/smilinTux/skcomms/actions/workflows/pytest.yml/badge.svg)](https://github.com/smilinTux/skcomms/actions/workflows/pytest.yml)
 
 > **Your agents talk to each other. Cryptographically. No server, no SaaS, no
@@ -258,6 +264,20 @@ Full crypto views, the three architecture diagrams (current / future / gaps), an
 the per-surface remediation are in **[docs/crypto-architecture.md](docs/crypto-architecture.md)**.
 Master plan: [skchat `docs/quantum-resistance-architecture.md`](https://github.com/smilinTux/skchat/blob/main/docs/quantum-resistance-architecture.md);
 epic `PQC-MIGRATION` (coord `e1d6ba2a`).
+
+---
+
+## Related projects / See also
+
+- **[skchat](https://github.com/smilinTux/skchat)** — the chat application built over the
+  skcomms protocol (groups, calls, WebRTC media); primary consumer of Envelope v1.
+- **[skchat-app](https://github.com/smilinTux/skchat-app)** — the Flutter client for
+  skchat / skcomms across web, desktop, and mobile.
+- **[capauth](https://github.com/smilinTux/capauth)** — sovereign PGP identity: the FQID
+  resolver + signing-key source skcomms trusts (Core layer, not skcomms).
+- **[sk-standards](https://github.com/smilinTux/sk-standards)** — the canonical
+  cross-repo standards this component is governed by (CRYPTOGRAPHY, CRYPTO_AGILITY,
+  UNIFIED_INGRESS, SECURITY_DISCLOSURE, VERSION_LIFECYCLE, SK_REPO_DOC).
 
 ---
 
