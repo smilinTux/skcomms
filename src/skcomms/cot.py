@@ -141,6 +141,20 @@ def parse_cot(xml: str | bytes) -> CotEvent:
     )
 
 
+
+def is_ephemeral_beacon(ev: CotEvent) -> bool:
+    """Whether *ev* is an ephemeral position beacon (PLI) vs. a durable event.
+
+    CoT "atoms" (type ``a-*``) are live entity position reports -- self/other
+    unit PLI that TAK clients **continuously re-beacon**. An undelivered beacon
+    has no value once a newer position for the same entity (``uid``) exists, so
+    beacons are fire-and-forget / supersede-only and must never accumulate in
+    the durable federation outbox. "Bits" (``b-*``: GeoChat, markers, files)
+    are discrete events that must be delivered reliably.
+    """
+    return ev.type.startswith("a-")
+
+
 def to_cot(ev: CotEvent) -> str:
     """Serialize a :class:`CotEvent` back to CoT ``<event>`` XML.
 

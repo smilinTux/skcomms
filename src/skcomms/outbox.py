@@ -109,6 +109,10 @@ class OutboxEntry(BaseModel):
         max_retries: Maximum attempts before moving to dead letter.
         next_retry_at: Earliest time for the next retry attempt.
         last_error: Error message from the most recent failure.
+        supersede_key: Optional ephemeral-supersede key. Entries sharing a
+            key (e.g. re-beaconed CoT position reports for one entity+peer)
+            evict older undelivered peers so the outbox keeps only the latest
+            and never accumulates stale state. ``None`` = durable (never evicted).
     """
 
     envelope_id: str
@@ -120,6 +124,7 @@ class OutboxEntry(BaseModel):
     max_retries: int = DEFAULT_MAX_RETRIES
     next_retry_at: Optional[datetime] = None
     last_error: str = ""
+    supersede_key: Optional[str] = None
 
 
 class PersistentOutbox:
@@ -176,6 +181,8 @@ class PersistentOutbox:
         recipient: str,
         envelope_json: str,
         error: str = "",
+        *,
+        supersede_key: Optional[str] = None,
     ) -> OutboxEntry:
         """Add a failed message to the outbox queue.
 
@@ -197,13 +204,29 @@ class PersistentOutbox:
             last_attempt=datetime.now(timezone.utc),
             last_error=error,
             next_retry_at=self._compute_next_retry(1),
+            supersede_key=supersede_key,
         )
+
+        # Ephemeral entries (e.g. CoT position beacons) carry a supersede_key:
+        # a newer entry for the same key evicts any older, still-undelivered
+        # ones so the outbox keeps only the latest and never accumulates stale,
+        # superseded state. Durable entries (supersede_key=None) are never
+        # matched and remain reliably queued.
+        if supersede_key:
+            evicted = self._evict_superseded(supersede_key)
+            if evicted:
+                logger.debug(
+                    "Superseded %d stale outbox entr%s for key %s",
+                    evicted, "y" if evicted == 1 else "ies", supersede_key,
+                )
 
         self._write_entry(self._pending, entry)
         logger.info("Queued %s for retry (error: %s)", envelope_id[:8], error[:60])
         return entry
 
-    def enqueue_signed(self, signed: object, error: str = "") -> OutboxEntry:
+    def enqueue_signed(
+        self, signed: object, error: str = "", *, supersede_key: Optional[str] = None
+    ) -> OutboxEntry:
         """Enqueue a :class:`~skcomms.envelope.SignedEnvelope` (federation path).
 
         This is the canonical federation enqueue helper: it serializes the
@@ -224,6 +247,7 @@ class PersistentOutbox:
             recipient=env.to_fqid,
             envelope_json=signed.to_bytes().decode("utf-8"),  # type: ignore[attr-defined]
             error=error,
+            supersede_key=supersede_key,
         )
 
     def retry_all(self) -> dict[str, Any]:
@@ -527,6 +551,32 @@ class PersistentOutbox:
                 exc,
             )
             return False
+
+    def _evict_superseded(self, supersede_key: str) -> int:
+        """Evict pending entries sharing *supersede_key* (ephemeral supersede).
+
+        Bounds ephemeral traffic (e.g. re-beaconed CoT position reports): when
+        a newer entry for the same key is enqueued, older undelivered ones for
+        that key are removed from the pending queue so superseded state never
+        accumulates. Durable entries (``supersede_key`` unset) are never
+        matched.
+
+        Args:
+            supersede_key: The key whose older pending entries to evict.
+
+        Returns:
+            int: Number of entries evicted.
+        """
+        evicted = 0
+        for entry_path in self._pending.glob("*.json"):
+            try:
+                entry = self._load_entry(entry_path)
+            except (json.JSONDecodeError, ValueError, OSError):
+                continue
+            if entry.supersede_key and entry.supersede_key == supersede_key:
+                entry_path.unlink(missing_ok=True)
+                evicted += 1
+        return evicted
 
     def _compute_next_retry(self, attempt: int) -> datetime:
         """Compute the next retry time with exponential backoff.

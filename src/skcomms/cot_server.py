@@ -27,7 +27,7 @@ import re
 import ssl
 from typing import Awaitable, Callable, Optional
 
-from .cot import CotEvent, parse_cot, to_cot
+from .cot import CotEvent, is_ephemeral_beacon, parse_cot, to_cot
 
 logger = logging.getLogger("skcomms.cot_server")
 
@@ -575,9 +575,20 @@ def federation_ingest(
 
     def hook(cot: CotEvent) -> None:
         body = to_cot(cot)
+        # Ephemeral position beacons (CoT atoms, ``a-*``) are re-beaconed
+        # continuously, so an undelivered one has no value once superseded. Tag
+        # them with a per-(peer, entity) supersede_key so the outbox retains
+        # only the latest undelivered beacon per entity instead of accumulating
+        # stale ones. Durable events (GeoChat/markers, ``b-*``) get no key and
+        # are queued reliably as before.
+        ephemeral = is_ephemeral_beacon(cot)
         for peer_fqid in provider():
+            supersede_key = f"cot-beacon:{peer_fqid}:{cot.uid}" if ephemeral else None
             try:
-                skcomms.send_federated(peer_fqid, body, content_type="application/cot+xml")
+                skcomms.send_federated(
+                    peer_fqid, body, content_type="application/cot+xml",
+                    supersede_key=supersede_key,
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("CoT federate to %s failed: %s", peer_fqid, exc)
 

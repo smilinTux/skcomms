@@ -487,6 +487,7 @@ class SKComms:
         in_reply_to: Optional[str] = None,
         mode: Optional[RoutingMode] = None,
         consent_token: Optional[str] = None,
+        supersede_key: Optional[str] = None,
     ) -> DeliveryReport:
         """Send a canonical signed Envelope v1 to a remote agent (federation).
 
@@ -503,6 +504,10 @@ class SKComms:
             content_type: Rail-agnostic "kind" (default ``text/plain``).
             thread_id / in_reply_to: Optional threading.
             mode: Routing mode override.
+            supersede_key: Optional ephemeral-supersede key for the outbox.
+                Ephemeral sends (e.g. CoT position beacons) pass a key so a
+                newer undelivered copy evicts the older one instead of
+                accumulating; ``None`` (default) queues durably as before.
 
         Returns:
             DeliveryReport for the immediate attempt.
@@ -550,7 +555,9 @@ class SKComms:
         report = self._router.route_signed(signed, preferred_transports=preferred, mode=mode)
         if not report.delivered:
             try:
-                self._outbox.enqueue_signed(signed, error="initial send failed")
+                self._outbox.enqueue_signed(
+                    signed, error="initial send failed", supersede_key=supersede_key
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("federation outbox enqueue failed: %s", exc)
         return report
