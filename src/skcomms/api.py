@@ -979,7 +979,12 @@ def _write_to_recipient_inbox(env) -> str:
         return f"quarantined:{env.id}"
 
     if recipient:
-        inbox = inbox / recipient
+        # Write to the recipient agent's CANONICAL comms inbox — the same tree
+        # each agent's daemon reads (skcomms config file-transport inbox_path =
+        # ~/.skcapstone/agents/<agent>/comms/inbox). Historically this wrote to a
+        # separate ~/.skcapstone/skcomms/inbox/<agent> tree that no daemon polled,
+        # so per-recipient mail piled up unread. Unified so writes and reads meet.
+        inbox = Path(f"~/.skcapstone/agents/{recipient}/comms/inbox").expanduser()
     inbox.mkdir(parents=True, exist_ok=True)
     msg = _envelope_v1_to_message(env)
     filename = f"{env.id}{ENVELOPE_SUFFIX}"

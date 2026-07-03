@@ -200,12 +200,31 @@ def load_config(config_path: Optional[str] = None) -> SKCommsConfig:
     # itself. SKAGENT is the primary selector (see skcapstone agent resolution);
     # SKCAPSTONE_AGENT is the documented fallback.
     agent = (os.environ.get("SKAGENT") or os.environ.get("SKCAPSTONE_AGENT") or "").strip()
-    if agent and config.identity.name != agent:
-        logger.info(
-            "skcomms identity overridden '%s' -> '%s' from SKAGENT",
-            config.identity.name,
-            agent,
-        )
-        config.identity.name = agent
+    if agent:
+        if config.identity.name != agent:
+            logger.info(
+                "skcomms identity overridden '%s' -> '%s' from SKAGENT",
+                config.identity.name,
+                agent,
+            )
+            config.identity.name = agent
+
+        # Per-agent transport paths: the ONE shared config serves N agents, each
+        # reading/writing its OWN ~/.skcapstone/agents/<agent>/comms tree rather
+        # than the historically-hardcoded 'lumina' paths (which made every agent
+        # collide on lumina's inbox). ``agents/<agent>`` already exists per agent;
+        # ``agent`` is a symlink to ``agents`` so lumina resolves byte-identically
+        # to its prior path. Mirrors the S2S API's per-recipient routing in
+        # api._write_to_recipient_inbox so writes and reads meet at one location.
+        base = f"~/.skcapstone/agents/{agent}"
+        file_t = config.transports.get("file")
+        if file_t is not None:
+            file_t.settings["inbox_path"] = f"{base}/comms/inbox"
+            file_t.settings["outbox_path"] = f"{base}/comms/outbox"
+        sync_t = config.transports.get("syncthing")
+        if sync_t is not None and "comms_root" in sync_t.settings:
+            sync_t.settings["comms_root"] = f"{base}/comms"
+        if config.daemon and config.daemon.log_file:
+            config.daemon.log_file = f"{base}/logs/transport.log"
 
     return config
