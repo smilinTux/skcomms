@@ -725,7 +725,15 @@ class Router:
                     transport.name,
                     result.error or "no error detail",
                 )
-                self._record_failure(transport.name)
+                # Structural/permanent routing failures — no inbox_url for THIS
+                # recipient, a broadcast '*' a point-to-point transport can't
+                # serve, or a 4xx rejection — are NOT transport-health problems.
+                # Counting them would trip the cooldown and then block OTHER,
+                # deliverable recipients on an otherwise-healthy transport (e.g. a
+                # presence heartbeat to '*' every 60s starving real DMs). Only
+                # transient failures (timeout/connection/5xx) arm the cooldown.
+                if not (result.error or "").startswith("perm:") and recipient != "*":
+                    self._record_failure(transport.name)
             return result
         except TransportError as exc:
             elapsed = (time.monotonic() - start) * 1000
