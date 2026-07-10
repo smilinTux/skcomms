@@ -196,12 +196,21 @@ def file_transport_outbox(agent: Optional[str] = None) -> Path:
 
 
 def legacy_transfers_dir() -> Path:
-    """The pre-scoping transfer-state location (also the agentless fallback).
+    """The in-home transfer-state location (also the agentless fallback).
 
-    ``~/.skcapstone/transfers`` in the legacy layout, or
-    ``$SKCOMMS_HOME/transfers`` under a custom home. Agent-scoped callers
-    adopt in-flight state from here (see ``FileTransport._default_state_dir``)
-    so resumable transfers survive the upgrade to per-agent scoping.
+    ``~/.skcapstone/transfers`` with the home unset, or ``$SKCOMMS_HOME/transfers``
+    under a custom home. Agent-scoped callers adopt in-flight state from here
+    (see ``FileTransport._default_state_dir``) so resumable transfers survive
+    the upgrade to per-agent scoping.
+
+    Caveat (custom ``SKCOMMS_HOME``): the pre-scoping transfer store's default
+    was the FIXED ``~/.skcapstone/transfers`` regardless of ``SKCOMMS_HOME``, so
+    this function equals the true pre-scoping location ONLY when the home is
+    unset. Under a custom home it names the in-home spot (correct as the
+    agentless fallback and adoption source), but transfer state left at the
+    fixed ``~/.skcapstone/transfers`` by an earlier install is NOT auto-adopted:
+    reaching into the fixed path from a custom/temporary home would relocate
+    unrelated production state, so that migration is done by hand.
     """
     if os.environ.get("SKCOMMS_HOME"):
         return skcomms_home() / "transfers"

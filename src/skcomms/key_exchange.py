@@ -352,6 +352,13 @@ def import_peer_bundle(
 
     if not transports:
         # Default transports
+        # FOLLOW-UP (reader/writer divergence, out of coord 119b49f1's scope):
+        # these node-shared defaults (comms_root, inbox_path) still bypass the
+        # skcomms.paths resolver. A per-agent daemon polling
+        # agents/<agent>/comms/inbox would not see envelopes dropped at the
+        # node-shared ~/.skcapstone/skcomms/inbox here. Tracked as coord task
+        # 48289e82, NOT changed here to keep coord 119b49f1 scoped to the fed
+        # inbox / transfers / queue / retry-outbox stores.
         transports = [
             PeerTransport(transport="syncthing", settings={"comms_root": "~/.skcapstone/comms"}),
             PeerTransport(transport="file", settings={"inbox_path": "~/.skcapstone/skcomms/inbox"}),

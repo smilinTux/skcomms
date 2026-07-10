@@ -202,9 +202,7 @@ class PersistentOutbox:
             # existing deployment onto a custom home migrates that state by hand.
             if not os.environ.get("SKCOMMS_OUTBOX_DIR"):
                 legacy = skcomms_home() / "outbox"
-                paths.adopt_legacy_tree(
-                    legacy, outbox_dir, subdirs=("pending", "dead", "archive")
-                )
+                paths.adopt_legacy_tree(legacy, outbox_dir, subdirs=("pending", "dead", "archive"))
         self._root = Path(outbox_dir).expanduser()
         self._pending = self._root / "pending"
         self._dead = self._root / "dead"

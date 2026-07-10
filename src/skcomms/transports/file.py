@@ -358,12 +358,20 @@ class FileTransport(Transport):
         resume state. Agentless callers keep the legacy per-user
         ``~/.skcapstone/transfers``.
 
-        In-flight resumable transfer state written at the legacy shared
+        In-flight resumable transfer state written at the in-home legacy
         location before per-agent scoping is adopted on first use (same
         upgrade contract as the message queue and retry outbox), so
         ``resume_file`` still finds it and receive-side chunk reassembly
         does not restart after the upgrade. Transfer state entries are
         single files, so per-file rename adoption is race-safe.
+
+        Custom-home caveat: adoption looks only inside the current
+        ``skcomms_home()`` (via :func:`skcomms.paths.legacy_transfers_dir`).
+        The pre-scoping default was the FIXED ``~/.skcapstone/transfers``
+        regardless of ``SKCOMMS_HOME``, so relocating an existing install onto
+        a custom home does NOT auto-adopt state left at that fixed path; it is
+        migrated by hand (reaching into a fixed production path from a custom
+        or temporary home is deliberately avoided).
         """
         from ..paths import adopt_legacy_tree, legacy_transfers_dir, transfers_dir
 

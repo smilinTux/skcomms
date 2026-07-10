@@ -11,8 +11,9 @@ base that the code then overrode. These tests prove the unified behavior:
   config transport paths) in ONE agreeing tree (the old split is dead),
 * two agents on one node get fully separated storage trees,
 * the peer-controlled recipient component fails closed on traversal,
-* legacy node-shared queue / retry-outbox / transfer-state entries are
-  adopted, not stranded,
+* in-home legacy queue / retry-outbox / transfer-state entries are adopted,
+  not stranded, while adoption never reaches into a fixed ``~/.skcapstone``
+  path from a custom ``SKCOMMS_HOME`` (that migration is manual, by design),
 * queue adoption is pair-atomic: concurrent adopting daemons can never split
   an envelope/meta pair across two agents' trees.
 """
@@ -27,7 +28,13 @@ import pytest
 @pytest.fixture(autouse=True)
 def _clean_scoping_env(monkeypatch):
     """Every test starts with no home/agent selectors set."""
-    for var in ("SKCOMMS_HOME", "SKAGENT", "SKCAPSTONE_AGENT", "SKCOMMS_CONSENT_MODE"):
+    for var in (
+        "SKCOMMS_HOME",
+        "SKAGENT",
+        "SKCAPSTONE_AGENT",
+        "SKCOMMS_CONSENT_MODE",
+        "SKCOMMS_OUTBOX_DIR",
+    ):
         monkeypatch.delenv(var, raising=False)
     yield
 
@@ -415,3 +422,115 @@ def test_discovery_defaults_follow_agent_scoping(monkeypatch, tmp_path):
     base_inbox.mkdir()
     (base_inbox / "e2.skc.json").write_text(json.dumps({"sender": "ava"}), encoding="utf-8")
     assert "ava" in [p.name for p in discover_file_transport()]
+
+
+# --- SKCOMMS_OUTBOX_DIR override wins over per-agent scoping (coord 40c50478
+#     reconcile) ---------------------------------------------------------------
+
+
+def test_outbox_env_override_wins_over_agent_scoping(monkeypatch, tmp_path):
+    """SKCOMMS_OUTBOX_DIR pins the retry store verbatim, over per-agent scoping.
+
+    Keeps ``retry_outbox_dir``, ``outbox.default_outbox_dir`` and a
+    default-constructed ``PersistentOutbox`` in agreement so the dead-letter
+    tooling (coord 40c50478) and the daemon resolve the SAME root."""
+    monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("SKAGENT", "opus")
+    override = tmp_path / "pinned-outbox"
+    monkeypatch.setenv("SKCOMMS_OUTBOX_DIR", str(override))
+
+    from skcomms import paths
+    from skcomms.outbox import PersistentOutbox, default_outbox_dir
+
+    assert paths.retry_outbox_dir() == override
+    assert paths.retry_outbox_dir("opus") == override  # even with an explicit agent
+    assert default_outbox_dir() == override
+    ob = PersistentOutbox()
+    assert ob.root == override
+
+
+def test_outbox_env_override_skips_home_adoption(monkeypatch, tmp_path):
+    """With SKCOMMS_OUTBOX_DIR set, the in-home legacy outbox is NOT swept into
+    the pinned root: an operator who relocated the queue keeps it clean."""
+    monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("SKAGENT", "opus")
+    override = tmp_path / "pinned-outbox"
+    monkeypatch.setenv("SKCOMMS_OUTBOX_DIR", str(override))
+
+    legacy_pending = (tmp_path / "home") / "outbox" / "pending"
+    legacy_pending.mkdir(parents=True)
+    (legacy_pending / "entry.json").write_text("{}", encoding="utf-8")
+
+    from skcomms.outbox import PersistentOutbox
+
+    ob = PersistentOutbox()
+    assert ob.root == override
+    # The in-home legacy entry stays put (not adopted into the pinned root).
+    assert (legacy_pending / "entry.json").exists()
+    assert not (override / "pending" / "entry.json").exists()
+
+
+# --- Custom-home adoption boundary (coord 119b49f1 review, issue #2):
+#     adoption never reaches into the fixed ~/.skcapstone path from a custom
+#     SKCOMMS_HOME (that migration is manual, by design) ----------------------
+
+
+def test_custom_home_does_not_adopt_fixed_legacy_transfer_state(monkeypatch, tmp_path):
+    """Under a custom SKCOMMS_HOME, transfer state left at the FIXED old
+    ~/.skcapstone/transfers is NOT auto-adopted (reaching into a fixed
+    production path from a custom home would relocate unrelated state); only
+    in-home legacy state is adopted. Documented in ``legacy_transfers_dir``."""
+    user_home = tmp_path / "user-home"
+    custom_home = tmp_path / "custom-home"
+    monkeypatch.setenv("HOME", str(user_home))
+    monkeypatch.setenv("SKCOMMS_HOME", str(custom_home))
+    monkeypatch.setenv("SKAGENT", "opus")
+
+    from skcomms import paths
+    from skcomms.transports.file import FileTransport
+
+    # State at the true FIXED pre-scoping location (regardless of SKCOMMS_HOME).
+    fixed = user_home / ".skcapstone" / "transfers"
+    fixed.mkdir(parents=True)
+    (fixed / "fixed-state.json").write_text("{}", encoding="utf-8")
+
+    # State at the in-home legacy location (what legacy_transfers_dir names).
+    in_home = paths.legacy_transfers_dir()
+    in_home.mkdir(parents=True, exist_ok=True)
+    (in_home / "in-home-state.json").write_text("{}", encoding="utf-8")
+
+    t = FileTransport(outbox_path=tmp_path / "o", inbox_path=tmp_path / "i")
+    sdir = t._default_state_dir()
+    assert sdir == paths.agents_root() / "opus" / "transfers"
+
+    # In-home state adopted; fixed-location state deliberately left untouched.
+    assert (sdir / "in-home-state.json").exists()
+    assert (fixed / "fixed-state.json").exists()
+    assert not (sdir / "fixed-state.json").exists()
+
+
+def test_custom_home_does_not_adopt_fixed_legacy_outbox(monkeypatch, tmp_path):
+    """Same boundary for the retry outbox: a custom SKCOMMS_HOME never reaches
+    into the fixed ~/.skcapstone/skcomms/outbox. Documented in PersistentOutbox."""
+    user_home = tmp_path / "user-home"
+    custom_home = tmp_path / "custom-home"
+    monkeypatch.setenv("HOME", str(user_home))
+    monkeypatch.setenv("SKCOMMS_HOME", str(custom_home))
+    monkeypatch.setenv("SKAGENT", "opus")
+
+    from skcomms import paths
+    from skcomms.outbox import PersistentOutbox
+
+    fixed_pending = user_home / ".skcapstone" / "skcomms" / "outbox" / "pending"
+    fixed_pending.mkdir(parents=True)
+    (fixed_pending / "fixed.json").write_text("{}", encoding="utf-8")
+
+    in_home_pending = custom_home / "outbox" / "pending"
+    in_home_pending.mkdir(parents=True)
+    (in_home_pending / "in-home.json").write_text("{}", encoding="utf-8")
+
+    ob = PersistentOutbox()
+    assert ob.root == paths.retry_outbox_dir()
+    assert (ob.pending_dir / "in-home.json").exists()
+    assert (fixed_pending / "fixed.json").exists()
+    assert not (ob.pending_dir / "fixed.json").exists()
