@@ -381,22 +381,40 @@ scripts/bootstrap.sh --no-service          # venv + install + init, NO units yet
 scripts/bootstrap.sh                        # now enable the units
 ```
 
+The first pass runs on a still-keyless machine by design: `--no-service`
+enables nothing, so the identity gate is skipped there (it only guards the
+unit-enabling pass). That is what makes step 1 runnable at all before the
+restore in step 2.
+
 Enforcement (all three fail loudly, none quietly INFO-log):
 
 - `scripts/bootstrap.sh` runs `skcomms identity check --strict` and ABORTS
-  before enabling any unit when no private key is present.
+  before enabling any unit when no private key is present (skipped under
+  `--no-service`, which enables no units).
 - `skcomms-api.service` has an `ExecStartPre` identity gate, so even a
   hand-enabled unit refuses to start keyless
   (`SKCOMMS_ALLOW_NO_IDENTITY=1` in the EnvironmentFile overrides for dev).
 - `skcomms serve` / `skcomms daemon` warn loudly by default and exit 1 when
   `SKCOMMS_REQUIRE_IDENTITY=1` is set; `/health` and `/healthz` report
   `"status": "degraded"` with an `identity` block whenever the key is
-  absent, so a green probe can never hide dead crypto.
+  absent, so a green probe can never hide dead crypto. The probe check is
+  a two-path stat (never a backup-set walk, which would be O(n) in pending
+  outbox entries), and if the check itself fails the body degrades with an
+  explicit `"identity": {"status": "unknown"}` instead of dropping the
+  block.
 
 Restore semantics are fail-closed: every payload is checksum-verified
 against the archive manifest before anything is written, and an existing
 file with DIFFERENT content is a conflict that is left untouched (and exits
 nonzero) unless `--force`. Use `--dry-run` to preview.
+
+Scope of the checksum: it detects CORRUPTION (truncation, bit rot, bad
+media), not tampering. The manifest is unsigned, so an attacker who can
+modify the archive can rewrite manifest and payload consistently and a
+restore would implant a forged TOFU store or `peers.json`. Store archives
+on trusted, encrypted media only. Future hardening: sign the manifest with
+the operator capauth key at backup time and verify the signature before
+restore.
 
 ### Key-loss runbook (the key is GONE, no backup restores it)
 

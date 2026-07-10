@@ -33,6 +33,11 @@ Fail-closed properties:
       (that archive could never restore crypto) unless ``allow_partial``.
     - ``restore_backup`` verifies every payload sha256 against the manifest
       and rejects the whole archive on any mismatch or path traversal.
+      That is an INTEGRITY check (corruption, truncation, bit rot), not
+      authenticity: the manifest itself is unsigned, so an attacker who can
+      rewrite the archive rewrites manifest and payload consistently. Treat
+      the backup media as trusted; archive signing (capauth-signed manifest)
+      is planned hardening, see SOP.md section 11.
     - ``restore_backup`` never overwrites an existing DIFFERING file unless
       ``force`` is set; identical files are skipped silently.
     - ``enforce_identity_gate`` raises :class:`IdentityMissingError` when
@@ -50,6 +55,7 @@ import io
 import json
 import logging
 import os
+import secrets
 import socket
 import tarfile
 from dataclasses import dataclass
@@ -179,6 +185,38 @@ def backup_set(agent: Optional[str] = None) -> list[BackupItem]:
 _PRIVATE_KEY_ROLES = ("capauth-private-key", "agent-capauth-private-key")
 
 
+def private_key_paths(agent: Optional[str] = None) -> list[Path]:
+    """The two candidate CapAuth private-key paths for *agent*.
+
+    Order matters and mirrors :func:`skcomms.core.resolve_signing_capauth_dir`:
+    the per-agent layout wins when its key exists, the operator layout at
+    ``~/.capauth`` is the fallback.
+    """
+    name = _resolve_agent(agent)
+    return [
+        Path.home()
+        / ".skcapstone"
+        / "agents"
+        / name
+        / "capauth"
+        / "identity"
+        / "private.asc",
+        Path.home() / ".capauth" / "identity" / "private.asc",
+    ]
+
+
+def private_key_present(agent: Optional[str] = None) -> bool:
+    """O(1) probe: is any CapAuth private key on disk?
+
+    This is the health-path check. It stats exactly two paths and NEVER
+    walks the backup set: :func:`backup_set` expands every pending-outbox
+    entry (glob + sort + stat), and a degraded node can hold 100k+ pending
+    files, so putting that on the liveness probe would time out the probe
+    and restart-loop exactly the node this feature is meant to surface.
+    """
+    return any(p.is_file() for p in private_key_paths(agent))
+
+
 def identity_check(agent: Optional[str] = None) -> dict:
     """Report presence of every item in the backup set.
 
@@ -220,6 +258,38 @@ def identity_check(agent: Optional[str] = None) -> dict:
 
 def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _open_private_tmp(dest: Path, mode: int) -> tuple[Path, int]:
+    """Open a fresh unpredictable temp file next to *dest*, fail closed.
+
+    The name carries a random token and the open uses ``O_EXCL``, so a
+    pre-planted file or symlink at a guessable ``.tmp`` name can never be
+    followed or overwritten.
+    """
+    tmp = dest.with_name(f"{dest.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+    return tmp, fd
+
+
+def _mkdir_private(directory: Path) -> None:
+    """``mkdir -p`` that creates every MISSING component with mode 0700.
+
+    Restored trees hold key material; capauth provisioning keeps its
+    identity dirs private, so restore must never recreate them looser
+    (default-umask 0755 leaks directory listings). Existing directories
+    are left untouched.
+    """
+    missing: list[Path] = []
+    current = directory
+    while not current.exists() and current != current.parent:
+        missing.append(current)
+        current = current.parent
+    for path in reversed(missing):
+        try:
+            path.mkdir(mode=0o700)
+        except FileExistsError:
+            pass
 
 
 def create_backup(
@@ -278,9 +348,9 @@ def create_backup(
         }
 
     dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_name(dest.name + ".tmp")
-    # Create with restrictive permissions BEFORE any key byte is written.
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    # Create with restrictive permissions BEFORE any key byte is written;
+    # unpredictable name + O_EXCL so nothing pre-planted can be followed.
+    tmp, fd = _open_private_tmp(dest, 0o600)
     try:
         with os.fdopen(fd, "wb") as fh:
             with tarfile.open(fileobj=fh, mode="w:gz") as tar:
@@ -331,7 +401,9 @@ def restore_backup(
     """Restore an identity + trust-state backup archive on this machine.
 
     Every payload is verified against the manifest sha256 BEFORE anything is
-    written; a single mismatch rejects the whole archive. Destination paths
+    written; a single mismatch rejects the whole archive. This detects
+    corruption only (the manifest is unsigned, so it is no defense against
+    an attacker who controls the archive). Destination paths
     resolve against the TARGET machine's home and SKCOMMS_HOME. Existing
     files with different content are conflicts: they are left untouched
     unless *force* is set (fail closed; a restore never silently clobbers a
@@ -416,10 +488,9 @@ def restore_backup(
                 )
                 continue
         if not dry_run:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            tmp = dest.with_name(dest.name + ".tmp-restore")
+            _mkdir_private(dest.parent)
             mode = 0o600 if meta.get("secret") else 0o644
-            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+            tmp, fd = _open_private_tmp(dest, mode)
             with os.fdopen(fd, "wb") as fh:
                 fh.write(data)
             tmp.replace(dest)

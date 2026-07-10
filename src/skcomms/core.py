@@ -105,6 +105,24 @@ WIRE_HEADER_ACK_REQUESTED = "x-skcomms-ack-requested"
 _TEXTUAL_CONTENT_TYPES = frozenset({"text/plain", "text/markdown"})
 
 
+def resolve_signing_capauth_dir(agent: str) -> Optional[Path]:
+    """The capauth dir holding *agent*'s signing key, or None for the default.
+
+    Returns the per-agent layout (``~/.skcapstone/agents/<agent>/capauth``)
+    only when it actually HOLDS a private key. An existing but empty
+    per-agent dir must not shadow a valid operator key at ``~/.capauth``:
+    the identity gate (:func:`skcomms.trustbackup.identity_check`) counts
+    either key as present, so crypto resolution has to match it or that
+    configuration would pass the gate green with dead crypto. ``None``
+    means "use the ``~/.capauth`` default" in
+    :meth:`skcomms.crypto.EnvelopeCrypto.from_capauth`.
+    """
+    cap_dir = Path.home() / ".skcapstone" / "agents" / str(agent) / "capauth"
+    if (cap_dir / "identity" / "private.asc").is_file():
+        return cap_dir
+    return None
+
+
 def envelope_v1_to_message(env) -> MessageEnvelope:
     """Convert a (verified) Envelope v1 into the local transport MessageEnvelope.
 
@@ -429,8 +447,10 @@ class SKComms:
 
             ident = resolve_self_identity()
             agent = ident.get("agent") or self._identity
-            cap_dir = Path.home() / ".skcapstone" / "agents" / str(agent) / "capauth"
-            return EnvelopeCrypto.from_capauth(cap_dir if cap_dir.exists() else None)
+            # Per-agent dir only when it holds a key; empty dir falls back
+            # to ~/.capauth so the operator key stays usable (matches the
+            # identity gate's either-key-counts semantics).
+            return EnvelopeCrypto.from_capauth(resolve_signing_capauth_dir(str(agent)))
         except Exception as exc:  # noqa: BLE001
             logger.debug("capauth signing key resolution failed: %s", exc)
             return None

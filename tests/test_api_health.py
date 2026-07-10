@@ -55,3 +55,43 @@ def test_liveness_probe_degraded_without_identity(tmp_path, monkeypatch, path):
     assert body["status"] == "degraded"
     assert body["identity"]["private_key_present"] is False
     assert "restore" in body["identity"]["detail"].lower()
+
+
+def test_liveness_probe_never_walks_outbox(tmp_path, monkeypatch):
+    """The probe is an O(1) key-path stat. It must never expand the backup
+    set (which globs + sorts + stats every pending-outbox entry; the fleet
+    has seen 140k-file pileups, and an O(n) probe would restart-loop the
+    degraded node)."""
+    client = _client(tmp_path, monkeypatch, with_key=True)
+
+    import skcomms.trustbackup as tb
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("/health must not walk the backup set")
+
+    monkeypatch.setattr(tb, "backup_set", _boom)
+    monkeypatch.setattr(tb, "identity_check", _boom)
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert resp.json()["identity"]["private_key_present"] is True
+
+
+def test_liveness_probe_check_failure_is_explicit_unknown(tmp_path, monkeypatch):
+    """If the identity check itself blows up, the probe must NOT fail open
+    to a plain green: it stays 200 (alive) but degrades with an explicit
+    identity: unknown marker."""
+    client = _client(tmp_path, monkeypatch, with_key=True)
+
+    import skcomms.trustbackup as tb
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated identity-check failure")
+
+    monkeypatch.setattr(tb, "private_key_present", _boom)
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "degraded"
+    assert body["identity"]["status"] == "unknown"
+    assert body["identity"]["private_key_present"] is None
+    assert "failed" in body["identity"]["detail"].lower()

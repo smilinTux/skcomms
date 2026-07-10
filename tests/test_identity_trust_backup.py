@@ -3,11 +3,18 @@
 Covers:
     - backup_set / identity_check: the canonical backup set and the
       private-key presence report.
+    - private_key_present: the O(1) health-path probe (two path stats,
+      never a backup-set walk over the pending outbox).
     - create_backup: fail-closed refusal without a private key, 0600
       archive mode, manifest checksums, pending-outbox inclusion.
     - restore_backup: roundtrip onto a wiped machine, checksum verification
-      (tampered archives rejected whole), path-traversal rejection,
-      conflict semantics (never silently overwrite; force works), dry-run.
+      (corrupted archives rejected whole; integrity only, the manifest is
+      unsigned so this is no tamper defense), path-traversal rejection,
+      conflict semantics (never silently overwrite; force works), dry-run,
+      private (0700) parent dirs.
+    - core.resolve_signing_capauth_dir: an empty per-agent capauth dir
+      falls back to the operator key instead of shadowing it with dead
+      crypto.
     - enforce_identity_gate: loud by default, FATAL under
       SKCOMMS_REQUIRE_IDENTITY (the daemon can no longer come up green with
       dead crypto).
@@ -118,6 +125,46 @@ class TestIdentityCheck:
             "outbox-pending",
         ):
             assert role in roles
+
+
+class TestPrivateKeyPresentFastProbe:
+    """The health-path probe: O(1), never a backup-set walk."""
+
+    def test_absent(self, iso):
+        from skcomms.trustbackup import private_key_present
+
+        _populate(iso, with_private=False)
+        assert private_key_present() is False
+
+    def test_operator_key_counts(self, iso):
+        from skcomms.trustbackup import private_key_present
+
+        _populate(iso)
+        assert private_key_present() is True
+
+    def test_agent_key_counts(self, iso):
+        from skcomms.trustbackup import private_key_present
+
+        _populate(iso, with_private=False)
+        agent_cap = (
+            iso["home"] / ".skcapstone" / "agents" / "testagent" / "capauth" / "identity"
+        )
+        agent_cap.mkdir(parents=True, exist_ok=True)
+        (agent_cap / "private.asc").write_text(PRIV)
+        assert private_key_present() is True
+
+    def test_never_walks_backup_set(self, iso, monkeypatch):
+        """Liveness probes must not pay an O(n) outbox glob (fleet has seen
+        140k pending files). Prove the fast probe never touches backup_set."""
+        import skcomms.trustbackup as tb
+
+        _populate(iso)
+
+        def _boom(*args, **kwargs):
+            raise AssertionError("private_key_present must not call backup_set")
+
+        monkeypatch.setattr(tb, "backup_set", _boom)
+        assert tb.private_key_present() is True
 
 
 # ---------------------------------------------------------------------------
@@ -238,7 +285,47 @@ class TestRestoreBackup:
         assert report["ok"] is True
         assert (cap / "private.asc").read_text() == PRIV
 
-    def test_tampered_payload_rejected_whole(self, iso, tmp_path, monkeypatch):
+    def test_restored_parent_dirs_are_private(self, iso, tmp_path, monkeypatch):
+        """Directories created by restore are 0700, matching capauth
+        provisioning, not the default-umask 0755 (directory-listing leak)."""
+        from skcomms.trustbackup import restore_backup
+
+        archive = self._backup(iso, tmp_path)
+        fresh = self._wipe(tmp_path, monkeypatch)
+        assert restore_backup(archive)["ok"] is True
+
+        for directory in (
+            fresh["home"] / ".capauth",
+            fresh["home"] / ".capauth" / "identity",
+            fresh["home"] / ".skcapstone",
+        ):
+            assert stat.S_IMODE(directory.stat().st_mode) == 0o700, directory
+
+    def test_no_predictable_tmp_left_behind(self, iso, tmp_path, monkeypatch):
+        """Backup and restore write via unpredictable O_EXCL temp names; the
+        old guessable ``<name>.tmp`` / ``.tmp-restore`` names are dead."""
+        from skcomms.trustbackup import restore_backup
+
+        archive = self._backup(iso, tmp_path)
+        fresh = self._wipe(tmp_path, monkeypatch)
+        assert not archive.with_name(archive.name + ".tmp").exists()
+        restore_backup(archive)
+        leftovers = [
+            p
+            for root in (fresh["home"], fresh["skhome"])
+            for p in root.rglob("*.tmp*")
+        ]
+        assert leftovers == []
+
+    def test_corrupted_payload_rejected_whole(self, iso, tmp_path, monkeypatch):
+        """Integrity check: a payload that no longer matches its manifest
+        sha256 rejects the WHOLE archive before anything is written.
+
+        Scope honesty: this protects against corruption (truncation, bit
+        rot), NOT a tampering adversary. The manifest is unsigned, so an
+        attacker who controls the archive rewrites manifest and payload
+        consistently; archive signing is future hardening (SOP section 11).
+        """
         from skcomms.trustbackup import MANIFEST_NAME, TrustBackupError, restore_backup
 
         archive = self._backup(iso, tmp_path)
@@ -346,6 +433,58 @@ class TestCryptoMissingKeyIsLoud:
         warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
         assert warnings, "missing-key path must log at WARNING or higher"
         assert any("restore" in r.getMessage().lower() for r in warnings)
+
+
+class TestSigningCapauthDirResolution:
+    """Gate/crypto agreement: identity_check counts EITHER the operator key
+    or the per-agent key, so crypto resolution must honor the same set. An
+    existing but empty per-agent capauth dir must fall back to ~/.capauth,
+    not shadow a valid operator key with dead crypto."""
+
+    def test_empty_agent_dir_falls_back_to_operator_default(self, iso):
+        from skcomms.core import resolve_signing_capauth_dir
+
+        _populate(iso)  # operator key at ~/.capauth
+        empty = (
+            iso["home"] / ".skcapstone" / "agents" / "testagent" / "capauth" / "identity"
+        )
+        empty.mkdir(parents=True, exist_ok=True)  # dir exists, holds NO key
+        assert resolve_signing_capauth_dir("testagent") is None
+
+    def test_agent_dir_with_key_wins(self, iso):
+        from skcomms.core import resolve_signing_capauth_dir
+
+        _populate(iso)
+        cap = iso["home"] / ".skcapstone" / "agents" / "testagent" / "capauth"
+        (cap / "identity").mkdir(parents=True, exist_ok=True)
+        (cap / "identity" / "private.asc").write_text(PRIV)
+        assert resolve_signing_capauth_dir("testagent") == cap
+
+    def test_gate_and_crypto_agree_on_operator_key_with_empty_agent_dir(
+        self, iso, monkeypatch
+    ):
+        """The exact reviewed configuration: operator key present, empty
+        per-agent dir. The gate passes AND crypto resolves (no dead crypto
+        behind a green gate)."""
+        import skcomms.pq_provider as pq_provider
+
+        from skcomms.core import resolve_signing_capauth_dir
+        from skcomms.crypto import EnvelopeCrypto
+        from skcomms.trustbackup import identity_check
+
+        # Keep the hybrid-prekey provider out of this test: with an isolated
+        # HOME the oqs package would try to BUILD liboqs from source.
+        monkeypatch.setattr(pq_provider, "default_provider", lambda: None)
+
+        _populate(iso)
+        empty = (
+            iso["home"] / ".skcapstone" / "agents" / "testagent" / "capauth" / "identity"
+        )
+        empty.mkdir(parents=True, exist_ok=True)
+
+        assert identity_check()["private_key_present"] is True
+        engine = EnvelopeCrypto.from_capauth(resolve_signing_capauth_dir("testagent"))
+        assert engine is not None
 
 
 # ---------------------------------------------------------------------------
