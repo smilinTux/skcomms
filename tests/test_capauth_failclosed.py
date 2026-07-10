@@ -127,7 +127,7 @@ def test_dev_env_gate_falsy_values_stay_closed(monkeypatch):
 
 
 class _FakeResponse:
-    def __init__(self, payload: dict) -> None:
+    def __init__(self, payload) -> None:
         import json
 
         self._body = json.dumps(payload).encode()
@@ -142,7 +142,7 @@ class _FakeResponse:
         return False
 
 
-def _patch_remote(monkeypatch, payload: dict) -> None:
+def _patch_remote(monkeypatch, payload) -> None:
     import urllib.request
 
     monkeypatch.setattr(
@@ -181,6 +181,21 @@ def test_remote_valid_true_accepted(monkeypatch):
     _patch_remote(monkeypatch, {"fingerprint": VICTIM_FP, "valid": True})
     v = CapAuthValidator(capauth_url="https://capauth.test", require_auth=True)
     assert v.validate(_signed_token()) == VICTIM_FP
+
+
+@pytest.mark.parametrize("payload", [[], "x", None, 5, [{"valid": True}]])
+@pytest.mark.parametrize("require_auth", [True, False])
+def test_remote_non_object_json_denies_cleanly(monkeypatch, payload, require_auth):
+    """A remote returning well-formed but non-object JSON must deny cleanly.
+
+    Regression: data.get(...) on a non-dict raised AttributeError out of
+    validate() and crashed the ws auth path (handshake failure/500). Still
+    fail-closed in effect, but a hostile or broken CapAuth server should get
+    a clean rejection, not an exception."""
+    _patch_remote(monkeypatch, payload)
+    monkeypatch.delenv("SKCOMMS_DEV_AUTH", raising=False)
+    v = CapAuthValidator(capauth_url="https://capauth.test", require_auth=require_auth)
+    assert v.validate(_signed_token()) is None
 
 
 def test_remote_unreachable_strict_fails_closed(monkeypatch):

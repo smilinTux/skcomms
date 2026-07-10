@@ -465,6 +465,8 @@ class CapAuthValidator:
         SECURITY (fail-closed): the response is accepted only when ALL of
         these hold, in every mode (strict and permissive):
 
+        - the response body is a JSON object (any other well-formed JSON
+          denies cleanly instead of raising out of the auth path),
         - ``valid`` is exactly ``true`` (missing or false denies; a response
           that names a fingerprint but does not affirm validity used to be
           accepted, which let a misbehaving or downgraded CapAuth server
@@ -504,6 +506,17 @@ class CapAuthValidator:
             # PGP validation, which is fail-closed (a full signature check,
             # or the explicitly env-gated dev bypass).
             return self._validate_local(token)
+
+        # SECURITY (fail-closed, cleanly): a hostile or broken remote can
+        # return well-formed JSON that is not an object ([], "x", null, 5).
+        # Deny it here instead of letting .get() raise AttributeError out of
+        # validate() and crash the auth path (ws handshake failure/500).
+        if not isinstance(data, dict):
+            logger.warning(
+                "CapAuth remote: response is not a JSON object (%s), rejecting",
+                type(data).__name__,
+            )
+            return None
 
         if data.get("valid") is not True:
             logger.warning(
