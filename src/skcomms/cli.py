@@ -288,30 +288,54 @@ def daemon(config: Optional[str], interval: int, all_agents: bool):
     default=None,
     help="Override mailbox outbox-record TTL (default from config, 168h).",
 )
+@click.option(
+    "--dead-ttl-hours",
+    type=float,
+    default=None,
+    help="Override dead-letter retention TTL (default from config, 720h; <=0 disables).",
+)
+@click.option(
+    "--dead-max-count",
+    type=int,
+    default=None,
+    help="Override dead-letter max entry count (default from config, 5000; <=0 disables).",
+)
+@click.option(
+    "--outbox-dir",
+    default=None,
+    help="Persistent-outbox root (default ~/.skcapstone/skcomms/outbox or $SKCOMMS_OUTBOX_DIR).",
+)
 @click.option("--json-out", is_flag=True, help="Output as JSON.")
 def housekeep(
     config: Optional[str],
     outbox_max_age_hours: Optional[float],
     archive_ttl_hours: Optional[float],
     mailbox_ttl_hours: Optional[float],
+    dead_ttl_hours: Optional[float],
+    dead_max_count: Optional[int],
+    outbox_dir: Optional[str],
     json_out: bool,
 ):
     """Run one full housekeeping pass and exit.
 
     Prunes stale sender-outbox envelopes, applies the receiver-archive TTL,
-    and sweeps stale mailbox outbox records for every enabled file-based
-    transport. The same pass the daemon runs periodically; this verb is
-    designed to be called from a systemd timer or cron as belt-and-braces.
+    sweeps stale mailbox outbox records for every enabled file-based
+    transport, and enforces retention on the persistent outbox's dead-letter
+    and archive directories. The same pass the daemon runs periodically; this
+    verb is designed to be called from a systemd timer or cron as
+    belt-and-braces.
 
     \b
     Examples:
         skcomms housekeep                          # config-driven retention
         skcomms housekeep --outbox-max-age-hours 24
+        skcomms housekeep --dead-ttl-hours 168     # tighter dead-letter TTL
         skcomms housekeep --json-out               # machine-readable counts
     """
     from .config import load_config
     from .core import _load_transport
     from .housekeeping import run_housekeeping_pass
+    from .outbox import PersistentOutbox
 
     cfg = load_config(config)
     hk = cfg.housekeeping
@@ -321,6 +345,10 @@ def housekeep(
         hk.archive_ttl_hours = archive_ttl_hours
     if mailbox_ttl_hours is not None:
         hk.mailbox_ttl_hours = mailbox_ttl_hours
+    if dead_ttl_hours is not None:
+        hk.dead_letter_ttl_hours = dead_ttl_hours
+    if dead_max_count is not None:
+        hk.dead_letter_max_count = dead_max_count
 
     # Build the enabled transports directly (no full SKComms engine: a
     # housekeeping pass needs no crypto, outbox writer, or retry threads).
@@ -332,7 +360,8 @@ def housekeep(
         if transport is not None:
             transports.append(transport)
 
-    results = run_housekeeping_pass(transports, hk)
+    outbox = PersistentOutbox(outbox_dir=outbox_dir)
+    results = run_housekeeping_pass(transports, hk, outbox)
 
     if json_out:
         click.echo(json.dumps(results, indent=2))
@@ -341,7 +370,9 @@ def housekeep(
     _print("\n  [bold]Housekeeping pass complete[/]")
     _print(f"    Outbox envelopes pruned:  {results['outbox_pruned']}")
     _print(f"    Archive files pruned:     {results['archive_pruned']}")
-    _print(f"    Mailbox records pruned:   {results['mailbox_pruned']}\n")
+    _print(f"    Mailbox records pruned:   {results['mailbox_pruned']}")
+    _print(f"    Dead letters pruned:      {results.get('dead_pruned', 0)}")
+    _print(f"    Outbox archive pruned:    {results.get('outbox_archive_pruned', 0)}\n")
 
 
 @main.command()
@@ -2252,6 +2283,177 @@ def queue_purge(expired: bool, yes: bool):
         for m in items:
             q.dequeue(m.envelope_id)
         _print(f"\n  Purged [bold]{len(items)}[/] envelope(s).\n")
+
+
+# ---------------------------------------------------------------------------
+# Dead-letter commands (persistent outbox dead/ queue triage)
+# ---------------------------------------------------------------------------
+
+
+def _open_outbox(outbox_dir: Optional[str]):
+    """Open the persistent outbox (default root, or an explicit override)."""
+    from .outbox import PersistentOutbox
+
+    return PersistentOutbox(outbox_dir=outbox_dir)
+
+
+_OUTBOX_DIR_OPT = click.option(
+    "--outbox-dir",
+    default=None,
+    help="Persistent-outbox root (default ~/.skcapstone/skcomms/outbox or $SKCOMMS_OUTBOX_DIR).",
+)
+
+
+@main.group("deadletter")
+def deadletter_group():
+    """Dead-letter queue: triage messages that exhausted their retries.
+
+    The persistent outbox moves a message to dead/ after max_retries
+    failed delivery attempts (default 10). This is the operator surface
+    for it: when the dead_letter_growth alert fires, list what is there,
+    inspect why each entry failed, then requeue (after fixing the cause)
+    or purge (when the message is obsolete).
+    """
+
+
+@deadletter_group.command("list")
+@_OUTBOX_DIR_OPT
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+def deadletter_list(outbox_dir: Optional[str], json_out: bool):
+    """List all dead-lettered envelopes."""
+    outbox = _open_outbox(outbox_dir)
+    entries = outbox.list_dead()
+
+    if json_out:
+        click.echo(
+            json.dumps(
+                [e.model_dump(mode="json") for e in entries],
+                indent=2,
+            )
+        )
+        return
+
+    if not entries:
+        _print("\n  [dim]Dead-letter queue is empty.[/]\n")
+        return
+
+    _print(f"\n  [bold]{len(entries)}[/] dead-lettered envelope(s):\n")
+    if console:
+        table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+        table.add_column("ID", style="cyan", max_width=14)
+        table.add_column("Recipient")
+        table.add_column("Attempts", justify="right")
+        table.add_column("Created", style="dim")
+        table.add_column("Last error", max_width=48)
+        for e in entries:
+            table.add_row(
+                e.envelope_id[:12],
+                e.recipient,
+                str(e.attempt_count),
+                e.created_at.strftime("%Y-%m-%d %H:%M") if e.created_at else "-",
+                (e.last_error or "-")[:48],
+            )
+        console.print(table)
+    else:
+        for e in entries:
+            click.echo(
+                f"  {e.envelope_id[:12]:14} -> {e.recipient:16} "
+                f"attempts={e.attempt_count} error={(e.last_error or '-')[:48]}"
+            )
+    _print("")
+
+
+@deadletter_group.command("show")
+@click.argument("envelope_id")
+@_OUTBOX_DIR_OPT
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+@click.option("--raw", is_flag=True, help="Also print the raw serialized envelope.")
+def deadletter_show(envelope_id: str, outbox_dir: Optional[str], json_out: bool, raw: bool):
+    """Inspect one dead-lettered envelope in full."""
+    from .outbox import classify_envelope_json
+
+    outbox = _open_outbox(outbox_dir)
+    entry = outbox.get_dead(envelope_id)
+    if entry is None:
+        _print(f"\n  [red]No dead-letter entry for {envelope_id}.[/]\n")
+        raise SystemExit(1)
+
+    shape = classify_envelope_json(entry.envelope_json)
+
+    if json_out:
+        data = entry.model_dump(mode="json")
+        data["envelope_shape"] = shape
+        if not raw:
+            data.pop("envelope_json", None)
+        click.echo(json.dumps(data, indent=2))
+        return
+
+    _print(f"\n  [bold]Dead letter {entry.envelope_id}[/]")
+    _print(f"    Recipient:   {entry.recipient}")
+    _print(f"    Created:     {entry.created_at}")
+    _print(f"    Last try:    {entry.last_attempt}")
+    _print(f"    Attempts:    {entry.attempt_count} / {entry.max_retries}")
+    _print(f"    Shape:       {shape}")
+    _print(f"    Last error:  {entry.last_error or '-'}")
+    if raw:
+        _print(f"    Envelope:    {entry.envelope_json}")
+    _print("")
+
+
+@deadletter_group.command("requeue")
+@click.argument("envelope_id", required=False)
+@click.option("--all", "requeue_all", is_flag=True, help="Requeue every dead letter.")
+@_OUTBOX_DIR_OPT
+def deadletter_requeue(envelope_id: Optional[str], requeue_all: bool, outbox_dir: Optional[str]):
+    """Move dead letters back to pending for a fresh retry cycle.
+
+    Requeue AFTER fixing whatever killed delivery (peer back up, key
+    fixed, transport reconfigured); otherwise the entries will just
+    exhaust their retries and dead-letter again.
+    """
+    if bool(envelope_id) == requeue_all:
+        raise click.UsageError("Pass exactly one of ENVELOPE_ID or --all.")
+
+    outbox = _open_outbox(outbox_dir)
+    count = outbox.requeue_dead(envelope_id)
+    if envelope_id and count == 0:
+        _print(f"\n  [red]No dead-letter entry for {envelope_id}.[/]\n")
+        raise SystemExit(1)
+    _print(f"\n  Requeued [bold]{count}[/] dead letter(s) for retry.\n")
+
+
+@deadletter_group.command("purge")
+@click.argument("envelope_id", required=False)
+@click.option("--all", "purge_all", is_flag=True, help="Purge every dead letter.")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation.")
+@_OUTBOX_DIR_OPT
+def deadletter_purge(
+    envelope_id: Optional[str], purge_all: bool, yes: bool, outbox_dir: Optional[str]
+):
+    """Permanently delete dead letters (unrecoverable)."""
+    if bool(envelope_id) == purge_all:
+        raise click.UsageError("Pass exactly one of ENVELOPE_ID or --all.")
+
+    outbox = _open_outbox(outbox_dir)
+
+    if purge_all:
+        depth = outbox.dead_count
+        if depth == 0:
+            _print("\n  [dim]Dead-letter queue is empty.[/]\n")
+            return
+        if not yes and not click.confirm(
+            f"  Permanently delete all {depth} dead letter(s)?", default=False
+        ):
+            _print("  [dim]Cancelled.[/]\n")
+            return
+        count = outbox.purge_dead()
+    else:
+        count = outbox.purge_dead(envelope_id)
+        if count == 0:
+            _print(f"\n  [red]No dead-letter entry for {envelope_id}.[/]\n")
+            raise SystemExit(1)
+
+    _print(f"\n  Purged [bold]{count}[/] dead letter(s).\n")
 
 
 @main.command("serve")

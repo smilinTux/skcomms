@@ -17,6 +17,9 @@ and is suitable for a systemd timer.
 Retention is driven by :class:`skcomms.config.HousekeepingConfig` (config.yml
 ``housekeeping:`` block). Defaults: sender outbox 48h, receiver archive 168h
 (7 days), mailbox outbox records 168h (7 days), daemon pass every 3600s.
+The pass also bounds the persistent outbox's ``dead/`` and ``archive/``
+directories (30-day TTL + 5000-entry cap by default) when handed the outbox,
+so a persistent peer outage can not grow the dead-letter queue forever.
 """
 
 from __future__ import annotations
@@ -93,6 +96,7 @@ def prune_mailbox_outboxes(ttl_hours: float, home: Optional[Path] = None) -> int
 def run_housekeeping_pass(
     transports: Iterable[object],
     config: Optional[HousekeepingConfig] = None,
+    outbox: Optional[object] = None,
 ) -> dict:
     """Run one full housekeeping pass over the given transports + mailbox tree.
 
@@ -102,16 +106,27 @@ def run_housekeeping_pass(
       * ``prune_outbox(max_age_hours)``: stale sender outbox envelopes,
       * ``prune_archive(ttl_hours)``: processed-envelope archive TTL,
 
-    then :func:`prune_mailbox_outboxes` sweeps the realm message tree.
-    Per-transport failures are logged and never abort the pass.
+    then :func:`prune_mailbox_outboxes` sweeps the realm message tree. When a
+    :class:`~skcomms.outbox.PersistentOutbox` is supplied, its ``dead/`` and
+    ``archive/`` directories are bounded too (``dead_letter_*`` /
+    ``outbox_archive_*`` retention settings): without this a persistent peer
+    outage dead-letters every retry-exhausted send and grows ``dead/`` forever
+    exactly like the 140k-file sender outbox did. Per-target failures are
+    logged and never abort the pass.
 
     Args:
         transports: Transport instances to sweep (e.g. ``router.transports``).
         config: Retention settings; defaults to :class:`HousekeepingConfig`.
+        outbox: Optional :class:`~skcomms.outbox.PersistentOutbox` whose
+            dead-letter and archive retention to enforce. When None (the
+            default), the persistent outbox is left untouched, preserving the
+            historical behavior for callers that only sweep transports.
 
     Returns:
         dict: ``{"outbox_pruned": int, "archive_pruned": int,
-        "mailbox_pruned": int}`` totals for the pass.
+        "mailbox_pruned": int}`` totals for the pass, plus
+        ``"dead_pruned"`` and ``"outbox_archive_pruned"`` when *outbox*
+        was supplied.
     """
     cfg = config or HousekeepingConfig()
     results = {"outbox_pruned": 0, "archive_pruned": 0, "mailbox_pruned": 0}
@@ -140,11 +155,32 @@ def run_housekeeping_pass(
     except Exception:
         logger.exception("mailbox outbox pruning failed")
 
+    if outbox is not None:
+        results["dead_pruned"] = 0
+        results["outbox_archive_pruned"] = 0
+        try:
+            results["dead_pruned"] = outbox.prune_dead(
+                ttl_hours=cfg.dead_letter_ttl_hours,
+                max_count=cfg.dead_letter_max_count,
+            )
+        except Exception:
+            logger.exception("dead-letter retention pruning failed")
+        try:
+            results["outbox_archive_pruned"] = outbox.prune_archive(
+                ttl_hours=cfg.outbox_archive_ttl_hours,
+                max_count=cfg.outbox_archive_max_count,
+            )
+        except Exception:
+            logger.exception("outbox-archive retention pruning failed")
+
     logger.info(
-        "Housekeeping pass: %d outbox, %d archive, %d mailbox record(s) pruned",
+        "Housekeeping pass: %d outbox, %d archive, %d mailbox, "
+        "%d dead-letter, %d outbox-archive record(s) pruned",
         results["outbox_pruned"],
         results["archive_pruned"],
         results["mailbox_pruned"],
+        results.get("dead_pruned", 0),
+        results.get("outbox_archive_pruned", 0),
     )
     return results
 
@@ -152,6 +188,7 @@ def run_housekeeping_pass(
 async def housekeeping_loop(
     get_transports,
     config: Optional[HousekeepingConfig] = None,
+    get_outbox=None,
 ) -> None:
     """Run :func:`run_housekeeping_pass` forever at the configured interval.
 
@@ -167,13 +204,18 @@ async def housekeeping_loop(
             (late-bound so the loop always sees the live router state).
         config: Retention + interval settings; defaults to
             :class:`HousekeepingConfig` (hourly).
+        get_outbox: Optional zero-arg callable returning the live
+            :class:`~skcomms.outbox.PersistentOutbox` (or None). When it
+            yields an outbox, each pass also enforces dead-letter and
+            outbox-archive retention.
     """
     cfg = config or HousekeepingConfig()
     while True:
         await asyncio.sleep(cfg.interval_s)
         try:
             transports = list(get_transports() or [])
-            await asyncio.to_thread(run_housekeeping_pass, transports, cfg)
+            outbox = get_outbox() if callable(get_outbox) else None
+            await asyncio.to_thread(run_housekeeping_pass, transports, cfg, outbox)
         except asyncio.CancelledError:
             raise
         except Exception:

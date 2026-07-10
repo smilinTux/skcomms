@@ -39,7 +39,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -51,6 +53,19 @@ logger = logging.getLogger("skcomms.outbox")
 DEFAULT_OUTBOX_DIR = "~/.skcapstone/skcomms/outbox"
 DEFAULT_MAX_RETRIES = 10
 DEFAULT_BASE_BACKOFF = 5
+
+
+def default_outbox_dir() -> Path:
+    """Resolve the default persistent-outbox root.
+
+    Honors the ``SKCOMMS_OUTBOX_DIR`` environment override (used by tests and
+    by operators who relocate the queue), falling back to
+    :data:`DEFAULT_OUTBOX_DIR`.
+
+    Returns:
+        Path: The expanded outbox root directory.
+    """
+    return Path(os.environ.get("SKCOMMS_OUTBOX_DIR", DEFAULT_OUTBOX_DIR)).expanduser()
 
 
 def classify_envelope_json(envelope_json: str) -> str:
@@ -147,12 +162,14 @@ class PersistentOutbox:
 
     def __init__(
         self,
-        outbox_dir: str | Path = DEFAULT_OUTBOX_DIR,
+        outbox_dir: str | Path | None = None,
         max_retries: int = DEFAULT_MAX_RETRIES,
         base_backoff: int = DEFAULT_BASE_BACKOFF,
         router: Optional[object] = None,
     ) -> None:
-        self._root = Path(outbox_dir).expanduser()
+        self._root = (
+            Path(outbox_dir).expanduser() if outbox_dir is not None else default_outbox_dir()
+        )
         self._pending = self._root / "pending"
         self._dead = self._root / "dead"
         self._archive = self._root / "archive"
@@ -173,6 +190,11 @@ class PersistentOutbox:
     def pending_dir(self) -> Path:
         """Directory holding pending entries."""
         return self._pending
+
+    @property
+    def dead_dir(self) -> Path:
+        """Directory holding dead-lettered (retries exhausted) entries."""
+        return self._dead
 
     @property
     def archive_dir(self) -> Path:
@@ -350,6 +372,24 @@ class PersistentOutbox:
             logger.warning("Unreadable pending entry %s: %s", path.name, exc)
             return None
 
+    def get_dead(self, envelope_id: str) -> Optional[OutboxEntry]:
+        """Look up a dead-lettered entry by envelope_id.
+
+        Args:
+            envelope_id: The envelope ID (the dead file is ``{id}.json``).
+
+        Returns:
+            OutboxEntry if a dead-letter entry exists and is readable, else None.
+        """
+        path = self._dead / f"{envelope_id}.json"
+        if not path.exists():
+            return None
+        try:
+            return self._load_entry(path)
+        except (json.JSONDecodeError, ValueError, OSError) as exc:
+            logger.warning("Unreadable dead-letter entry %s: %s", path.name, exc)
+            return None
+
     def remove(self, envelope_id: str) -> bool:
         """Delete a pending entry (e.g. when its delivery ACK confirms receipt).
 
@@ -406,13 +446,120 @@ class PersistentOutbox:
         """
         return self._purge_dir(self._pending)
 
-    def purge_dead(self) -> int:
-        """Remove all messages from the dead letter queue.
+    def purge_dead(self, envelope_id: Optional[str] = None) -> int:
+        """Remove messages from the dead letter queue.
+
+        Args:
+            envelope_id: Specific message to purge, or None for all
+                (backward compatible with the historical purge-all form).
 
         Returns:
             int: Number of messages purged.
         """
-        return self._purge_dir(self._dead)
+        if envelope_id is None:
+            return self._purge_dir(self._dead)
+        path = self._dead / f"{envelope_id}.json"
+        if path.exists():
+            path.unlink(missing_ok=True)
+            return 1
+        return 0
+
+    def prune_dead(self, ttl_hours: float = 0.0, max_count: int = 0) -> int:
+        """Enforce retention on the dead-letter directory.
+
+        Dead letters are kept for manual review, but a persistent peer outage
+        dead-letters every retry-exhausted send, so without retention ``dead/``
+        grows forever exactly like the 140k-file sender outbox did. Two
+        independent bounds, each disabled when <= 0:
+
+          * ``ttl_hours``: entries whose file mtime is older are deleted.
+          * ``max_count``: only the newest N entries are kept; the oldest
+            overflow is deleted.
+
+        Args:
+            ttl_hours: Age bound in hours (<= 0 disables the TTL sweep).
+            max_count: Count bound (<= 0 disables the count sweep).
+
+        Returns:
+            int: Number of dead-letter entries deleted.
+        """
+        removed = self._prune_retention(self._dead, ttl_hours, max_count)
+        if removed:
+            logger.info(
+                "Dead-letter retention pruned %d entr%s (ttl=%sh max=%s)",
+                removed, "y" if removed == 1 else "ies", ttl_hours, max_count,
+            )
+        return removed
+
+    def prune_archive(self, ttl_hours: float = 0.0, max_count: int = 0) -> int:
+        """Enforce retention on the archive (migrated-away entries) directory.
+
+        Same bounds as :meth:`prune_dead`: a TTL on file mtime and a max
+        count keeping only the newest N; each disabled when <= 0. The archive
+        holds corrupt / dead-end entries parked by the outbox migrator and is
+        never read on the delivery path, so pruning it is always safe.
+
+        Args:
+            ttl_hours: Age bound in hours (<= 0 disables the TTL sweep).
+            max_count: Count bound (<= 0 disables the count sweep).
+
+        Returns:
+            int: Number of archive entries deleted.
+        """
+        removed = self._prune_retention(self._archive, ttl_hours, max_count)
+        if removed:
+            logger.info(
+                "Outbox-archive retention pruned %d entr%s (ttl=%sh max=%s)",
+                removed, "y" if removed == 1 else "ies", ttl_hours, max_count,
+            )
+        return removed
+
+    @staticmethod
+    def _prune_retention(directory: Path, ttl_hours: float, max_count: int) -> int:
+        """Delete entries in *directory* violating the TTL or count bound.
+
+        Args:
+            directory: Directory whose ``*.json`` entries to bound.
+            ttl_hours: Age bound in hours (<= 0 disables).
+            max_count: Keep-newest count bound (<= 0 disables).
+
+        Returns:
+            int: Number of files deleted.
+        """
+        files: list[tuple[float, Path]] = []
+        for f in directory.glob("*.json"):
+            try:
+                files.append((f.stat().st_mtime, f))
+            except OSError:
+                continue
+
+        removed = 0
+
+        if ttl_hours > 0:
+            cutoff = time.time() - ttl_hours * 3600.0
+            kept: list[tuple[float, Path]] = []
+            for mtime, f in files:
+                if mtime < cutoff:
+                    try:
+                        f.unlink(missing_ok=True)
+                        removed += 1
+                    except OSError as exc:
+                        logger.warning("Failed to prune %s: %s", f, exc)
+                        kept.append((mtime, f))
+                else:
+                    kept.append((mtime, f))
+            files = kept
+
+        if max_count > 0 and len(files) > max_count:
+            files.sort()  # oldest first
+            for mtime, f in files[: len(files) - max_count]:
+                try:
+                    f.unlink(missing_ok=True)
+                    removed += 1
+                except OSError as exc:
+                    logger.warning("Failed to prune %s: %s", f, exc)
+
+        return removed
 
     def requeue_dead(self, envelope_id: Optional[str] = None) -> int:
         """Move dead-lettered messages back to pending for retry.

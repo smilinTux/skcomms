@@ -69,6 +69,18 @@ class HousekeepingConfig(BaseModel):
         mailbox_ttl_hours: Mailbox outbox records (the sender's local
             ``<realm>/<operator>/<agent>/outbox/*.json`` copies) older than
             this are deleted (default 168h = 7 days).
+        dead_letter_ttl_hours: PersistentOutbox ``dead/`` entries older than
+            this are deleted (default 720h = 30 days: long enough for manual
+            triage, bounded so a persistent peer outage can not grow the
+            directory forever). <= 0 disables the TTL sweep.
+        dead_letter_max_count: Keep at most this many ``dead/`` entries
+            (newest win; default 5000). <= 0 disables the count sweep.
+        outbox_archive_ttl_hours: PersistentOutbox ``archive/`` entries
+            (corrupt / dead-end entries parked by the outbox migrator, never
+            read on the delivery path) older than this are deleted
+            (default 720h = 30 days). <= 0 disables the TTL sweep.
+        outbox_archive_max_count: Keep at most this many ``archive/`` entries
+            (newest win; default 5000). <= 0 disables the count sweep.
     """
 
     enabled: bool = True
@@ -76,6 +88,10 @@ class HousekeepingConfig(BaseModel):
     outbox_max_age_hours: float = 48.0
     archive_ttl_hours: float = 168.0
     mailbox_ttl_hours: float = 168.0
+    dead_letter_ttl_hours: float = 720.0
+    dead_letter_max_count: int = 5000
+    outbox_archive_ttl_hours: float = 720.0
+    outbox_archive_max_count: int = 5000
 
 
 class ObservabilityConfig(BaseModel):
