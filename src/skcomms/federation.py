@@ -19,9 +19,12 @@ what the recipient node runs to accept it safely.
 
 from __future__ import annotations
 
+import sqlite3
+import threading
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Union
 
 from .envelope import Envelope, SignedEnvelope
 from .signing import EnvelopeVerifier
@@ -77,6 +80,87 @@ class NonceCache:
             return False
         self._seen[key] = now
         return True
+
+
+class DurableNonceCache:
+    """SQLite-backed TTL set of seen ``(from_fqid, nonce)`` pairs.
+
+    Same ``check_and_add`` contract as :class:`NonceCache`, but the store
+    survives process restarts: a daemon bounce (crash, deploy, reboot) no
+    longer opens a replay window on the Funnel-exposed inbox, because the
+    nonces accepted before the restart are still on disk when the process
+    comes back.
+
+    Concurrency: a per-instance lock serializes calls within the process
+    (FastAPI handlers run in a threadpool), and WAL mode plus a busy timeout
+    make it safe for a second process on the SAME node to share the file.
+    The PRIMARY KEY arbitrates cross-process races: exactly one caller wins
+    ``INSERT OR IGNORE`` for a given (sender, nonce), every other caller sees
+    a replay. Note this is per-node, not per-fleet; a second NODE needs its
+    own file (see SOP.md, "Crash recovery and the second-node story").
+
+    Boundedness: expired rows (older than the TTL, which exceeds the
+    freshness window) are deleted on every call, so the file stays bounded
+    by inbox traffic within the window regardless of uptime.
+
+    Args:
+        db_path: SQLite file path. Parent directories are created. Keep it
+            OUT of any Syncthing-shared tree (the store is per-node state).
+        ttl_s: Seconds a seen nonce is retained. Must exceed the envelope
+            freshness window so a replayed-but-still-fresh envelope is
+            always caught. Defaults to the module TTL.
+    """
+
+    def __init__(self, db_path: Union[str, Path], ttl_s: int = _NONCE_TTL_S) -> None:
+        self._ttl = ttl_s
+        self._path = Path(db_path).expanduser()
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        # One shared connection guarded by the lock; handlers run in threads.
+        self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA busy_timeout=5000")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS seen_nonces ("
+            " key TEXT PRIMARY KEY,"
+            " ts REAL NOT NULL)"
+        )
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_seen_nonces_ts ON seen_nonces(ts)"
+        )
+        self._conn.commit()
+
+    @property
+    def path(self) -> Path:
+        """The backing SQLite file path."""
+        return self._path
+
+    def check_and_add(self, from_fqid: str, nonce: str, *, now: Optional[float] = None) -> bool:
+        """Return True if fresh (and record it durably); False if already seen."""
+        now = time.time() if now is None else now
+        key = f"{from_fqid}\x1f{nonce}"
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute("DELETE FROM seen_nonces WHERE ts < ?", (now - self._ttl,))
+            cur.execute(
+                "INSERT OR IGNORE INTO seen_nonces (key, ts) VALUES (?, ?)",
+                (key, now),
+            )
+            fresh = cur.rowcount == 1
+            self._conn.commit()
+        return fresh
+
+    def __len__(self) -> int:
+        """Number of (possibly expired) entries currently stored."""
+        with self._lock:
+            (n,) = self._conn.execute("SELECT COUNT(*) FROM seen_nonces").fetchone()
+        return int(n)
+
+    def close(self) -> None:
+        """Close the underlying connection (idempotent enough for tests)."""
+        with self._lock:
+            self._conn.close()
 
 
 def _parse_iso(ts: str) -> Optional[datetime]:

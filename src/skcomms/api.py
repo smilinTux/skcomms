@@ -50,8 +50,10 @@ logger = logging.getLogger("skcomms.api")
 _skcomms: Optional[SKComms] = None
 
 # Per-process federation receive state (SKFed S2). The nonce cache backs replay
-# protection and the rate limiter applies per-sender inbox back-pressure.
-_fed_nonce_cache = None  # lazily created skcomms.federation.NonceCache
+# protection (durable SQLite by default so restarts do not open a replay
+# window; see _get_nonce_cache) and the rate limiter applies per-sender inbox
+# back-pressure (deliberately in-memory: a restart only refills token buckets).
+_fed_nonce_cache = None  # lazily created skcomms.federation.DurableNonceCache
 _fed_rate_limiter: Optional[RateLimiter] = None
 
 # Global WebRTC signaling broker (initialized on startup)
@@ -939,13 +941,58 @@ async def get_messages():
 _MAX_INBOX_BYTES = 256 * 1024
 
 
+def _nonce_db_path() -> Path:
+    """Resolve the durable nonce-cache SQLite path.
+
+    ``SKCOMMS_NONCE_DB`` (explicit file path) wins; otherwise the store lives
+    at ``skcomms_home()/state/nonce_cache.db``. The ``state/`` subtree is
+    per-node (Syncthing-ignored via .stignore): the replay cache must never
+    be shared between nodes through file sync (see SOP.md).
+
+    Because the default path sits inside the Syncthing-shared skcomms home,
+    this also heals a pre-existing ``.stignore`` that lacks the ``state/``
+    line (live fleets scaffolded before the durable cache existed). Without
+    that, a live WAL SQLite would sync between nodes: corruption risk plus
+    mixed per-node replay history. A failure to write ``.stignore`` raises,
+    and :func:`_get_nonce_cache` then fails closed.
+    """
+    import os as _os
+
+    override = (_os.environ.get("SKCOMMS_NONCE_DB") or "").strip()
+    if override:
+        return Path(override).expanduser()
+    from .home import ensure_state_ignored, skcomms_home
+
+    home = skcomms_home()
+    ensure_state_ignored(home)
+    return home / "state" / "nonce_cache.db"
+
+
 def _get_nonce_cache():
-    """Lazily create the per-process federation NonceCache (replay guard)."""
+    """Lazily create the per-process federation nonce cache (replay guard).
+
+    Durable (SQLite-backed :class:`~skcomms.federation.DurableNonceCache`) by
+    default, so a daemon restart does not open a replay window on the public
+    Funnel-exposed inbox. Set ``SKCOMMS_NONCE_CACHE=memory`` to opt back into
+    the legacy in-memory :class:`~skcomms.federation.NonceCache` (explicit,
+    single-process/ephemeral use only).
+
+    Fail-closed: if the durable store cannot be opened, this raises instead
+    of silently downgrading to in-memory. The inbox then 500s (rail degraded
+    but secure) and systemd's Restart=always keeps retrying, rather than the
+    daemon quietly accepting replays with no persistence.
+    """
     global _fed_nonce_cache
     if _fed_nonce_cache is None:
-        from .federation import NonceCache
+        import os as _os
 
-        _fed_nonce_cache = NonceCache()
+        from .federation import DurableNonceCache, NonceCache
+
+        mode = (_os.environ.get("SKCOMMS_NONCE_CACHE") or "").strip().lower()
+        if mode == "memory":
+            _fed_nonce_cache = NonceCache()
+        else:
+            _fed_nonce_cache = DurableNonceCache(_nonce_db_path())
     return _fed_nonce_cache
 
 

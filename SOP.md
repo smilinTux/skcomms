@@ -146,6 +146,60 @@ it is scoped tight:
   likewise need none by default. Add an origin ONLY for a specific first-party web client
   you intend to let script the API from a browser, and only for the host that serves it.
 
+### Crash recovery and the second-node story
+
+"If you need one, get two" applied at the daemon level: what survives a crash, what a
+second instance shares, and what stays strictly per-node.
+
+**Crash recovery (single node).** `contrib/systemd/skcomms-api.service` ships
+`Restart=always` + `RestartSec=5` + `StartLimitIntervalSec=0`: systemd restarts the
+daemon after ANY exit and never rate-limits itself into a permanent `failed` state, so
+the S2S rail always comes back without operator action. What each guard does across
+that restart:
+
+- **Nonce replay cache: durable.** `federation.DurableNonceCache` persists every
+  accepted `(from_fqid, nonce)` in SQLite at `skcomms_home()/state/nonce_cache.db`
+  (override the file with `SKCOMMS_NONCE_DB`). A restart therefore does NOT open a
+  replay window on the Funnel-exposed inbox: an envelope accepted before the bounce is
+  still rejected with 409 after it. Entries expire with the nonce TTL (freshness window
+  + skew + margin, ~7 min), so the file stays bounded. Fail-closed: if the store cannot
+  be opened the inbox raises (500, rail degraded but secure) instead of silently
+  downgrading to an in-memory cache; `SKCOMMS_NONCE_CACHE=memory` is an explicit
+  opt-out for ephemeral single-process runs (tests, dev shells).
+- **Rate limiter: deliberately in-memory.** A restart only refills token buckets; the
+  worst case is one fresh burst allowance per sender, which the nonce + freshness gates
+  still bound. No persistence needed.
+- **Message state: already durable.** Outbox (PersistentOutbox), inbox files, TOFU
+  pins, and peer records are all on disk; a crash loses nothing in flight that was
+  accepted.
+
+**Second-node story (what is shared vs per-node).** Running skcomms on two nodes (e.g.
+.158 primary + .41 mirror):
+
+- **Shared between nodes (via Syncthing / config):** the message tree
+  (`<realm>/<operator>/<agent>/{inbox,outbox}`), peer records, TOFU pins, and
+  `cluster.json` identity. This is the sovereignty layer; both nodes converge on it.
+- **Strictly per-node (NEVER synced):** `state/` (the nonce replay cache), `logs/`,
+  PID/lock files, and the rate limiter. The generated `.stignore` excludes `state/`,
+  and deploys initialized before this line shipped are healed automatically: both the
+  scaffold and the api's nonce-store path resolution append the `state/` ignore block
+  to a pre-existing `.stignore` that lacks it (idempotent; operator edits preserved),
+  so no hand-edit is needed on existing nodes. Syncing a live SQLite DB corrupts it,
+  and replay history is a property of the receiving socket, not of the identity.
+- **Consequence:** each node rejects replays it has itself accepted, across its own
+  restarts. Two nodes serving the SAME public inbox URL concurrently would each accept
+  one copy of the same envelope (per-node caches). Today's ingress tier (single
+  Tailscale Funnel mount onto one node) makes this a non-issue; if a load-balanced
+  active/active inbox ever ships, the two instances must point `SKCOMMS_NONCE_DB` at a
+  genuinely shared store on one host (the SQLite file is multi-process safe via WAL +
+  PRIMARY KEY arbitration) or move the cache to a shared service. Active/passive
+  failover (second node takes over the Funnel mount) is safe as-is: the freshness
+  window (5 min + 60 s skew) bounds the replay exposure to envelopes the OLD node
+  accepted within the last few minutes, and cutover normally takes longer than that.
+- **A second process on the SAME node** (e.g. an extra uvicorn worker) is safe against
+  replays already: both processes share the same SQLite file; WAL mode plus the
+  `INSERT OR IGNORE` PRIMARY KEY guarantee exactly one winner per nonce.
+
 ## 6. Configuration / Usage
 
 API port from config (default 9384, `config.py` / `mcp_server.py`). Peers wired in

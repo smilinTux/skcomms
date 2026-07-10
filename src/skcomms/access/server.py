@@ -118,6 +118,9 @@ class AccessServer:
         self.registry = registry or DEFAULT_REGISTRY
         self._peer_store = peer_store if peer_store is not None else PeerStore()
         self.verifier = verifier or self._build_verifier()
+        # KNOWN GAP (follow-up coord f465b407): in-memory cache means a
+        # daemon restart reopens a replay window on the sk-access surface.
+        # Migrate to the durable per-node store (see api._get_nonce_cache).
         self.nonce_cache = fed.NonceCache()
         self.audit = audit or AccessAuditLog(node=self.config.node_name)
         self._register_builtins()

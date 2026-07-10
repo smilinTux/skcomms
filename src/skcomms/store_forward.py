@@ -482,8 +482,9 @@ class StoreForwardPuller:
         recipient_secret: This node's 32-byte Nostr secret (its inbox key).
         relays: Relay WebSocket URLs (defaults to ``SKCHAT_NOSTR_RELAYS``).
         nonce_cache: Shared replay guard. Pass the SAME instance the HTTP inbox
-            uses (``skcomms.api._get_nonce_cache()``) for cross-rail idempotency;
-            a fresh one is created otherwise.
+            uses (``skcomms.api._get_nonce_cache()``) for cross-rail idempotency.
+            ``None`` resolves that durable cache itself and RAISES if the store
+            cannot be opened (fail-closed; never a silent in-memory fallback).
         query: Injectable query seam (tests / custom relay transport).
         deliver: Injectable inbox sink (default: write to the local inbox).
         verifier_factory: ``from_fqid -> EnvelopeVerifier`` (default: the HTTP
@@ -515,14 +516,14 @@ class StoreForwardPuller:
         self._seen_event_ids: set[str] = set()
 
         if nonce_cache is None:
-            try:
-                from .api import _get_nonce_cache
+            # Fail closed: share the HTTP inbox's durable replay cache. If the
+            # durable store cannot be opened, this raises rather than silently
+            # downgrading to a fresh in-memory cache, which would re-open the
+            # restart replay window on the S&F rail while the HTTP inbox
+            # correctly fails closed (coord 11e295a3 review).
+            from .api import _get_nonce_cache
 
-                nonce_cache = _get_nonce_cache()
-            except Exception:  # noqa: BLE001
-                from .federation import NonceCache
-
-                nonce_cache = NonceCache()
+            nonce_cache = _get_nonce_cache()
         self._nonce_cache = nonce_cache
 
     @property
@@ -640,7 +641,9 @@ def start_pull_loop(
         recipient_secret: This node's 32-byte Nostr secret (else env-resolved).
         relays: Relay URLs (else ``SKCHAT_NOSTR_RELAYS``).
         interval: Seconds between pull sweeps.
-        nonce_cache: Shared replay guard (else the HTTP inbox's cache).
+        nonce_cache: Shared replay guard (else the HTTP inbox's durable
+            cache; if that store cannot be opened the loop is NOT started,
+            fail-closed, with an error-level log).
         puller: Pre-built :class:`StoreForwardPuller` (tests / custom seams);
             bypasses the env gate when provided.
 
@@ -659,6 +662,23 @@ def start_pull_loop(
             if not secret:
                 logger.debug("store-forward pull loop: no nostr secret — skipping")
                 return None
+            if nonce_cache is None:
+                # Fail closed on the replay guard: without the durable cache
+                # the pull rail would accept replays across restarts, so the
+                # loop is not started at all (rail degraded but secure).
+                try:
+                    from .api import _get_nonce_cache
+
+                    nonce_cache = _get_nonce_cache()
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "store-forward pull loop NOT started (fail-closed): "
+                        "durable nonce replay cache unavailable: %s. Fix the "
+                        "replay store (SKCOMMS_NONCE_DB or "
+                        "skcomms_home()/state/) and restart.",
+                        exc,
+                    )
+                    return None
             puller = StoreForwardPuller(secret, relays=relays, nonce_cache=nonce_cache)
 
         stop = threading.Event()

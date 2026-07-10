@@ -29,6 +29,15 @@ from .identity import resolve_self_identity
 
 logger = logging.getLogger("skcomms.home")
 
+# The per-node state/ ignore block. Kept as its own constant so it can be
+# appended verbatim to a pre-existing .stignore that predates the durable
+# nonce cache (see ensure_state_ignored).
+STIGNORE_STATE_BLOCK = """\
+// Per-node daemon state (nonce replay cache etc.) must NEVER sync between
+// nodes: each node keeps its own replay history.
+state/
+"""
+
 # Top-level .stignore — Syncthing ignores these volatile/local files so they
 # never propagate to peers (PID/lock files, temp/partial writes, local logs).
 STIGNORE_CONTENT = """\
@@ -42,7 +51,7 @@ daemon.pid
 .DS_Store
 logs/
 *.log
-"""
+""" + STIGNORE_STATE_BLOCK
 
 
 def skcomms_home() -> Path:
@@ -57,6 +66,39 @@ def skcomms_home() -> Path:
     if override:
         return Path(override).expanduser()
     return Path.home() / ".skcapstone" / "skcomms"
+
+
+def ensure_state_ignored(home: Optional[Path] = None) -> Path:
+    """Idempotently ensure ``state/`` is Syncthing-ignored in ``<home>/.stignore``.
+
+    Fresh scaffolds get the full :data:`STIGNORE_CONTENT` (which already
+    ignores ``state/``), but a live deployment whose ``.stignore`` predates
+    the durable nonce cache would otherwise sync ``state/nonce_cache.db``
+    (a live WAL SQLite) between nodes: file-sync corruption risk, plus
+    conflict copies mixing per-node replay history. This healer runs from
+    both :func:`scaffold` and the api's nonce-store path resolution, so
+    existing nodes are fixed on the next daemon start without operator
+    hand-edits.
+
+    Args:
+        home: The skcomms home root. ``None`` resolves via :func:`skcomms_home`.
+
+    Returns:
+        Path: The ``.stignore`` path (written or already compliant).
+    """
+    root = home if home is not None else skcomms_home()
+    root.mkdir(parents=True, exist_ok=True)
+    stignore = root / ".stignore"
+    if not stignore.exists():
+        stignore.write_text(STIGNORE_CONTENT, encoding="utf-8")
+        return stignore
+    text = stignore.read_text(encoding="utf-8")
+    if "state/" in (line.strip() for line in text.splitlines()):
+        return stignore
+    sep = "" if (not text or text.endswith("\n")) else "\n"
+    stignore.write_text(text + sep + STIGNORE_STATE_BLOCK, encoding="utf-8")
+    logger.info("appended per-node state/ ignore to existing %s", stignore)
+    return stignore
 
 
 def _agent_name(agent: Optional[str]) -> str:
@@ -75,8 +117,9 @@ def _agent_name(agent: Optional[str]) -> str:
 def scaffold(agent: Optional[str] = None) -> dict:
     """Create the ``~/.skcapstone/skcomms/<realm>/<operator>/<agent>/{outbox,inbox}`` tree.
 
-    Idempotent — safe to re-run; existing files are preserved. Also writes a
-    top-level ``.stignore`` if one does not already exist.
+    Idempotent, safe to re-run; existing files are preserved. Also ensures a
+    top-level ``.stignore`` exists and ignores the per-node ``state/`` subtree
+    (appending the block to a pre-existing ``.stignore`` that lacks it).
 
     Args:
         agent: Short agent name. ``None`` triggers env/identity resolution.
@@ -98,9 +141,7 @@ def scaffold(agent: Optional[str] = None) -> dict:
     outbox.mkdir(parents=True, exist_ok=True)
     inbox.mkdir(parents=True, exist_ok=True)
 
-    stignore = home / ".stignore"
-    if not stignore.exists():
-        stignore.write_text(STIGNORE_CONTENT, encoding="utf-8")
+    stignore = ensure_state_ignored(home)
 
     logger.debug("scaffolded skcomms tree at %s", agent_dir)
     return {
