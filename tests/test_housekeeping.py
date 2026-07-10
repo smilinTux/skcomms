@@ -424,6 +424,9 @@ class TestHousekeepCLI:
         monkeypatch.delenv("SKAGENT", raising=False)
         monkeypatch.delenv("SKCAPSTONE_AGENT", raising=False)
         monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
+        # Isolate the persistent outbox too: housekeep now enforces
+        # dead-letter retention and must never sweep the real queue in tests.
+        monkeypatch.setenv("SKCOMMS_OUTBOX_DIR", str(tmp_path / "pobox"))
 
         outbox = tmp_path / "outbox"
         outbox.mkdir()
@@ -472,6 +475,7 @@ class TestHousekeepCLI:
         monkeypatch.delenv("SKAGENT", raising=False)
         monkeypatch.delenv("SKCAPSTONE_AGENT", raising=False)
         monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
+        monkeypatch.setenv("SKCOMMS_OUTBOX_DIR", str(tmp_path / "pobox"))
 
         outbox = tmp_path / "outbox"
         outbox.mkdir()

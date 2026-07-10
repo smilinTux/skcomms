@@ -182,7 +182,11 @@ async def lifespan(app: FastAPI):
         hk_cfg = hk_cfg.housekeeping if hk_cfg is not None else load_config().housekeeping
         if hk_cfg.enabled:
             _housekeeping_task = asyncio.create_task(
-                housekeeping_loop(lambda: _skcomms.router.transports if _skcomms else [], hk_cfg)
+                housekeeping_loop(
+                    lambda: _skcomms.router.transports if _skcomms else [],
+                    hk_cfg,
+                    get_outbox=lambda: getattr(_skcomms, "_outbox", None),
+                )
             )
             logger.info("Housekeeping loop started (interval %ss)", hk_cfg.interval_s)
         else:
@@ -202,14 +206,12 @@ async def lifespan(app: FastAPI):
         obs_cfg = getattr(_skcomms, "_config", None)
         obs_cfg = obs_cfg.observability if obs_cfg is not None else load_config().observability
         if obs_cfg.enabled:
+            from .observability import dead_letter_depth
+
             _depth_monitor_task = asyncio.create_task(
                 depth_monitor_loop(
                     lambda: _skcomms.router.transports if _skcomms else [],
-                    lambda: (
-                        _skcomms._outbox.dead_count()
-                        if _skcomms is not None and getattr(_skcomms, "_outbox", None) is not None
-                        else 0
-                    ),
+                    lambda: dead_letter_depth(getattr(_skcomms, "_outbox", None)),
                     obs_cfg,
                 )
             )
@@ -685,22 +687,16 @@ async def get_metrics():
     from .observability import (
         PROMETHEUS_CONTENT_TYPE,
         collect_outbox_depths,
+        dead_letter_depth,
         render_prometheus,
     )
 
     comm = get_skcomms()
     transports = comm.router.transports
-    dead_letter_depth = 0
-    outbox = getattr(comm, "_outbox", None)
-    if outbox is not None:
-        try:
-            dead_letter_depth = outbox.dead_count()
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("dead-letter count unavailable for /metrics: %s", exc)
 
     body = render_prometheus(
         outbox_depths=collect_outbox_depths(transports),
-        dead_letter_depth=dead_letter_depth,
+        dead_letter_depth=dead_letter_depth(getattr(comm, "_outbox", None)),
         failure_counters=comm.router.failure_stats(),
         transport_health=comm.router.health_report(),
     )

@@ -169,14 +169,22 @@ fleet laptop). Retention is configured in the `housekeeping:` block of
 | `outbox_max_age_hours` | `48` | sender-outbox envelopes older than this are deleted (`prune_outbox`) |
 | `archive_ttl_hours` | `168` (7 days) | receiver-archive files older than this are deleted (`prune_archive`) |
 | `mailbox_ttl_hours` | `168` (7 days) | mailbox outbox records (`<realm>/<operator>/<agent>/outbox/*.json`) older than this are deleted |
+| `dead_letter_ttl_hours` | `720` (30 days) | persistent-outbox `dead/` entries older than this are deleted (`<= 0` disables) |
+| `dead_letter_max_count` | `5000` | keep at most this many `dead/` entries, newest win (`<= 0` disables) |
+| `outbox_archive_ttl_hours` | `720` (30 days) | persistent-outbox `archive/` entries (migrated-away corrupt / dead-end files) older than this are deleted (`<= 0` disables) |
+| `outbox_archive_max_count` | `5000` | keep at most this many `archive/` entries, newest win (`<= 0` disables) |
 
 The running API daemon starts the loop automatically from `api.lifespan`
 (`skcomms.housekeeping.housekeeping_loop`). `skcomms housekeep` runs one full
-pass on demand (outbox prune + archive TTL + mailbox retention) and is the verb
-to call from a systemd timer or cron as belt-and-braces on hosts where the
-daemon is not always up. Per-run overrides: `--outbox-max-age-hours`,
-`--archive-ttl-hours`, `--mailbox-ttl-hours`; `--json-out` prints
-machine-readable counts.
+pass on demand (outbox prune + archive TTL + mailbox retention + dead-letter
+and outbox-archive retention) and is the verb to call from a systemd timer or
+cron as belt-and-braces on hosts where the daemon is not always up. Per-run
+overrides: `--outbox-max-age-hours`, `--archive-ttl-hours`,
+`--mailbox-ttl-hours`, `--dead-ttl-hours`, `--dead-max-count`; `--json-out`
+prints machine-readable counts. The dead-letter retention floor (30 days) is
+deliberately long: dead letters exist for manual review (see the triage
+runbook in section 8), the bounds only stop a persistent peer outage from
+growing `dead/` forever the way the 140k-file sender outbox once did.
 
 ## 7. API / Reference
 
@@ -184,7 +192,8 @@ FastAPI app `skcomms.api:app`. Health `GET /health`; status `GET /api/v1/status`
 capabilities `GET /api/v1/capabilities`; federation routes per §5. CLI:
 `skcomms init`, `skcomms send <fqid> <msg>`, `skcomms inbox`, `skcomms peers add`,
 `skcomms registry resolve`, `skcomms grant …`, `skcomms serve`,
-`skcomms housekeep` (one full retention pass, timer-friendly; see §6). Full command matrix in
+`skcomms housekeep` (one full retention pass, timer-friendly; see §6),
+`skcomms deadletter list|show|requeue|purge` (dead-letter triage; see §8). Full command matrix in
 [README.md](README.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## 8. Troubleshooting
@@ -198,6 +207,44 @@ capabilities `GET /api/v1/capabilities`; federation routes per §5. CLI:
 | PQ leg unavailable | `liboqs` / `oqs` importable; otherwise negotiation falls back to the classical suite (expected, logged) |
 | CoT/TAK client can't connect | `cot_service.py` bound to tailnet iface; confirm ATAK/iTAK points at the tailscale IP, not the Funnel host |
 | Outbox / archive growing unbounded, Syncthing pegged | daemon housekeeping loop running? (`housekeeping.enabled`, `api.lifespan` log line "Housekeeping loop started"); run `skcomms housekeep --json-out` for an immediate sweep; see §6 retention table |
+| `dead_letter_growth` alert fired / `skcomms_dead_letter_depth` climbing | run the dead-letter triage runbook below |
+
+### Dead-letter triage runbook
+
+A message lands in the persistent outbox's `dead/` directory
+(`~/.skcapstone/skcomms/outbox/dead/`, override with `$SKCOMMS_OUTBOX_DIR`)
+after `max_retries` failed delivery attempts (default 10, exponential backoff
+capped at 1h). The `dead_letter_growth` sk-alert and the
+`skcomms_dead_letter_depth` gauge on `GET /metrics` tell you WHEN; this runbook
+is WHAT TO DO:
+
+1. **Survey.** `skcomms deadletter list` (add `--json-out` for scripting).
+   Look at the `Last error` column: a single recurring error plus a single
+   recipient usually means one peer or one rail is down, not message-level
+   corruption.
+2. **Inspect.** `skcomms deadletter show <envelope_id>` prints the full entry:
+   attempt history, last error, and the envelope shape (`signed` /
+   `envelope_v1` / `legacy` / `corrupt`). Add `--raw` to dump the serialized
+   envelope itself.
+3. **Fix the cause first.** Peer back online? Key or TOFU pin fixed? Relay 422
+   resolved (sign-at-send)? Requeueing without fixing the cause just burns
+   another 10 attempts and dead-letters again.
+4. **Requeue.** One message: `skcomms deadletter requeue <envelope_id>`.
+   Everything (after a fleet-wide fix): `skcomms deadletter requeue --all`.
+   Requeued entries re-enter `pending/` with a fresh retry budget; the daemon's
+   retry sweep picks them up within its interval (30s default).
+5. **Purge what is obsolete.** Stale presence beacons, superseded state, or
+   `corrupt`-shaped entries that `skcomms outbox` migration already parked:
+   `skcomms deadletter purge <envelope_id>`, or `skcomms deadletter purge --all
+   --yes` when the whole queue is known-dead. Purge is permanent.
+6. **Verify.** `skcomms deadletter list` is empty (or intentionally small) and
+   `skcomms_dead_letter_depth` on `/metrics` drops back below
+   `observability.dead_letter_threshold`.
+
+Retention (section 6) bounds `dead/` and the outbox `archive/` automatically
+(30-day TTL + 5000-entry cap by default), so an unattended outage cannot grow
+them forever; anything you want to keep longer than the TTL must be triaged
+before it ages out.
 
 ## 9. Maturity-tier + Version reference
 

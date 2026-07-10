@@ -77,6 +77,34 @@ def total_outbox_depth(transports: Iterable[object]) -> int:
     return sum(collect_outbox_depths(transports).values())
 
 
+def dead_letter_depth(outbox: Optional[object]) -> int:
+    """Return the dead-letter queue depth of *outbox*, or 0 when unavailable.
+
+    :attr:`skcomms.outbox.PersistentOutbox.dead_count` is a property, but the
+    original wiring called it as a method: the resulting TypeError was
+    swallowed defensively and every scrape and alert saw a dead-letter depth
+    of 0 forever, hiding exactly the growth the dead_letter_growth alarm
+    exists to catch. This helper accepts both shapes (property or method, for
+    duck-typed doubles) so the depth can never silently zero out again.
+
+    Args:
+        outbox: A PersistentOutbox-like object, or None.
+
+    Returns:
+        int: The dead-letter queue depth (0 when *outbox* is None or broken).
+    """
+    if outbox is None:
+        return 0
+    try:
+        value = getattr(outbox, "dead_count", 0)
+        if callable(value):
+            value = value()
+        return int(value or 0)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("dead-letter depth unavailable: %s", exc)
+        return 0
+
+
 class DepthMonitor:
     """Thresholds outbox + dead-letter depth and fires sk-alert on crossing.
 
