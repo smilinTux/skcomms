@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from collections import OrderedDict
 from typing import Optional
@@ -29,6 +30,11 @@ logger = logging.getLogger("skcomms.router")
 # Failure tracking defaults
 FAILURE_THRESHOLD = 3  # consecutive failures before cooldown
 COOLDOWN_SECONDS = 60.0  # seconds to skip a transport after repeated failures
+
+# Matches an HTTP 4xx status reported in a rail's error string (e.g. the
+# https-s2s rail's ``perm: HTTP 422 ...``) so the observability counters can
+# separate client-side rejections (bad/blocked payloads) from rail health.
+_HTTP_4XX_RE = re.compile(r"HTTP 4\d\d\b")
 
 # Federation default rail chain (by transport name). Used to order candidate
 # transports when a peer advertises no explicit rail order. Rails not named
@@ -108,6 +114,15 @@ class Router:
 
         # Failure tracking: {transport_name: (consecutive_fail_count, last_fail_time)}
         self._transport_failures: dict[str, tuple[int, float]] = {}
+
+        # Cumulative, observability-only failure counters (distinct from the
+        # consecutive-failure cooldown state above, which resets on any
+        # success). These monotonically count EVERY failed send attempt per
+        # rail, plus the subset that were 4xx rejections (e.g. the inbox gate
+        # 422ing a non-signed payload), so GET /api/v1/status and /metrics can
+        # surface per-rail failure totals that the cooldown state cannot.
+        # {transport_name: {"failures": int, "http_4xx": int, "last_error": str}}
+        self._failure_counters: dict[str, dict] = {}
 
     @property
     def transports(self) -> list[Transport]:
@@ -732,6 +747,53 @@ class Router:
         """
         self._transport_failures.pop(transport_name, None)
 
+    @staticmethod
+    def _is_http_4xx(error: Optional[str]) -> bool:
+        """Return whether an error string reports an HTTP 4xx rejection.
+
+        The https-s2s rail formats 4xx failures as ``perm: HTTP 4NN ...`` (see
+        :meth:`skcomms.transports.http_s2s.HttpS2STransport._failure`), and its
+        local structural gate refuses non-SignedEnvelope payloads that "the
+        inbox gate would 422". Both are counted as 4xx so the 422-per-rail
+        counter surfaces payload/authorization rejections separately from
+        transient rail health problems.
+        """
+        if not error:
+            return False
+        return bool(_HTTP_4XX_RE.search(error)) or "would 422 it" in error
+
+    def _count_failure(self, transport_name: str, error: Optional[str]) -> None:
+        """Increment the cumulative, observability-only failure counters.
+
+        Counts EVERY failed send (unlike :meth:`_record_failure`, which is
+        skipped for permanent/broadcast failures to protect the cooldown), and
+        separately counts the 4xx subset. Purely additive: never affects
+        routing, cooldown, or send semantics.
+
+        Args:
+            transport_name: Rail whose send failed.
+            error: The failure's error string, used to classify 4xx.
+        """
+        stats = self._failure_counters.get(transport_name)
+        if stats is None:
+            stats = {"failures": 0, "http_4xx": 0, "last_error": None}
+            self._failure_counters[transport_name] = stats
+        stats["failures"] += 1
+        if self._is_http_4xx(error):
+            stats["http_4xx"] += 1
+        if error:
+            stats["last_error"] = error
+
+    def failure_stats(self) -> dict[str, dict]:
+        """Return a snapshot of cumulative per-transport failure counters.
+
+        Returns:
+            ``{transport_name: {"failures": int, "http_4xx": int,
+            "last_error": str | None}}`` — a deep-ish copy safe to serialise
+            into GET /api/v1/status and /metrics.
+        """
+        return {name: dict(stats) for name, stats in self._failure_counters.items()}
+
     def _try_send(self, transport: Transport, envelope_bytes: bytes, recipient: str) -> SendResult:
         """Attempt to send through a single transport with error handling."""
         start = time.monotonic()
@@ -740,6 +802,7 @@ class Router:
             if result.success:
                 self._record_success(transport.name)
             else:
+                self._count_failure(transport.name, result.error)
                 logger.warning(
                     "Transport '%s' send failed: %s",
                     transport.name,
@@ -758,6 +821,7 @@ class Router:
         except TransportError as exc:
             elapsed = (time.monotonic() - start) * 1000
             logger.warning("Transport '%s' TransportError: %s", transport.name, exc)
+            self._count_failure(transport.name, str(exc))
             self._record_failure(transport.name)
             return SendResult(
                 success=False,
@@ -769,6 +833,7 @@ class Router:
         except Exception as exc:
             elapsed = (time.monotonic() - start) * 1000
             logger.warning("Transport '%s' failed: %s", transport.name, exc)
+            self._count_failure(transport.name, str(exc))
             self._record_failure(transport.name)
             return SendResult(
                 success=False,

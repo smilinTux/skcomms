@@ -78,6 +78,41 @@ class HousekeepingConfig(BaseModel):
     mailbox_ttl_hours: float = 168.0
 
 
+class ObservabilityConfig(BaseModel):
+    """Depth-threshold + alerting settings for the periodic depth monitor.
+
+    The 140k-file outbox leak that pegged Syncthing and froze a fleet laptop
+    was invisible: ``FileTransport.health_check`` exposed ``pending_outbox``
+    but nothing thresholded or alerted on it. These settings drive the
+    daemon's background depth monitor (see :mod:`skcomms.observability`),
+    which sums per-transport outbox depth plus the dead-letter queue depth
+    and fires an sk-alert (via :mod:`skcomms.integration`) when either
+    crosses its threshold. The monitor is edge-triggered: it fires once when
+    a depth first crosses its threshold, not on every pass, so it never
+    storms the alert bus.
+
+    Attributes:
+        enabled: Whether the daemon runs the background depth monitor.
+        interval_s: Seconds between depth checks in the daemon (default 300,
+            every 5 minutes; depth changes slowly relative to housekeeping).
+        outbox_depth_threshold: Total pending outbox depth (summed across
+            every transport that reports ``pending_outbox``) at or above which
+            an ``outbox_depth_high`` alert fires (default 1000). Values <= 0
+            disable the outbox-depth check.
+        dead_letter_threshold: Dead-letter queue depth at or above which a
+            ``dead_letter_growth`` alert fires when the count has grown since
+            the last pass (default 1: the first permanently-failed message is
+            worth surfacing). Values <= 0 disable the dead-letter check.
+        alert_level: sk-alert severity for depth alerts (default ``warn``).
+    """
+
+    enabled: bool = True
+    interval_s: float = 300.0
+    outbox_depth_threshold: int = 1000
+    dead_letter_threshold: int = 1
+    alert_level: str = "warn"
+
+
 class RegistryConfig(BaseModel):
     """Realm peer-registry settings (T11).
 
@@ -126,6 +161,7 @@ class SKCommsConfig(BaseModel):
     ttl: int = 86400
     daemon: DaemonConfig = Field(default_factory=DaemonConfig)
     housekeeping: HousekeepingConfig = Field(default_factory=HousekeepingConfig)
+    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     transports: dict[str, TransportConfig] = Field(default_factory=dict)
 
     @classmethod
@@ -161,6 +197,7 @@ class SKCommsConfig(BaseModel):
         identity_data = skcomms_section.get("identity", {})
         daemon_data = skcomms_section.get("daemon", {})
         housekeeping_data = skcomms_section.get("housekeeping", {})
+        observability_data = skcomms_section.get("observability", {})
 
         return cls(
             version=skcomms_section.get("version", "1.0.0"),
@@ -179,6 +216,11 @@ class SKCommsConfig(BaseModel):
                 HousekeepingConfig(**housekeeping_data)
                 if housekeeping_data
                 else HousekeepingConfig()
+            ),
+            observability=(
+                ObservabilityConfig(**observability_data)
+                if observability_data
+                else ObservabilityConfig()
             ),
             transports=transport_configs,
         )

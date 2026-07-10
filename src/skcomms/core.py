@@ -1040,6 +1040,11 @@ class SKComms:
             "default_mode": self._config.default_mode.value,
             "transports": self._router.health_report(),
             "transport_count": len(self._router.transports),
+            # Cumulative per-rail failure counters (every failed send + the 4xx
+            # subset, e.g. the inbox gate 422ing a payload). Distinct from the
+            # transient cooldown state in health_report; empty until a send
+            # fails. See :meth:`skcomms.router.Router.failure_stats`.
+            "transport_failures": self._router.failure_stats(),
             "encrypt": self._config.encrypt,
             "sign": self._config.sign,
             "crypto": crypto_info,

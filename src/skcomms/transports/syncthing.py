@@ -418,6 +418,14 @@ class SyncthingTransport(Transport):
             inbox_count = sum(
                 len(list((self._inbox / p).glob(f"*{ENVELOPE_SUFFIX}"))) for p in inbox_peers
             )
+            # Count pending outbox envelopes too: the append-only sender outbox
+            # is exactly what leaked to 140k files and pegged Syncthing, yet the
+            # health report only ever surfaced pending_inbox. Sum across every
+            # per-peer outbox subdir so the depth monitor and /metrics can
+            # threshold on it.
+            outbox_count = sum(
+                len(list((self._outbox / p).glob(f"*{ENVELOPE_SUFFIX}"))) for p in outbox_peers
+            )
 
             disk_warning = self._check_disk_space()
             status = TransportStatus.AVAILABLE
@@ -431,6 +439,7 @@ class SyncthingTransport(Transport):
                 "comms_root": str(self._root),
                 "outbox_peers": outbox_peers,
                 "inbox_peers": inbox_peers,
+                "pending_outbox": outbox_count,
                 "pending_inbox": inbox_count,
             }
             if disk_warning:
