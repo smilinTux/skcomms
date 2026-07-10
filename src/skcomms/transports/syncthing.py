@@ -155,6 +155,9 @@ class SyncthingTransport(Transport):
         self.priority = priority
         self._archive = archive
         self._max_outbox_depth = max_outbox_depth
+        # Cumulative depth-cap evictions (accepted data loss); surfaced via
+        # health_check details and the /metrics eviction counter.
+        self._evictions_total = 0
         self._local_names: list[str] = []
 
         # Auto-add agent name from env so per-agent receive works
@@ -313,11 +316,15 @@ class SyncthingTransport(Transport):
             # max_outbox_depth envelopes per outbox/<peer>/, evicting
             # oldest-first, so no single peer's queue can grow without bound
             # between housekeeping passes.
-            from .file import _trim_dir_to_depth
+            # Evictions are accepted data loss: count them and sk-alert.
+            from .file import _alert_evictions, _trim_dir_to_depth
 
-            _trim_dir_to_depth(
+            evicted = _trim_dir_to_depth(
                 peer_outbox, self._max_outbox_depth, ENVELOPE_SUFFIX, logger
             )
+            if evicted:
+                self._evictions_total += evicted
+                _alert_evictions(self.name, peer_outbox, evicted, self._max_outbox_depth)
 
             elapsed = (time.monotonic() - start) * 1000
             logger.info(
@@ -466,6 +473,7 @@ class SyncthingTransport(Transport):
                 "inbox_peers": inbox_peers,
                 "pending_outbox": outbox_count,
                 "pending_inbox": inbox_count,
+                "outbox_evictions_total": self._evictions_total,
             }
             if disk_warning:
                 details["disk_warning"] = disk_warning

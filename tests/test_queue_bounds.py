@@ -279,9 +279,7 @@ def test_syncthing_per_peer_outbox_depth_cap(tmp_path):
         _age_files(tmp_path / "outbox" / "jarvis")
     t.send(json.dumps({"envelope_id": "a-solo"}).encode(), "ava")
 
-    jarvis_names = sorted(
-        f.name for f in (tmp_path / "outbox" / "jarvis").glob("*.skc.json")
-    )
+    jarvis_names = sorted(f.name for f in (tmp_path / "outbox" / "jarvis").glob("*.skc.json"))
     assert len(jarvis_names) == 3
     assert jarvis_names == [f"e{i:02d}.skc.json" for i in range(2, 5)]
     # The cap is PER PEER: another peer's queue is untouched.
@@ -382,9 +380,24 @@ def test_route_bytes_is_throttled_too():
 def test_config_defaults_bound_and_throttle():
     cfg = SKCommsConfig()
     assert cfg.outbox.max_pending == 5000
-    assert cfg.outbox.sweep_batch == 50
+    assert cfg.outbox.sweep_batch == 20
     assert cfg.ratelimit.enabled is True
     assert cfg.ratelimit.transport_capacity > 0
+
+
+def test_default_sweep_batch_fits_inside_peer_bucket():
+    """INVARIANT: one full retry sweep at a single peer fits its token bucket.
+
+    A default sweep_batch larger than the default peer_capacity guarantees
+    the tail of every same-peer backlog sweep is locally throttled on a
+    single-rail deploy, so the paced sweep and the outbound limiter fight
+    instead of cooperate. Guard the alignment of the shipped defaults.
+    """
+    from skcomms.outbox import DEFAULT_SWEEP_BATCH
+
+    cfg = SKCommsConfig()
+    assert cfg.outbox.sweep_batch <= cfg.ratelimit.peer_capacity
+    assert DEFAULT_SWEEP_BATCH <= cfg.ratelimit.peer_capacity
 
 
 def test_config_sections_parse_from_yaml(tmp_path):
@@ -508,3 +521,270 @@ def test_metrics_exposition_includes_throttled_counter():
         failure_counters={"tailscale": {"failures": 0, "http_4xx": 0, "throttled": 7}},
     )
     assert 'skcomms_transport_throttled_total{transport="tailscale"} 7' in text
+
+
+def test_metrics_exposition_includes_eviction_counter():
+    from skcomms.observability import render_prometheus
+
+    text = render_prometheus(
+        outbox_depths={"file": 1},
+        dead_letter_depth=0,
+        failure_counters={},
+        eviction_counts={"file": 3, "syncthing": 0},
+    )
+    assert 'skcomms_outbox_evictions_total{transport="file"} 3' in text
+    assert 'skcomms_outbox_evictions_total{transport="syncthing"} 0' in text
+
+
+# ---------------------------------------------------------------------------
+# PersistentOutbox: throttle-only retries never consume the durable budget
+# ---------------------------------------------------------------------------
+
+
+def _throttled_attempt(envelope_id: str) -> SendResult:
+    return SendResult(
+        success=False,
+        transport_name="https-s2s",
+        envelope_id=envelope_id,
+        error="throttled: outbound rate limit on 'https-s2s' (retry in ~1.0s)",
+    )
+
+
+class ThrottledRouter:
+    """Legacy router stub: every rail attempt is a local throttle denial."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def route(self, envelope):
+        self.calls += 1
+        return DeliveryReport(
+            envelope_id=envelope.envelope_id,
+            delivered=False,
+            attempts=[_throttled_attempt(envelope.envelope_id)],
+        )
+
+
+class MixedFailureRouter:
+    """One rail throttled locally, the next actually failed on the wire."""
+
+    def route(self, envelope):
+        return DeliveryReport(
+            envelope_id=envelope.envelope_id,
+            delivered=False,
+            attempts=[
+                _throttled_attempt(envelope.envelope_id),
+                SendResult(
+                    success=False,
+                    transport_name="tailscale",
+                    envelope_id=envelope.envelope_id,
+                    error="perm: HTTP 422 rejected by inbox gate",
+                ),
+            ],
+        )
+
+
+class ReportFailingRouter:
+    """Failure WITH a report attempt (no exception raised)."""
+
+    def route(self, envelope):
+        return DeliveryReport(
+            envelope_id=envelope.envelope_id,
+            delivered=False,
+            attempts=[
+                SendResult(
+                    success=False,
+                    transport_name="https-s2s",
+                    envelope_id=envelope.envelope_id,
+                    error="perm: HTTP 422 rejected by inbox gate",
+                )
+            ],
+        )
+
+
+def test_throttle_only_retry_keeps_durable_budget(tmp_path):
+    """A throttled sweep must never advance an entry toward dead-letter.
+
+    max_retries=1 means ANY budget-consuming failed retry dead-letters
+    immediately, so surviving repeated throttled sweeps proves throttles
+    are pacing, not failures.
+    """
+    router = ThrottledRouter()
+    outbox = PersistentOutbox(
+        outbox_dir=tmp_path / "outbox",
+        router=router,
+        base_backoff=0,
+        max_retries=1,
+    )
+    outbox.enqueue("e-throttled", "jarvis", LEGACY_JSON, error="down")
+
+    for _ in range(3):
+        results = outbox.retry_all()
+        assert results["throttled"] == 1
+        assert results["retried"] == 0
+        assert results["dead_lettered"] == 0
+
+    assert router.calls == 3
+    assert outbox.pending_count == 1
+    assert outbox.dead_count == 0
+    entry = outbox.get("e-throttled")
+    # attempt_count untouched: the message never reached the wire.
+    assert entry.attempt_count == 1
+
+
+def test_throttled_attempts_consume_sweep_budget(tmp_path):
+    """Throttles eat the SWEEP batch cap (further tries would throttle too)
+    but never the per-entry retry budget."""
+    router = ThrottledRouter()
+    outbox = PersistentOutbox(
+        outbox_dir=tmp_path / "outbox",
+        router=router,
+        base_backoff=0,
+        sweep_batch=3,
+    )
+    for i in range(10):
+        outbox.enqueue(f"e{i:02d}", "jarvis", LEGACY_JSON, error="down")
+
+    results = outbox.retry_all()
+
+    assert results["throttled"] == 3
+    assert results["deferred"] == 7
+    assert results["retried"] == 0
+    assert router.calls == 3
+    assert outbox.pending_count == 10
+    assert all(e.attempt_count == 1 for e in outbox.list_pending())
+
+
+def test_mixed_throttle_and_wire_failure_consumes_budget(tmp_path):
+    """If ANY rail attempt actually failed on the wire, it is a real failure:
+    the retry budget is consumed and last_error records the wire error."""
+    outbox = PersistentOutbox(
+        outbox_dir=tmp_path / "outbox",
+        router=MixedFailureRouter(),
+        base_backoff=0,
+    )
+    outbox.enqueue("e-mixed", "jarvis", LEGACY_JSON, error="down")
+
+    results = outbox.retry_all()
+
+    assert results["retried"] == 1
+    assert results["throttled"] == 0
+    entry = outbox.get("e-mixed")
+    assert entry.attempt_count == 2
+    assert "HTTP 422" in entry.last_error
+
+
+def test_report_failure_sets_last_error_on_pending_entry(tmp_path):
+    """Report-level failures (no exception) must record WHY on the entry."""
+    outbox = PersistentOutbox(
+        outbox_dir=tmp_path / "outbox",
+        router=ReportFailingRouter(),
+        base_backoff=0,
+    )
+    outbox.enqueue("e-why", "jarvis", LEGACY_JSON, error="initial send down")
+
+    outbox.retry_all()
+
+    entry = outbox.get("e-why")
+    assert "HTTP 422" in entry.last_error
+
+
+def test_report_failure_sets_last_error_on_dead_letter(tmp_path):
+    """A dead-lettered entry must carry the report's failure reason, not the
+    stale error from the original enqueue."""
+    outbox = PersistentOutbox(
+        outbox_dir=tmp_path / "outbox",
+        router=ReportFailingRouter(),
+        base_backoff=0,
+        max_retries=1,
+    )
+    outbox.enqueue("e-dead", "jarvis", LEGACY_JSON, error="initial send down")
+
+    results = outbox.retry_all()
+
+    assert results["dead_lettered"] == 1
+    dead = outbox.list_dead()
+    assert len(dead) == 1
+    assert "HTTP 422" in dead[0].last_error
+
+
+# ---------------------------------------------------------------------------
+# Depth-cap evictions: counter + sk-alert (accepted data loss must be seen)
+# ---------------------------------------------------------------------------
+
+
+def test_file_transport_evictions_counted_and_alerted(tmp_path, monkeypatch):
+    from skcomms import integration
+    from skcomms.transports import file as file_mod
+
+    fired = []
+    monkeypatch.setattr(
+        integration,
+        "alert",
+        lambda event, payload, level="info": fired.append((event, payload, level)) or True,
+    )
+    file_mod._eviction_alert_last.clear()
+
+    t = file_mod.FileTransport(
+        outbox_path=tmp_path / "out",
+        inbox_path=tmp_path / "in",
+        max_outbox_depth=5,
+    )
+    for i in range(8):
+        t.send(json.dumps({"envelope_id": f"e{i:02d}"}).encode(), "jarvis")
+        _age_files(tmp_path / "out")
+
+    details = t.health_check().details
+    assert details["outbox_evictions_total"] == 3
+    # Rate-limited: three eviction batches, ONE alert.
+    assert len(fired) == 1
+    event, payload, level = fired[0]
+    assert event == "outbox_evicted"
+    assert level == "warn"
+    assert payload["transport"] == "file"
+    assert payload["evicted"] == 1
+    assert payload["max_outbox_depth"] == 5
+
+
+def test_syncthing_transport_evictions_counted(tmp_path, monkeypatch):
+    from skcomms import integration
+    from skcomms.transports import file as file_mod
+    from skcomms.transports.syncthing import SyncthingTransport
+
+    fired = []
+    monkeypatch.setattr(
+        integration, "alert", lambda event, payload, level="info": fired.append(event) or True
+    )
+    file_mod._eviction_alert_last.clear()
+
+    t = SyncthingTransport(comms_root=tmp_path, max_outbox_depth=3)
+    for i in range(5):
+        t.send(json.dumps({"envelope_id": f"e{i:02d}"}).encode(), "jarvis")
+        _age_files(tmp_path / "outbox" / "jarvis")
+
+    details = t.health_check().details
+    assert details["outbox_evictions_total"] == 2
+    assert fired == ["outbox_evicted"]
+
+
+def test_eviction_alert_never_breaks_a_send(tmp_path, monkeypatch):
+    from skcomms import integration
+    from skcomms.transports import file as file_mod
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("alert bus down")
+
+    monkeypatch.setattr(integration, "alert", _boom)
+    file_mod._eviction_alert_last.clear()
+
+    t = file_mod.FileTransport(
+        outbox_path=tmp_path / "out",
+        inbox_path=tmp_path / "in",
+        max_outbox_depth=1,
+    )
+    for i in range(3):
+        result = t.send(json.dumps({"envelope_id": f"e{i}"}).encode(), "jarvis")
+        assert result.success is True
+        _age_files(tmp_path / "out")
+
+    assert t.health_check().details["outbox_evictions_total"] == 2

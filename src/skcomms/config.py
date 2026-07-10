@@ -127,10 +127,17 @@ class OutboxConfig(BaseModel):
         sweep_batch: Max delivery attempts per retry sweep so a backlog drains
             in bounded, paced batches instead of flooding a recovering rail.
             Values <= 0 disable pacing.
+
+            INVARIANT: keep ``sweep_batch <=
+            OutboundRateLimitConfig.peer_capacity``. A same-peer backlog
+            sweep larger than the peer token bucket guarantees the tail of
+            every sweep is locally throttled, so the paced sweep and the
+            outbound limiter fight instead of cooperate. The defaults are
+            aligned (20 == 20); raise both together.
     """
 
     max_pending: int = 5000
-    sweep_batch: int = 50
+    sweep_batch: int = 20
 
 
 class OutboundRateLimitConfig(BaseModel):
@@ -152,6 +159,12 @@ class OutboundRateLimitConfig(BaseModel):
         transport_capacity: Max burst per transport rail.
         transport_refill: Sustained sends/sec per transport rail.
         peer_capacity: Max burst per recipient within a rail.
+
+            INVARIANT: keep ``peer_capacity >= OutboxConfig.sweep_batch`` so
+            one full outbox retry sweep aimed at a single peer fits inside
+            the peer bucket (defaults are aligned at 20). With the default
+            30s sweep interval and ``peer_refill`` of 2/s the bucket is back
+            at full burst before each sweep.
         peer_refill: Sustained sends/sec per recipient.
     """
 

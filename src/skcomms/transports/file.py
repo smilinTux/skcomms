@@ -111,6 +111,47 @@ def _trim_dir_to_depth(
     return evicted
 
 
+# Depth-cap evictions delete UNDELIVERED envelopes: each one is accepted data
+# loss and must be visible beyond a log line. Every eviction batch fires an
+# ``outbox_evicted`` sk-alert, rate limited per transport so a sustained
+# overflow (one eviction per send) cannot storm the alert bus, and increments
+# a cumulative counter surfaced via health_check details and /metrics
+# (``skcomms_outbox_evictions_total``).
+_EVICTION_ALERT_MIN_INTERVAL_S = 300.0
+_eviction_alert_last: dict[str, float] = {}
+
+
+def _alert_evictions(transport_name: str, directory: Path, evicted: int, cap: int) -> None:
+    """Fire a rate-limited ``outbox_evicted`` sk-alert for depth-cap evictions.
+
+    Args:
+        transport_name: The evicting rail (rate-limit key).
+        directory: The outbox directory that was trimmed.
+        evicted: Number of envelope files deleted in this batch.
+        cap: The depth cap that triggered the eviction.
+    """
+    now = time.monotonic()
+    last = _eviction_alert_last.get(transport_name)
+    if last is not None and now - last < _EVICTION_ALERT_MIN_INTERVAL_S:
+        return
+    _eviction_alert_last[transport_name] = now
+    try:
+        from ..integration import alert
+
+        alert(
+            "outbox_evicted",
+            {
+                "transport": transport_name,
+                "directory": str(directory),
+                "evicted": evicted,
+                "max_outbox_depth": cap,
+            },
+            level="warn",
+        )
+    except Exception as exc:  # alerting must never break a send
+        logger.warning("outbox_evicted alert failed: %s", exc)
+
+
 def _prune_dir_by_ttl(directory: Path, ttl_hours: float, log: logging.Logger) -> int:
     """Delete regular files in *directory* older than *ttl_hours* (by mtime).
 
@@ -245,6 +286,9 @@ class FileTransport(Transport):
         self._archive = archive
         self._poll_interval_ms = poll_interval_ms
         self._max_outbox_depth = max_outbox_depth
+        # Cumulative depth-cap evictions (accepted data loss); surfaced via
+        # health_check details and the /metrics eviction counter.
+        self._evictions_total = 0
 
         self._outbox = (
             Path(outbox_path).expanduser()
@@ -320,9 +364,13 @@ class FileTransport(Transport):
             # Depth cap (coord 74d7b799): keep at most max_outbox_depth
             # envelope files, evicting oldest-first, so a burst can never
             # grow the outbox without bound between housekeeping passes.
-            _trim_dir_to_depth(
+            # Evictions are accepted data loss: count them and sk-alert.
+            evicted = _trim_dir_to_depth(
                 self._outbox, self._max_outbox_depth, ENVELOPE_SUFFIX, logger
             )
+            if evicted:
+                self._evictions_total += evicted
+                _alert_evictions(self.name, self._outbox, evicted, self._max_outbox_depth)
 
             elapsed = (time.monotonic() - start) * 1000
             logger.info("Wrote %s to %s (%0.1fms)", envelope_id[:8], target, elapsed)
@@ -404,6 +452,7 @@ class FileTransport(Transport):
                 "inbox_path": str(self._inbox),
                 "pending_outbox": outbox_count,
                 "pending_inbox": inbox_count,
+                "outbox_evictions_total": self._evictions_total,
                 "poll_interval_ms": self._poll_interval_ms,
             }
 

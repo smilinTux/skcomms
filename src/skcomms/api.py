@@ -673,9 +673,9 @@ async def get_metrics():
     """Expose skcomms observability metrics in Prometheus text format.
 
     Dependency-free plain-text exposition (version 0.0.4): outbox depth per
-    rail + total, dead-letter queue depth, cumulative per-rail failure and 4xx
-    counters, and a per-rail ``up`` gauge. Everything a scrape needs to alert
-    on the outbox-depth leak that froze a fleet laptop.
+    rail + total, dead-letter queue depth, cumulative per-rail failure, 4xx,
+    and depth-cap eviction counters, and a per-rail ``up`` gauge. Everything a
+    scrape needs to alert on the outbox-depth leak that froze a fleet laptop.
 
     Returns:
         A ``text/plain`` Prometheus exposition response.
@@ -684,6 +684,7 @@ async def get_metrics():
 
     from .observability import (
         PROMETHEUS_CONTENT_TYPE,
+        collect_eviction_counts,
         collect_outbox_depths,
         render_prometheus,
     )
@@ -703,6 +704,7 @@ async def get_metrics():
         dead_letter_depth=dead_letter_depth,
         failure_counters=comm.router.failure_stats(),
         transport_health=comm.router.health_report(),
+        eviction_counts=collect_eviction_counts(transports),
     )
     return PlainTextResponse(body, media_type=PROMETHEUS_CONTENT_TYPE)
 
