@@ -131,6 +131,60 @@ def test_plain_send_wire_bytes_are_accepted_by_the_inbox_gate(api_env):
     assert body["ok"] is True
     assert body["id"] == report.envelope_id
 
+    # The 200 is backed by a real per-recipient inbox file on disk.
+    assert _recipient_inbox_file(LUMINA_FQID, report.envelope_id).exists()
+
+
+def _recipient_inbox_file(fqid: str, envelope_id: str):
+    """Path the inbox handler writes a delivered envelope to.
+
+    Mirrors ``skcomms.api._write_to_recipient_inbox``: the canonical per-agent
+    comms inbox under the (monkeypatched) HOME, named ``{id}.skc.json``.
+    """
+    from pathlib import Path
+
+    from skcomms.transports.file import ENVELOPE_SUFFIX
+
+    agent = fqid.split("@")[0]
+    inbox = Path(f"~/.skcapstone/agents/{agent}/comms/inbox").expanduser()
+    return inbox / f"{envelope_id}{ENVELOPE_SUFFIX}"
+
+
+def test_send_federated_wire_bytes_are_accepted_by_the_inbox_gate(api_env, monkeypatch):
+    """Contract for the node-to-node federation path: the exact bytes
+    ``SKComms.send_federated`` hands to the https-s2s rail must 200 at the peer
+    inbox AND land as the per-recipient inbox file (never a legacy 422)."""
+    client, _api, comm, rail = api_env
+
+    # send_federated auto-discovers unknown fqids off the Nostr directory; keep
+    # that best-effort lookup off the network in the test.
+    from skcomms import nostr_discovery
+
+    monkeypatch.setattr(nostr_discovery, "ensure_peer", lambda *a, **k: None)
+
+    report = comm.send_federated(LUMINA_FQID, "federated node-to-node hello")
+    assert report.delivered is True
+    _recipient, wire = rail.sent[0]
+
+    # The federation rail carries a signed canonical Envelope v1, the only shape
+    # the receiving gate parses.
+    signed = SignedEnvelope.from_bytes(wire)
+    assert signed.is_signed
+
+    resp = client.post(
+        "/api/v1/inbox",
+        content=wire,
+        headers={"Content-Type": "application/skcomms-signed-envelope+json"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["id"] == report.envelope_id
+
+    # The 200 is backed by a real per-recipient inbox file on disk.
+    inbox_file = _recipient_inbox_file(LUMINA_FQID, report.envelope_id)
+    assert inbox_file.exists(), f"expected inbox file at {inbox_file}"
+
 
 def test_api_send_end_to_end_reaches_peer_inbox_with_200(api_env):
     """POST /api/v1/send -> wire bytes -> peer's POST /api/v1/inbox -> 200."""
