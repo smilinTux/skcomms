@@ -108,8 +108,10 @@ def test_inbox_happy_path_stores_and_200(client, jarvis_keys, tmp_path, monkeypa
     priv, pub = jarvis_keys
     _pin(JARVIS_FQID, pub)
 
-    # Per-recipient routing writes to the recipient agent's CANONICAL comms
-    # inbox (~/.skcapstone/agents/<agent>/comms/inbox), so isolate HOME.
+    # Per-recipient routing resolves through skcomms.paths (coord 119b49f1):
+    # with SKCOMMS_HOME set (the client fixture), the recipient's canonical
+    # comms inbox lives INSIDE that home. Isolate HOME anyway to prove the
+    # historical hardcoded ~/.skcapstone/agents template is dead.
     fake_home = tmp_path / "home"
     fake_home.mkdir()
     monkeypatch.setenv("HOME", str(fake_home))
@@ -126,11 +128,17 @@ def test_inbox_happy_path_stores_and_200(client, jarvis_keys, tmp_path, monkeypa
     env_id = body["id"]
 
     # Verified envelope was written to the recipient agent's canonical
-    # comms inbox (the tree each agent's daemon polls).
-    inbox = fake_home / ".skcapstone" / "agents" / "lumina" / "comms" / "inbox"
+    # comms inbox (the tree each agent's daemon polls), derived from the
+    # single path resolver so it agrees with the daemon's reader config.
+    from skcomms.paths import fed_inbox_dir
+
+    inbox = fed_inbox_dir("lumina")
+    assert inbox == tmp_path / "agents" / "lumina" / "comms" / "inbox"
     files = list(inbox.rglob("*.skc.json"))
     assert len(files) == 1
     assert files[0].name == f"{env_id}.skc.json"
+    # Nothing landed under the old per-user hardcoded location.
+    assert not (fake_home / ".skcapstone" / "agents").exists()
 
     from skcomms.models import MessageEnvelope
 

@@ -25,8 +25,10 @@ an :attr:`OutboxEntry.envelope_json` holds a serialized **SignedEnvelope**
 :class:`~skcomms.models.MessageEnvelope` are tolerated (detected + skipped on
 delivery, converted by :func:`skcomms.outbox_migrate.migrate_outbox`).
 
-Layout:
-    ~/.skcapstone/skcomms/outbox/
+Layout (per-agent via :func:`skcomms.paths.retry_outbox_dir`; legacy
+node-shared ``skcomms_home()/outbox`` for agentless callers, whose entries
+are adopted into the per-agent tree on first construction):
+    ~/.skcapstone/agents/<agent>/comms/outbox-retry/
     ├── pending/          # messages awaiting retry
     │   └── {id}.json
     ├── dead/             # permanently failed messages
@@ -50,6 +52,9 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger("skcomms.outbox")
 
+# Legacy documented default, kept for backward compatibility with callers
+# that pass it explicitly. The constructor default (None) now resolves
+# per-agent through skcomms.paths.retry_outbox_dir (coord 119b49f1).
 DEFAULT_OUTBOX_DIR = "~/.skcapstone/skcomms/outbox"
 DEFAULT_MAX_RETRIES = 10
 DEFAULT_BASE_BACKOFF = 5
@@ -154,7 +159,8 @@ class PersistentOutbox:
     Messages that exhaust retries move to the dead letter directory.
 
     Args:
-        outbox_dir: Root directory for the outbox.
+        outbox_dir: Root directory for the outbox. ``None`` (default) resolves
+            per-agent via :func:`skcomms.paths.retry_outbox_dir`.
         max_retries: Default max retries per message.
         base_backoff: Base backoff in seconds (doubled each retry).
         router: Optional SKComms Router for retry delivery.
@@ -167,9 +173,39 @@ class PersistentOutbox:
         base_backoff: int = DEFAULT_BASE_BACKOFF,
         router: Optional[object] = None,
     ) -> None:
-        self._root = (
-            Path(outbox_dir).expanduser() if outbox_dir is not None else default_outbox_dir()
-        )
+        if outbox_dir is None:
+            from . import paths
+            from .home import skcomms_home
+
+            # retry_outbox_dir honors the explicit SKCOMMS_OUTBOX_DIR override
+            # first (env wins over per-agent scoping), else the per-agent tree.
+            # This keeps default_outbox_dir() and PersistentOutbox() in
+            # agreement: both point at $SKCOMMS_OUTBOX_DIR when it is set.
+            outbox_dir = paths.retry_outbox_dir()
+            # One-time adoption: entries pending at the pre-scoping node-shared
+            # location must not be stranded (never retried). Every entry is
+            # pre-signed, so whichever agent adopts it can still deliver it.
+            # Only ever looks INSIDE the current skcomms_home(), so a custom or
+            # temporary home never reaches into real production state.
+            #
+            # Skip adoption when SKCOMMS_OUTBOX_DIR pinned the root explicitly:
+            # retry_outbox_dir already returned that location, and an operator
+            # who relocated the queue does not want home state swept into it.
+            #
+            # NOTE (custom SKCOMMS_HOME): this store's pre-scoping default was
+            # the FIXED ~/.skcapstone/skcomms/outbox, which never honored
+            # SKCOMMS_HOME. With the home unset, skcomms_home()/outbox IS that
+            # fixed path, so unset-home upgrades adopt cleanly. Under a custom
+            # home there is no in-home pre-scoping state, and we deliberately do
+            # NOT reach into the fixed ~/.skcapstone path from a custom home
+            # (that would relocate unrelated production state). Relocating an
+            # existing deployment onto a custom home migrates that state by hand.
+            if not os.environ.get("SKCOMMS_OUTBOX_DIR"):
+                legacy = skcomms_home() / "outbox"
+                paths.adopt_legacy_tree(
+                    legacy, outbox_dir, subdirs=("pending", "dead", "archive")
+                )
+        self._root = Path(outbox_dir).expanduser()
         self._pending = self._root / "pending"
         self._dead = self._root / "dead"
         self._archive = self._root / "archive"
