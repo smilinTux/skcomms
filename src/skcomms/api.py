@@ -64,6 +64,10 @@ _adapter_registry = None
 # Started by lifespan, cancelled on shutdown.
 _housekeeping_task: Optional[asyncio.Task] = None
 
+# Background depth-monitor task (outbox / dead-letter depth thresholds + alerts).
+# Started by lifespan, cancelled on shutdown.
+_depth_monitor_task: Optional[asyncio.Task] = None
+
 # Global ChatHistory instance (lazily initialized from skchat)
 _chat_history = None
 
@@ -187,6 +191,35 @@ async def lifespan(app: FastAPI):
         logger.exception("Failed to start housekeeping loop")
         _housekeeping_task = None
 
+    # Background depth monitor: periodically threshold outbox + dead-letter
+    # depth and fire an sk-alert when either crosses its bound. The 140k-file
+    # outbox that froze a fleet laptop was invisible because nothing alerted on
+    # a depth the health report already exposed; this loop closes that gap.
+    global _depth_monitor_task
+    from .observability import depth_monitor_loop
+
+    try:
+        obs_cfg = getattr(_skcomms, "_config", None)
+        obs_cfg = obs_cfg.observability if obs_cfg is not None else load_config().observability
+        if obs_cfg.enabled:
+            _depth_monitor_task = asyncio.create_task(
+                depth_monitor_loop(
+                    lambda: _skcomms.router.transports if _skcomms else [],
+                    lambda: (
+                        _skcomms._outbox.dead_count()
+                        if _skcomms is not None and getattr(_skcomms, "_outbox", None) is not None
+                        else 0
+                    ),
+                    obs_cfg,
+                )
+            )
+            logger.info("Depth-monitor loop started (interval %ss)", obs_cfg.interval_s)
+        else:
+            logger.info("Depth-monitor loop disabled by config")
+    except Exception:
+        logger.exception("Failed to start depth-monitor loop")
+        _depth_monitor_task = None
+
     yield
 
     logger.info("Shutting down SKComms API server...")
@@ -197,6 +230,13 @@ async def lifespan(app: FastAPI):
         except (asyncio.CancelledError, Exception):
             pass
     _housekeeping_task = None
+    if _depth_monitor_task is not None:
+        _depth_monitor_task.cancel()
+        try:
+            await _depth_monitor_task
+        except (asyncio.CancelledError, Exception):
+            pass
+    _depth_monitor_task = None
     if _adapter_registry is not None:
         try:
             await _adapter_registry.stop()
@@ -598,6 +638,45 @@ async def get_status():
     """
     comm = get_skcomms()
     return comm.status()
+
+
+@app.get("/metrics", tags=["status"])
+async def get_metrics():
+    """Expose skcomms observability metrics in Prometheus text format.
+
+    Dependency-free plain-text exposition (version 0.0.4): outbox depth per
+    rail + total, dead-letter queue depth, cumulative per-rail failure and 4xx
+    counters, and a per-rail ``up`` gauge. Everything a scrape needs to alert
+    on the outbox-depth leak that froze a fleet laptop.
+
+    Returns:
+        A ``text/plain`` Prometheus exposition response.
+    """
+    from starlette.responses import PlainTextResponse
+
+    from .observability import (
+        PROMETHEUS_CONTENT_TYPE,
+        collect_outbox_depths,
+        render_prometheus,
+    )
+
+    comm = get_skcomms()
+    transports = comm.router.transports
+    dead_letter_depth = 0
+    outbox = getattr(comm, "_outbox", None)
+    if outbox is not None:
+        try:
+            dead_letter_depth = outbox.dead_count()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("dead-letter count unavailable for /metrics: %s", exc)
+
+    body = render_prometheus(
+        outbox_depths=collect_outbox_depths(transports),
+        dead_letter_depth=dead_letter_depth,
+        failure_counters=comm.router.failure_stats(),
+        transport_health=comm.router.health_report(),
+    )
+    return PlainTextResponse(body, media_type=PROMETHEUS_CONTENT_TYPE)
 
 
 @app.get("/api/v1/capabilities", tags=["status"])
