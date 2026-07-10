@@ -215,9 +215,31 @@ app = FastAPI(
 )
 
 
+def _cors_allow_origins() -> list[str]:
+    """Browser origins allowed to drive this app cross-origin.
+
+    Read from ``SKCOMMS_CORS_ORIGINS`` (comma-separated exact origins, e.g.
+    ``https://hub.skworld.io,http://localhost:3000``); EMPTY by default. This app
+    is Funnel-mounted to the public internet (SOP.md section 5) yet also carries
+    loopback-gated operator surfaces (``POST /mcp`` fires desktop notifications,
+    ``POST /api/v1/send`` sends as the agent, the consent endpoints trust the
+    client IP, which a browser on the operator's own machine satisfies). With the
+    old ``allow_origins=['*']`` any web page the operator visited could drive
+    those cross-origin, so the default is now a closed allowlist: no origin is
+    approved until an operator explicitly lists a trusted first-party client.
+
+    There is deliberately no wildcard shortcut here: values pass through verbatim,
+    so a literal ``*`` would have to be set by hand, not inherited by default.
+    """
+    import os
+
+    raw = os.environ.get("SKCOMMS_CORS_ORIGINS", "")
+    return [origin.strip() for origin in raw.split(",") if origin.strip()]
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_allow_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
