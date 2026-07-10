@@ -8,9 +8,13 @@ Run:
     uvicorn skcomms.transports.broker_server:app --host 0.0.0.0 --port 9384
     # or: python -m skcomms.transports.broker_server   (defaults to 127.0.0.1:9384)
 
-Auth: by default the broker is anonymous (``SKCOMMS_BROKER_REQUIRE_AUTH`` unset). Set
-``SKCOMMS_BROKER_REQUIRE_AUTH=1`` to require a CapAuth bearer token per connection.
-The endpoint path is ``/webrtc/ws?room=<room>&peer=<fingerprint>`` — matching
+Auth: the broker REQUIRES a CapAuth bearer token per connection by default
+(fail-closed). SECURITY: the old default was anonymous, which combined with the
+signaling endpoint's ``?peer=`` handling to let a tokenless client impersonate
+any fingerprint on a default deployment. Set ``SKCOMMS_BROKER_REQUIRE_AUTH=0``
+(or ``false``/``no``) explicitly to run an open dev broker; anonymous peers then
+get random pseudo-ids unless ``SKCOMMS_DEV_AUTH`` is also set.
+The endpoint path is ``/webrtc/ws?room=<room>&peer=<fingerprint>``, matching
 ``DEFAULT_SIGNALING_URL`` (``wss://localhost:9384/webrtc/ws``).
 """
 
@@ -22,7 +26,8 @@ from fastapi import FastAPI, WebSocket
 
 from ..signaling import SignalingBroker, signaling_ws_endpoint
 
-_require_auth = os.getenv("SKCOMMS_BROKER_REQUIRE_AUTH", "").lower() in ("1", "true", "yes")
+# Fail-closed default: auth is required unless the operator explicitly opts out.
+_require_auth = os.getenv("SKCOMMS_BROKER_REQUIRE_AUTH", "1").lower() not in ("0", "false", "no")
 
 app = FastAPI(title="skcomms-signaling-broker")
 broker = SignalingBroker(require_auth=_require_auth)

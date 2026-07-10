@@ -22,16 +22,20 @@ replay attacks. The signer's public key is resolved from:
 CapAuth API base URL. Remote is tried first; on unreachable server the
 validator falls back to local PGP verification.
 
-**Dev-mode** (``require_auth=False``): a plain 40-hex fingerprint with no
-timestamp or signature is accepted. This bypasses ALL cryptographic
-guarantees and should only be used in isolated development environments.
-Set ``SKCOMMS_DEV_AUTH=1`` as a reminder to yourself that auth is disabled.
+**Dev-mode** (``require_auth=False`` AND ``SKCOMMS_DEV_AUTH=1`` in the
+environment): a plain 40-hex fingerprint with no timestamp or signature is
+accepted. This bypasses ALL cryptographic guarantees and should only be used
+in isolated development environments. Both flags are required: permissive
+mode alone (``require_auth=False``) no longer accepts unverified claimed
+identities. That is the fail-closed contract; without the explicit env var
+the plain-fingerprint token is rejected.
 """
 
 from __future__ import annotations
 
 import glob
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -88,6 +92,19 @@ _FINGERPRINT_RE = re.compile(r"^[0-9A-Fa-f]{40}$")
 # this) are rejected.
 _TOKEN_WINDOW_SECS = 300  # ±5 minutes
 
+# Env values that enable the explicit dev-mode plain-fingerprint bypass.
+# Mirrors the SKCOMMS_DEV_AUTH parsing in api.py.
+_DEV_AUTH_TRUTHY = {"1", "true", "yes", "i_know_what_im_doing"}
+
+
+def _dev_auth_enabled() -> bool:
+    """True only when the operator explicitly set SKCOMMS_DEV_AUTH.
+
+    Read at call time (not construction) so tests and long-lived processes
+    see the current environment.
+    """
+    return os.environ.get("SKCOMMS_DEV_AUTH", "").strip().lower() in _DEV_AUTH_TRUTHY
+
 
 class CapAuthValidator:
     """Validates CapAuth bearer tokens for WebRTC signaling authentication.
@@ -99,8 +116,10 @@ class CapAuthValidator:
     - **Local PGP** (default): verifies the detached PGP signature embedded
       in the token against the signer's public key. Requires ``pgpy`` and
       either ``~/.skcapstone/skcomms/keys/<FINGERPRINT>.asc`` or GPG keyring.
-    - **Dev mode** (no auth): ``require_auth=False`` accepts a plain
-      40-hex fingerprint with no signature. **Never use in production.**
+    - **Dev mode** (no auth): ``require_auth=False`` combined with
+      ``SKCOMMS_DEV_AUTH=1`` in the environment accepts a plain 40-hex
+      fingerprint with no signature. Both flags are required; permissive
+      mode alone stays fail-closed. **Never use in production.**
 
     Args:
         capauth_url: Optional CapAuth API base URL for remote validation
@@ -157,16 +176,17 @@ class CapAuthValidator:
         preventing replay attacks. The signer's public key is loaded from
         ``~/.skcapstone/skcomms/keys/<FINGERPRINT>.asc`` or the system GPG keyring.
 
-        **Dev-mode shortcut** — when ``require_auth=False`` a plain
-        40-hex fingerprint (no dots) is accepted without any signature.
-        This is useful during local development when agents haven't
-        exchanged keys yet. Set ``SKCOMMS_DEV_AUTH=1`` in the environment
-        as a visible reminder that authentication is disabled.
+        **Dev-mode shortcut**: when ``require_auth=False`` AND
+        ``SKCOMMS_DEV_AUTH=1`` is set in the environment, a plain 40-hex
+        fingerprint (no dots) is accepted without any signature. This is
+        useful during local development when agents haven't exchanged keys
+        yet. Without the env var the plain-fingerprint token is rejected
+        even in permissive mode (fail-closed).
 
         .. warning::
-            ``require_auth=False`` disables all cryptographic guarantees.
-            Any peer that knows a valid fingerprint string can connect as
-            that agent. **Never use in production.**
+            The dev bypass disables all cryptographic guarantees. Any peer
+            that knows a valid fingerprint string can connect as that
+            agent. **Never use in production.**
 
         Args:
             token: Bearer token string.
@@ -180,15 +200,25 @@ class CapAuthValidator:
 
         # ------------------------------------------------------------------ #
         # Dev-mode shortcut: plain fingerprint only (no sig, no timestamp).  #
-        # Accepted ONLY when require_auth is False.                           #
+        # SECURITY (fail-closed): accepted ONLY when require_auth is False   #
+        # AND the operator explicitly set SKCOMMS_DEV_AUTH in the            #
+        # environment. Permissive mode alone must never upgrade an           #
+        # unverified claimed fingerprint to an authenticated identity.       #
         # ------------------------------------------------------------------ #
         if len(parts) == 1:
             if not self._require_auth and _FINGERPRINT_RE.match(fingerprint_raw):
-                logger.debug(
-                    "CapAuth local: dev-mode plain fingerprint accepted for %s",
-                    fingerprint_raw,
+                if _dev_auth_enabled():
+                    logger.warning(
+                        "CapAuth local: dev-mode plain fingerprint accepted for %s "
+                        "(SKCOMMS_DEV_AUTH set, NO cryptographic verification)",
+                        fingerprint_raw,
+                    )
+                    return fingerprint_raw
+                logger.warning(
+                    "CapAuth local: plain fingerprint rejected in permissive mode; "
+                    "the unsigned dev bypass also requires SKCOMMS_DEV_AUTH=1"
                 )
-                return fingerprint_raw
+                return None
             logger.warning("CapAuth local: expected 3-part token (fingerprint.ts.sig), got 1 part")
             return None
 
@@ -430,8 +460,24 @@ class CapAuthValidator:
         """Remote validation via CapAuth API.
 
         Calls ``POST {capauth_url}/api/v1/verify`` with the bearer token.
-        The API should return ``{"fingerprint": "<40-hex>", "valid": true}``.
-        Falls back to local PGP validation if the remote is unreachable.
+        The API must return ``{"fingerprint": "<40-hex>", "valid": true}``.
+
+        SECURITY (fail-closed): the response is accepted only when ALL of
+        these hold, in every mode (strict and permissive):
+
+        - the response body is a JSON object (any other well-formed JSON
+          denies cleanly instead of raising out of the auth path),
+        - ``valid`` is exactly ``true`` (missing or false denies; a response
+          that names a fingerprint but does not affirm validity used to be
+          accepted, which let a misbehaving or downgraded CapAuth server
+          fail the caller open to the claimed identity),
+        - ``fingerprint`` is a well-formed 40-hex fingerprint,
+        - when the token itself carries a claimed fingerprint (our
+          documented ``fp.ts.sig`` format), the remote fingerprint matches
+          it, so the remote cannot silently swap identities.
+
+        If the remote is unreachable, strict mode denies; permissive mode
+        falls back to local PGP validation (which is itself fail-closed).
 
         Args:
             token: Bearer token string.
@@ -452,14 +498,49 @@ class CapAuthValidator:
             )
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data = _json.loads(resp.read())
-                fp = data.get("fingerprint")
-                if fp and _FINGERPRINT_RE.match(str(fp).upper()):
-                    return str(fp).upper()
-                logger.warning("CapAuth response missing fingerprint: %s", data)
-                return None
         except Exception as exc:
             logger.error("CapAuth remote validation failed: %s", exc)
             if self._require_auth:
                 return None
-            # Fallback to local validation if remote is unreachable
+            # Permissive-mode fallback when the remote is unreachable: local
+            # PGP validation, which is fail-closed (a full signature check,
+            # or the explicitly env-gated dev bypass).
             return self._validate_local(token)
+
+        # SECURITY (fail-closed, cleanly): a hostile or broken remote can
+        # return well-formed JSON that is not an object ([], "x", null, 5).
+        # Deny it here instead of letting .get() raise AttributeError out of
+        # validate() and crash the auth path (ws handshake failure/500).
+        if not isinstance(data, dict):
+            logger.warning(
+                "CapAuth remote: response is not a JSON object (%s), rejecting",
+                type(data).__name__,
+            )
+            return None
+
+        if data.get("valid") is not True:
+            logger.warning(
+                "CapAuth remote: response did not affirm validity (valid=%r), rejecting",
+                data.get("valid"),
+            )
+            return None
+
+        fp = data.get("fingerprint")
+        if not fp or not _FINGERPRINT_RE.match(str(fp).upper()):
+            logger.warning("CapAuth remote: response missing/invalid fingerprint: %s", data)
+            return None
+        fp = str(fp).upper()
+
+        # Cross-check against the identity claimed inside the token itself
+        # (first dot-part of the documented fp.ts.sig format). A remote that
+        # returns a different identity than the one claimed is not trusted.
+        claimed = token.split(".", 1)[0].upper()
+        if _FINGERPRINT_RE.match(claimed) and claimed != fp:
+            logger.warning(
+                "CapAuth remote: fingerprint mismatch (token claims %s, remote says %s), rejecting",
+                claimed,
+                fp,
+            )
+            return None
+
+        return fp

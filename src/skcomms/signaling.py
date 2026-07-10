@@ -27,11 +27,12 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
 import time
 from collections import defaultdict
 from typing import TYPE_CHECKING, Optional
 
-from .capauth_validator import CapAuthValidator
+from .capauth_validator import CapAuthValidator, _dev_auth_enabled
 
 if TYPE_CHECKING:
     from fastapi import WebSocket
@@ -263,18 +264,21 @@ class SignalingBroker:
     signal messages between peers, and auto-cleans empty rooms.
 
     Args:
-        validator: CapAuthValidator instance. Defaults to a permissive
-            validator (require_auth=False) suitable for development.
+        validator: CapAuthValidator instance. Defaults to a strict validator
+            (require_auth=True). SECURITY (fail-closed): the broker used to
+            default to a permissive validator; anyone constructing a broker
+            without arguments got unauthenticated signaling. Pass
+            ``require_auth=False`` explicitly for development setups.
         capauth_url: If provided, creates a remote-validating CapAuthValidator.
         require_auth: Passed to the default CapAuthValidator if ``validator``
-            is not provided.
+            is not provided. Defaults to True.
     """
 
     def __init__(
         self,
         validator: Optional[CapAuthValidator] = None,
         capauth_url: Optional[str] = None,
-        require_auth: bool = False,
+        require_auth: bool = True,
     ) -> None:
         self._rooms: dict[str, WebRTCRoom] = {}
         self._validator = validator or CapAuthValidator(
@@ -446,6 +450,11 @@ async def signaling_ws_endpoint(
         ws: Incoming WebSocket connection (not yet accepted).
         room: Room ID from the ``?room=`` query parameter.
         peer: Claimed peer fingerprint from the ``?peer=`` query parameter.
+            SECURITY: this client-controlled value is honored ONLY when the
+            connection is tokenless in permissive mode AND the explicit
+            ``SKCOMMS_DEV_AUTH`` dev gate is set. Otherwise the identity is
+            the token-verified fingerprint, or a random ``anonymous-<hex>``
+            pseudo-id that cannot impersonate a real fingerprint.
         broker: The global SignalingBroker instance.
     """
     auth_header = ws.headers.get("authorization")
@@ -459,7 +468,28 @@ async def signaling_ws_endpoint(
         return
 
     # Use the authenticated fingerprint, not the client-claimed peer param
-    # (prevents identity spoofing via URL manipulation)
-    authenticated_peer = auth_fp if auth_fp != "anonymous" else peer
+    # (prevents identity spoofing via URL manipulation).
+    if auth_fp != "anonymous":
+        authenticated_peer = auth_fp
+    elif _dev_auth_enabled():
+        # Explicit dev gate (SKCOMMS_DEV_AUTH): honor the client-claimed
+        # ?peer= param for tokenless connections. This disables all identity
+        # guarantees and is documented dev-only, matching the validator's
+        # plain-fingerprint bypass.
+        authenticated_peer = peer or f"anonymous-{secrets.token_hex(8)}"
+        logger.warning(
+            "Signaling: dev-mode anonymous peer honored claimed identity %s "
+            "(SKCOMMS_DEV_AUTH set, NO verification)",
+            authenticated_peer[:16],
+        )
+    else:
+        # SECURITY (fail-closed): a tokenless peer in permissive mode used to
+        # become whatever ?peer=<fp> it claimed, and room.relay stamps that
+        # identity as the authenticated sender. That let an attacker
+        # impersonate any fingerprint by simply omitting the token. Anonymous
+        # peers now get a random pseudo-id that cannot collide with a real
+        # 40-hex fingerprint, so an unverified claim is never upgraded to an
+        # authenticated identity.
+        authenticated_peer = f"anonymous-{secrets.token_hex(8)}"
 
     await broker.handle_connection(ws=ws, room_id=room, peer_id=authenticated_peer)
