@@ -263,18 +263,21 @@ class SignalingBroker:
     signal messages between peers, and auto-cleans empty rooms.
 
     Args:
-        validator: CapAuthValidator instance. Defaults to a permissive
-            validator (require_auth=False) suitable for development.
+        validator: CapAuthValidator instance. Defaults to a strict validator
+            (require_auth=True). SECURITY (fail-closed): the broker used to
+            default to a permissive validator; anyone constructing a broker
+            without arguments got unauthenticated signaling. Pass
+            ``require_auth=False`` explicitly for development setups.
         capauth_url: If provided, creates a remote-validating CapAuthValidator.
         require_auth: Passed to the default CapAuthValidator if ``validator``
-            is not provided.
+            is not provided. Defaults to True.
     """
 
     def __init__(
         self,
         validator: Optional[CapAuthValidator] = None,
         capauth_url: Optional[str] = None,
-        require_auth: bool = False,
+        require_auth: bool = True,
     ) -> None:
         self._rooms: dict[str, WebRTCRoom] = {}
         self._validator = validator or CapAuthValidator(
