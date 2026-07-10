@@ -14,6 +14,8 @@ gate gives *groups* the same protection by composing the already-built primitive
 Clean gate API: ``join_decision(group_id, fqid)`` / ``admit(group_id, fqid, ...)`` /
 ``visible(group_id, viewer, sender)``.
 """
+import re
+
 import pytest
 
 from skcomms.consent_captcha import derive_challenge
@@ -34,6 +36,19 @@ def _home(tmp_path, monkeypatch):
 
 def _gate():
     return GroupConsentGate(agent="lumina")
+
+
+def _solve(prompt: str) -> str:
+    """Honestly solve the captcha prompt like a real joiner would.
+
+    This is the ONLY legitimate way to get the answer now: the derivation seed
+    is never surfaced (it is answer-equivalent), so tests must act as a solver
+    reading the rendered prompt, not as an insider deriving from the seed.
+    """
+    m = re.search(r"what is (\d+) (.) (\d+)\?", prompt)
+    assert m, f"unrecognized captcha prompt: {prompt!r}"
+    a, op, b = int(m.group(1)), m.group(2), int(m.group(3))
+    return str(a + b if op == "+" else a - b if op == "-" else a * b)
 
 
 # --- invite_only: stranger rejected ------------------------------------------
@@ -99,8 +114,8 @@ def test_captcha_gated_join_admits_only_on_verify():
     assert bad.status is JoinStatus.PENDING
     assert not g.is_member(GID, STRANGER)
 
-    # the bot's derived answer admits
-    _, _, answer = derive_challenge(res.seed)
+    # solving the rendered prompt admits
+    answer = _solve(res.captcha_prompt)
     ok = g.admit(GID, STRANGER, challenge_id=res.challenge_id, captcha_answer=answer)
     assert ok.status is JoinStatus.MEMBER
     assert g.is_member(GID, STRANGER)
@@ -178,31 +193,113 @@ def test_captcha_seed_not_derivable_from_public_inputs():
 
     # The attacker knows the group_id and their own fqid — nothing else.
     # If the seed were public (f"{group_id}:{fqid}") they could compute the
-    # answer offline and self-admit. That MUST fail now.
+    # answer offline and self-admit. That MUST fail now. challenge_id is a
+    # pure function of the seed, so an id mismatch PROVES the public seed was
+    # not used verbatim (no flaky dependence on tiny-answer-space collisions).
     attacker_seed = f"{GID}:{STRANGER}"
-    _, _, attacker_answer = derive_challenge(attacker_seed)
-    admitted = g.admit(
-        GID, STRANGER, challenge_id=res.challenge_id, captcha_answer=attacker_answer
-    )
-    assert admitted.status is not JoinStatus.MEMBER
-    assert not g.is_member(GID, STRANGER)
+    attacker_cid, _, attacker_answer = derive_challenge(attacker_seed)
+    assert res.challenge_id != attacker_cid
+
+    real_answer = _solve(res.captcha_prompt)
+    if attacker_answer != real_answer:  # guard a by-luck collision (tiny space)
+        admitted = g.admit(
+            GID, STRANGER, challenge_id=res.challenge_id, captcha_answer=attacker_answer
+        )
+        assert admitted.status is not JoinStatus.MEMBER
+        assert not g.is_member(GID, STRANGER)
 
 
 def test_per_group_secret_persists_and_verify_still_works():
-    """The per-group secret is persisted (survives fresh gate handles) and the
-    legitimate issuer/bot path (verify via the surfaced seed) still admits.
+    """Challenge state is persisted (survives fresh gate handles) and the
+    legitimate solver path (answer the rendered prompt) still admits.
     """
     g = _gate()
     g.configure_group(GID, mode="open", owner=OWNER, require_captcha=True)
     res = g.join_decision(GID, STRANGER)
 
-    # A fresh gate over the same home re-reads the same secret → same answer.
+    # A fresh gate over the same home re-reads the persisted answer hash.
     g2 = _gate()
     g2.configure_group(GID, mode="open", owner=OWNER, require_captcha=True)
-    _, _, answer = derive_challenge(res.seed)
+    answer = _solve(res.captcha_prompt)
     ok = g2.admit(GID, STRANGER, challenge_id=res.challenge_id, captcha_answer=answer)
     assert ok.status is JoinStatus.MEMBER
     assert g2.is_member(GID, STRANGER)
+
+
+# --- SECURITY (coord 193a2605): unpredictable per-issue challenge ------------
+
+def test_seed_never_surfaced_on_join_result():
+    """The derivation seed is answer-equivalent (derive_challenge(seed) yields
+    the answer), so it must NEVER appear on the result a caller might serialize
+    toward the joiner. Verification needs only challenge_id + the answer.
+    """
+    g = _gate()
+    g.configure_group(GID, mode="open", owner=OWNER, require_captcha=True)
+    res = g.join_decision(GID, STRANGER)
+    assert res.captcha_required is True
+    assert res.seed is None
+
+
+def test_rejoin_issues_fresh_unpredictable_challenge():
+    """Re-requesting a join must mint a NEW challenge (fresh CSPRNG nonce in the
+    seed), not deterministically re-derive the same one. With the old
+    deterministic per-(group, fqid) seed the same challenge_id came back every
+    time, with the same tiny-space answer.
+    """
+    g = _gate()
+    g.configure_group(GID, mode="open", owner=OWNER, require_captcha=True)
+    res1 = g.join_decision(GID, STRANGER)
+    res2 = g.join_decision(GID, STRANGER)
+    assert res1.challenge_id != res2.challenge_id
+
+
+def test_rejoin_cannot_reset_attempt_budget():
+    """The old self-admit brute force: burn the attempt budget, re-request the
+    join, and the deterministic seed reissued the SAME challenge_id with the
+    counter reset to 0, allowing unlimited guesses at a fixed answer from a
+    tiny space. Now the exhausted challenge stays dead: re-joining issues a
+    different challenge and the burned challenge_id never verifies again.
+    """
+    g = _gate()
+    g.configure_group(GID, mode="open", owner=OWNER, require_captcha=True)
+    res = g.join_decision(GID, STRANGER)
+    answer = _solve(res.captcha_prompt)
+
+    # Burn the whole attempt budget with wrong guesses (default 3).
+    for _ in range(3):
+        out = g.admit(GID, STRANGER, challenge_id=res.challenge_id, captcha_answer="no")
+        assert out.status is JoinStatus.PENDING
+
+    # Re-requesting the join must NOT resurrect the burned challenge.
+    res2 = g.join_decision(GID, STRANGER)
+    assert res2.challenge_id != res.challenge_id
+
+    # Even the CORRECT answer for the exhausted challenge fails closed.
+    out = g.admit(GID, STRANGER, challenge_id=res.challenge_id, captcha_answer=answer)
+    assert out.status is not JoinStatus.MEMBER
+    assert not g.is_member(GID, STRANGER)
+
+
+def test_caller_supplied_seed_not_used_verbatim():
+    """Even when the caller injects a seed the attacker can observe (e.g. an
+    envelope nonce echoed on the wire), the challenge must NOT be derived from
+    that seed verbatim: the server secret and a per-issue nonce are always
+    mixed in. challenge_id is a pure function of the derivation seed, so a
+    matching id would prove the attacker can derive the answer offline.
+    (Membership is deliberately not asserted here: the tiny answer space can
+    collide by luck, which would make such an assert flaky.)
+    """
+    g = _gate()
+    g.configure_group(GID, mode="open", owner=OWNER, require_captcha=True)
+    known_seed = "envelope-nonce-42"
+    res = g.join_decision(GID, STRANGER, seed=known_seed)
+
+    attacker_cid, _, _ = derive_challenge(known_seed)
+    assert res.challenge_id != attacker_cid
+
+    # And two issues with the SAME caller seed still differ (per-issue nonce).
+    res2 = g.join_decision(GID, STRANGER, seed=known_seed)
+    assert res2.challenge_id != res.challenge_id
 
 
 # --- SECURITY: ban-gate must fail closed independent of mode -----------------
@@ -218,7 +315,7 @@ def test_banned_fqid_rejected_on_captcha_admit_path():
     g.block_for_all(GID, STRANGER, by=OWNER)
 
     # Even with a *correct* answer, a banned peer is never admitted.
-    _, _, answer = derive_challenge(res.seed)
+    answer = _solve(res.captcha_prompt)
     out = g.admit(GID, STRANGER, challenge_id=res.challenge_id, captcha_answer=answer)
     assert out.status is JoinStatus.BLOCKED
     assert not g.is_member(GID, STRANGER)
