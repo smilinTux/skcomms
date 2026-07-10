@@ -180,11 +180,12 @@ that restart:
   (`<realm>/<operator>/<agent>/{inbox,outbox}`), peer records, TOFU pins, and
   `cluster.json` identity. This is the sovereignty layer; both nodes converge on it.
 - **Strictly per-node (NEVER synced):** `state/` (the nonce replay cache), `logs/`,
-  PID/lock files, and the rate limiter. The generated `.stignore` excludes `state/`;
-  deploys initialized before this line shipped must add `state/` to their existing
-  `.stignore` by hand (the scaffold never clobbers an edited file). Syncing a live
-  SQLite DB corrupts it, and replay history is a property of the receiving socket,
-  not of the identity.
+  PID/lock files, and the rate limiter. The generated `.stignore` excludes `state/`,
+  and deploys initialized before this line shipped are healed automatically: both the
+  scaffold and the api's nonce-store path resolution append the `state/` ignore block
+  to a pre-existing `.stignore` that lacks it (idempotent; operator edits preserved),
+  so no hand-edit is needed on existing nodes. Syncing a live SQLite DB corrupts it,
+  and replay history is a property of the receiving socket, not of the identity.
 - **Consequence:** each node rejects replays it has itself accepted, across its own
   restarts. Two nodes serving the SAME public inbox URL concurrently would each accept
   one copy of the same envelope (per-node caches). Today's ingress tier (single

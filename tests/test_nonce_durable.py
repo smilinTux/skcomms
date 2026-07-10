@@ -125,6 +125,35 @@ class TestApiWiring:
 
         assert "state/" in STIGNORE_CONTENT.splitlines()
 
+    def test_default_path_heals_preexisting_stignore(self, monkeypatch, tmp_path):
+        """Existing deploys (.158/.41): the skcomms home already has an
+        .stignore that predates the durable cache. Resolving the default
+        nonce-db path must append the state/ ignore so the live WAL SQLite
+        never syncs between nodes, without waiting for a re-scaffold."""
+        api = self._fresh_api(monkeypatch, tmp_path)
+        (tmp_path / ".stignore").write_text("*.tmp\n*.lock\n")
+        cache = api._get_nonce_cache()
+        assert isinstance(cache, DurableNonceCache)
+        lines = [ln.strip() for ln in (tmp_path / ".stignore").read_text().splitlines()]
+        assert "state/" in lines
+        assert "*.tmp" in lines  # existing content preserved
+
+    def test_default_path_writes_stignore_when_absent(self, monkeypatch, tmp_path):
+        """A bare home dir (no scaffold ever ran) still gets the ignore file
+        before the durable store is created inside the synced tree."""
+        api = self._fresh_api(monkeypatch, tmp_path)
+        assert not (tmp_path / ".stignore").exists()
+        api._get_nonce_cache()
+        lines = [ln.strip() for ln in (tmp_path / ".stignore").read_text().splitlines()]
+        assert "state/" in lines
+
+    def test_env_override_path_leaves_stignore_alone(self, monkeypatch, tmp_path):
+        """SKCOMMS_NONCE_DB outside the synced tree needs no .stignore edit."""
+        api = self._fresh_api(monkeypatch, tmp_path)
+        monkeypatch.setenv("SKCOMMS_NONCE_DB", str(tmp_path / "outside" / "replay.db"))
+        api._get_nonce_cache()
+        assert not (tmp_path / ".stignore").exists()
+
 
 # --- end to end: restart does not open a replay window ------------------------
 

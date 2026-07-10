@@ -95,6 +95,68 @@ class TestScaffold:
         assert "*.lock" in text
         assert "daemon.pid" in text
 
+    def test_appends_state_ignore_to_preexisting_stignore(
+        self, monkeypatch, tmp_path, fixture_cluster, mock_identity
+    ):
+        """A live deploy whose .stignore predates the durable nonce cache gets
+        the state/ line appended (never left syncing a live WAL SQLite), and
+        operator-added lines are preserved."""
+        home = tmp_path / "home"
+        home.mkdir(parents=True)
+        legacy = "*.tmp\n*.lock\n// operator note\nmy-local-dir/\n"
+        (home / ".stignore").write_text(legacy)
+        monkeypatch.setenv("SKCOMMS_HOME", str(home))
+        from skcomms.home import scaffold
+
+        scaffold(agent="lumina")
+        text = (home / ".stignore").read_text()
+        lines = [ln.strip() for ln in text.splitlines()]
+        assert "state/" in lines
+        assert "my-local-dir/" in lines  # operator content preserved
+        assert "// operator note" in lines
+
+    def test_state_ignore_append_is_idempotent(
+        self, monkeypatch, tmp_path, fixture_cluster, mock_identity
+    ):
+        monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "home"))
+        from skcomms.home import scaffold
+
+        scaffold(agent="lumina")
+        first = (tmp_path / "home" / ".stignore").read_text()
+        scaffold(agent="lumina")
+        second = (tmp_path / "home" / ".stignore").read_text()
+        assert first == second
+        assert first.count("state/") == 1
+
+    def test_preexisting_stignore_with_state_untouched(
+        self, monkeypatch, tmp_path, fixture_cluster, mock_identity
+    ):
+        home = tmp_path / "home"
+        home.mkdir(parents=True)
+        original = "state/\n// mine\n"
+        (home / ".stignore").write_text(original)
+        monkeypatch.setenv("SKCOMMS_HOME", str(home))
+        from skcomms.home import scaffold
+
+        scaffold(agent="lumina")
+        assert (home / ".stignore").read_text() == original
+
+    def test_appends_newline_before_block_when_missing(
+        self, monkeypatch, tmp_path, fixture_cluster, mock_identity
+    ):
+        """An existing .stignore without a trailing newline still gets a clean
+        state/ line (no two patterns glued onto one line)."""
+        home = tmp_path / "home"
+        home.mkdir(parents=True)
+        (home / ".stignore").write_text("*.tmp")  # no trailing newline
+        monkeypatch.setenv("SKCOMMS_HOME", str(home))
+        from skcomms.home import scaffold
+
+        scaffold(agent="lumina")
+        lines = [ln.strip() for ln in (home / ".stignore").read_text().splitlines()]
+        assert "*.tmp" in lines
+        assert "state/" in lines
+
     def test_idempotent(self, monkeypatch, tmp_path, fixture_cluster, mock_identity):
         monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "home"))
         from skcomms.home import scaffold

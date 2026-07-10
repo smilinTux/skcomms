@@ -948,15 +948,24 @@ def _nonce_db_path() -> Path:
     at ``skcomms_home()/state/nonce_cache.db``. The ``state/`` subtree is
     per-node (Syncthing-ignored via .stignore): the replay cache must never
     be shared between nodes through file sync (see SOP.md).
+
+    Because the default path sits inside the Syncthing-shared skcomms home,
+    this also heals a pre-existing ``.stignore`` that lacks the ``state/``
+    line (live fleets scaffolded before the durable cache existed). Without
+    that, a live WAL SQLite would sync between nodes: corruption risk plus
+    mixed per-node replay history. A failure to write ``.stignore`` raises,
+    and :func:`_get_nonce_cache` then fails closed.
     """
     import os as _os
 
     override = (_os.environ.get("SKCOMMS_NONCE_DB") or "").strip()
     if override:
         return Path(override).expanduser()
-    from .home import skcomms_home
+    from .home import ensure_state_ignored, skcomms_home
 
-    return skcomms_home() / "state" / "nonce_cache.db"
+    home = skcomms_home()
+    ensure_state_ignored(home)
+    return home / "state" / "nonce_cache.db"
 
 
 def _get_nonce_cache():

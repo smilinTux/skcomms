@@ -458,3 +458,95 @@ class TestRouterWiring:
         report = router.route_signed(_signed(priv))
         assert report.delivered
         assert report.successful_transport == sf.STORE_FORWARD_RAIL
+
+
+# ---------------------------------------------------------------------------
+# FAIL-CLOSED: no silent in-memory replay cache on the pull rail
+# ---------------------------------------------------------------------------
+
+
+def _break_durable_store(monkeypatch, tmp_path):
+    """Point the durable nonce store at an unopenable path and reset the
+    per-process singleton, so api._get_nonce_cache() raises."""
+    import skcomms.api as api
+
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("file where a directory must go")
+    monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
+    monkeypatch.setenv("SKCOMMS_NONCE_DB", str(blocker / "nonce.db"))
+    monkeypatch.delenv("SKCOMMS_NONCE_CACHE", raising=False)
+    api._fed_nonce_cache = None
+    return api
+
+
+class TestPullRailFailsClosed:
+    """Coord 11e295a3 review issue 2: with a broken durable store the HTTP
+    inbox fails closed (500), and the store-and-forward pull rail must NOT
+    quietly keep accepting with a fresh non-durable NonceCache."""
+
+    def test_puller_default_cache_raises_when_store_broken(
+        self, monkeypatch, tmp_path, recipient_secret
+    ):
+        """StoreForwardPuller(nonce_cache=None) must propagate the durable
+        store failure, never downgrade to in-memory."""
+        _break_durable_store(monkeypatch, tmp_path)
+        with pytest.raises(Exception):
+            sf.StoreForwardPuller(recipient_secret, relays=[])
+
+    def test_puller_default_cache_is_the_shared_durable_one(
+        self, monkeypatch, tmp_path, recipient_secret
+    ):
+        """Healthy store: nonce_cache=None resolves to the SAME durable cache
+        the HTTP inbox uses (cross-rail idempotency)."""
+        import skcomms.api as api
+
+        monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
+        monkeypatch.delenv("SKCOMMS_NONCE_DB", raising=False)
+        monkeypatch.delenv("SKCOMMS_NONCE_CACHE", raising=False)
+        api._fed_nonce_cache = None
+        try:
+            puller = sf.StoreForwardPuller(recipient_secret, relays=[])
+            assert puller._nonce_cache is api._get_nonce_cache()
+        finally:
+            api._fed_nonce_cache = None
+
+    def test_start_pull_loop_not_started_when_store_broken(
+        self, monkeypatch, tmp_path, recipient_secret, caplog
+    ):
+        """start_pull_loop fails closed: no thread, error-level log."""
+        import logging
+
+        _break_durable_store(monkeypatch, tmp_path)
+        monkeypatch.setenv("SKCOMMS_STORE_FORWARD_PULL", "1")
+        with caplog.at_level(logging.ERROR, logger="skcomms.store_forward"):
+            thread = sf.start_pull_loop(recipient_secret=recipient_secret, relays=[])
+        assert thread is None
+        assert any(
+            "NOT started" in rec.message and rec.levelno >= logging.ERROR
+            for rec in caplog.records
+        )
+
+    def test_core_wiring_does_not_start_pull_loop_when_store_broken(
+        self, monkeypatch, tmp_path, recipient_secret, caplog
+    ):
+        """SKComms._init_store_forward fails closed on a broken replay store:
+        the rail stays registered for outbound, but no pull thread starts and
+        an error is logged (was: silent fresh in-memory NonceCache)."""
+        import logging
+
+        _break_durable_store(monkeypatch, tmp_path)
+        monkeypatch.setenv("SKCOMMS_STORE_FORWARD_PULL", "1")
+        monkeypatch.setenv("SKCOMMS_NOSTR_SECRET", recipient_secret.hex())
+
+        from skcomms.core import SKComms
+
+        with caplog.at_level(logging.ERROR, logger="skcomms.core"):
+            engine = SKComms()
+            engine._init_store_forward()
+        assert engine._sf_pull_thread is None
+        assert any(
+            "NOT started" in rec.message and rec.levelno >= logging.ERROR
+            for rec in caplog.records
+        )
+        # Outbound S&F rail registration is unaffected by the receive-side gate.
+        assert any(t.name == sf.STORE_FORWARD_RAIL for t in engine._router.transports)

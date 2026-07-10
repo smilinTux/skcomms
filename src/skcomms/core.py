@@ -214,6 +214,9 @@ class SKComms:
 
             self._ack_tracker = AckTracker()
         self._outbox = PersistentOutbox(router=self._router)
+        # S&F relay pull thread; set by _init_store_forward when the loop
+        # starts (stays None when gated off or failed closed).
+        self._sf_pull_thread: Optional[object] = None
 
     @classmethod
     def from_config(cls, config_path: Optional[str] = None) -> SKComms:
@@ -323,14 +326,33 @@ class SKComms:
             # Ensure the router selects the S&F rail (not the plain "nostr" DM rail).
             self._router._store_forward_transport = STORE_FORWARD_RAIL
 
-            # Share the HTTP inbox's nonce cache for cross-rail idempotency.
-            nonce_cache = None
+            # Share the HTTP inbox's durable nonce cache for cross-rail
+            # idempotency. Fail closed: if the durable replay store cannot be
+            # opened, do NOT start the pull loop. Falling back to a fresh
+            # in-memory cache here would quietly re-open the restart replay
+            # window on the S&F rail while the HTTP inbox correctly 500s.
             try:
                 from .api import _get_nonce_cache
 
                 nonce_cache = _get_nonce_cache()
-            except Exception:  # noqa: BLE001
-                nonce_cache = None
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "store-forward pull loop NOT started (fail-closed): durable "
+                    "nonce replay cache unavailable: %s. Fix the replay store "
+                    "(SKCOMMS_NONCE_DB or skcomms_home()/state/) and restart.",
+                    exc,
+                )
+                try:
+                    from .integration import alert
+
+                    alert(
+                        "store_forward_replay_cache_unavailable",
+                        {"error": str(exc)},
+                        level="error",
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
+                return
             self._sf_pull_thread = start_pull_loop(nonce_cache=nonce_cache)
         except Exception as exc:  # noqa: BLE001
             logger.warning("store-forward init failed (non-fatal): %s", exc)
