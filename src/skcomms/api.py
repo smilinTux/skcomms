@@ -40,7 +40,7 @@ from .models import (
     RoutingMode,
     Urgency,
 )
-from .outbox import PersistentOutbox
+from .outbox import OutboxFullError, PersistentOutbox
 from .ratelimit import RateLimiter
 from .signaling import SignalingBroker, signaling_ws_endpoint
 
@@ -878,6 +878,15 @@ async def send_message(request: SendMessageRequest):
             attempts=attempts,
         )
 
+    except OutboxFullError as exc:
+        # Backpressure (coord 74d7b799): delivery failed AND the durable retry
+        # queue is at its bound. 429 tells the local caller to slow down and
+        # retry later instead of silently losing retryability.
+        logger.warning("Send rejected with backpressure: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"outbox full, retry later: {exc}",
+        ) from exc
     except Exception as exc:
         logger.exception("Failed to send message")
         raise HTTPException(

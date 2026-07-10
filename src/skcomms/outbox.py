@@ -52,6 +52,29 @@ DEFAULT_OUTBOX_DIR = "~/.skcapstone/skcomms/outbox"
 DEFAULT_MAX_RETRIES = 10
 DEFAULT_BASE_BACKOFF = 5
 
+# Bounds (coord 74d7b799): the pending queue is one-file-per-entry on disk and
+# historically had NO size bound (only supersede_key eviction), so a dead rail
+# could grow it without limit (the 140k-file class of failure). The default cap
+# is generous for a healthy deploy but bounds the pathological case; <= 0
+# disables the bound (explicit opt-out, not the default).
+DEFAULT_MAX_PENDING = 5000
+
+# Paced draining (coord 74d7b799): a backlog flush that retries EVERY due entry
+# in a single sweep can DoS a receiving node's inbox rate limiter and re-dead-
+# letter en masse the moment a rail comes back. Each sweep now attempts at most
+# this many deliveries; the remainder stays queued for the next sweep interval,
+# so a large backlog drains in bounded, paced batches. <= 0 disables pacing.
+DEFAULT_SWEEP_BATCH = 50
+
+
+class OutboxFullError(RuntimeError):
+    """Raised when the pending queue is at its bound and cannot accept more.
+
+    The explicit backpressure signal to local callers (coord 74d7b799): the
+    HTTP API maps it to a 429, library callers see the exception instead of
+    silently growing an unbounded on-disk queue.
+    """
+
 
 def classify_envelope_json(envelope_json: str) -> str:
     """Classify a serialized envelope string by its on-wire shape.
@@ -143,6 +166,11 @@ class PersistentOutbox:
         max_retries: Default max retries per message.
         base_backoff: Base backoff in seconds (doubled each retry).
         router: Optional SKComms Router for retry delivery.
+        max_pending: Bound on the pending queue's entry count. When a new
+            enqueue would exceed it, :class:`OutboxFullError` is raised
+            (explicit backpressure). Values <= 0 disable the bound.
+        sweep_batch: Max delivery attempts per retry sweep, so a backlog
+            drains in bounded, paced batches. Values <= 0 disable pacing.
     """
 
     def __init__(
@@ -151,6 +179,8 @@ class PersistentOutbox:
         max_retries: int = DEFAULT_MAX_RETRIES,
         base_backoff: int = DEFAULT_BASE_BACKOFF,
         router: Optional[object] = None,
+        max_pending: int = DEFAULT_MAX_PENDING,
+        sweep_batch: int = DEFAULT_SWEEP_BATCH,
     ) -> None:
         self._root = Path(outbox_dir).expanduser()
         self._pending = self._root / "pending"
@@ -159,6 +189,8 @@ class PersistentOutbox:
         self._max_retries = max_retries
         self._base_backoff = base_backoff
         self._router = router
+        self._max_pending = max_pending
+        self._sweep_batch = sweep_batch
 
         self._pending.mkdir(parents=True, exist_ok=True)
         self._dead.mkdir(parents=True, exist_ok=True)
@@ -203,6 +235,12 @@ class PersistentOutbox:
 
         Returns:
             OutboxEntry: The queued entry.
+
+        Raises:
+            OutboxFullError: The pending queue is at ``max_pending`` and this
+                enqueue would grow it (rewrites of an existing envelope_id and
+                supersede-key replacements do not grow the queue, so they are
+                always accepted).
         """
         entry = OutboxEntry(
             envelope_id=envelope_id,
@@ -229,6 +267,24 @@ class PersistentOutbox:
                     "Superseded %d stale outbox entr%s for key %s",
                     evicted, "y" if evicted == 1 else "ies", supersede_key,
                 )
+
+        # Bound check (after supersede eviction, which may have freed a slot).
+        # Rewriting an existing entry never grows the queue, so it is exempt.
+        if (
+            self._max_pending > 0
+            and not (self._pending / f"{entry.envelope_id}.json").exists()
+            and self.pending_count >= self._max_pending
+        ):
+            logger.warning(
+                "Outbox pending queue full (%d >= %d): refusing enqueue of %s",
+                self.pending_count,
+                self._max_pending,
+                envelope_id[:8],
+            )
+            raise OutboxFullError(
+                f"outbox pending queue is full ({self._max_pending} entries): "
+                f"refusing to enqueue {envelope_id}"
+            )
 
         self._write_entry(self._pending, entry)
         logger.info("Queued %s for retry (error: %s)", envelope_id[:8], error[:60])
@@ -260,17 +316,36 @@ class PersistentOutbox:
             supersede_key=supersede_key,
         )
 
-    def retry_all(self) -> dict[str, Any]:
-        """Sweep the pending queue and retry all eligible messages.
+    def retry_all(self, max_batch: Optional[int] = None) -> dict[str, Any]:
+        """Sweep the pending queue and retry eligible messages, paced.
 
         Only retries messages whose next_retry_at has passed.
         Successful deliveries are removed from the queue.
         Exhausted retries move to dead letter.
 
+        Draining is paced (coord 74d7b799): at most ``max_batch`` (default the
+        instance's ``sweep_batch``) delivery attempts are made per sweep, and
+        any further due entries are deferred to the next sweep. This keeps a
+        large backlog flush from flooding a recovering rail or a receiving
+        node's inbox rate limiter.
+
+        Args:
+            max_batch: Per-sweep delivery-attempt cap. ``None`` uses the
+                instance's ``sweep_batch``; values <= 0 disable pacing.
+
         Returns:
-            dict: Summary with 'retried', 'delivered', 'dead_lettered', 'skipped'.
+            dict: Summary with 'retried', 'delivered', 'dead_lettered',
+            'skipped', and 'deferred' (due entries left for the next sweep
+            because the batch cap was reached).
         """
-        results = {"retried": 0, "delivered": 0, "dead_lettered": 0, "skipped": 0}
+        batch_cap = self._sweep_batch if max_batch is None else max_batch
+        results = {
+            "retried": 0,
+            "delivered": 0,
+            "dead_lettered": 0,
+            "skipped": 0,
+            "deferred": 0,
+        }
         now = datetime.now(timezone.utc)
 
         for entry_path in sorted(self._pending.glob("*.json")):
@@ -291,6 +366,11 @@ class PersistentOutbox:
 
             if entry.next_retry_at and entry.next_retry_at > now:
                 results["skipped"] += 1
+                continue
+
+            # Paced batch: budget exhausted, leave the rest for the next sweep.
+            if batch_cap > 0 and results["retried"] >= batch_cap:
+                results["deferred"] += 1
                 continue
 
             results["retried"] += 1
@@ -496,13 +576,15 @@ class PersistentOutbox:
         while not self._stop_event.is_set():
             try:
                 results = self.retry_all()
-                if results["retried"] > 0:
+                if results["retried"] > 0 or results.get("deferred", 0) > 0:
                     logger.info(
-                        "Outbox sweep: retried=%d delivered=%d dead=%d skipped=%d",
+                        "Outbox sweep: retried=%d delivered=%d dead=%d "
+                        "skipped=%d deferred=%d",
                         results["retried"],
                         results["delivered"],
                         results["dead_lettered"],
                         results["skipped"],
+                        results.get("deferred", 0),
                     )
             except Exception as exc:
                 logger.warning("Outbox retry sweep error: %s", exc)

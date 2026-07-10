@@ -24,7 +24,8 @@ from .models import (
     RoutingMode,
     Urgency,
 )
-from .outbox import PersistentOutbox
+from .outbox import OutboxFullError, PersistentOutbox
+from .ratelimit import RateLimitConfig, RateLimiter
 from .router import Router
 from .crypto import CryptoError
 from .transport import DeliveryReport, SendResult, Transport
@@ -177,6 +178,29 @@ BUILTIN_TRANSPORTS: dict[str, str] = {
 }
 
 
+def build_outbound_limiter(config: SKCommsConfig) -> Optional[RateLimiter]:
+    """Build the router's outbound RateLimiter from config (coord 74d7b799).
+
+    Args:
+        config: The loaded SKCommsConfig (uses its ``ratelimit`` section).
+
+    Returns:
+        A configured :class:`RateLimiter`, or None when outbound throttling is
+        disabled in config.
+    """
+    rl = config.ratelimit
+    if not rl.enabled:
+        return None
+    return RateLimiter(
+        default_config=RateLimitConfig(
+            transport_capacity=rl.transport_capacity,
+            transport_refill=rl.transport_refill,
+            peer_capacity=rl.peer_capacity,
+            peer_refill=rl.peer_refill,
+        )
+    )
+
+
 class SKComms:
     """The sovereign communication engine.
 
@@ -204,7 +228,10 @@ class SKComms:
         keystore: Optional["KeyStore"] = None,
     ):
         self._config = config or SKCommsConfig()
-        self._router = router or Router(default_mode=self._config.default_mode)
+        self._router = router or Router(
+            default_mode=self._config.default_mode,
+            rate_limiter=build_outbound_limiter(self._config),
+        )
         self._identity = self._config.identity.name
         self._crypto = crypto
         self._keystore = keystore
@@ -213,7 +240,11 @@ class SKComms:
             from .ack import AckTracker
 
             self._ack_tracker = AckTracker()
-        self._outbox = PersistentOutbox(router=self._router)
+        self._outbox = PersistentOutbox(
+            router=self._router,
+            max_pending=self._config.outbox.max_pending,
+            sweep_batch=self._config.outbox.sweep_batch,
+        )
 
     @classmethod
     def from_config(cls, config_path: Optional[str] = None) -> SKComms:
@@ -230,7 +261,10 @@ class SKComms:
             Configured SKComms instance ready to send and receive.
         """
         config = load_config(config_path)
-        router = Router(default_mode=config.default_mode)
+        router = Router(
+            default_mode=config.default_mode,
+            rate_limiter=build_outbound_limiter(config),
+        )
 
         for name, tconf in config.transports.items():
             if not tconf.enabled:
@@ -406,6 +440,12 @@ class SKComms:
                 self._outbox.enqueue_signed(
                     signed, error="initial send failed", supersede_key=supersede_key
                 )
+            except OutboxFullError as exc:
+                # Explicit backpressure (coord 74d7b799): the durable queue is
+                # at its bound, so the caller MUST hear about it rather than
+                # believing the message is safely queued for retry.
+                self._alert_outbox_full(signed.envelope.id, to_fqid, exc)
+                raise
             except Exception as exc:  # noqa: BLE001
                 logger.warning("federation outbox enqueue failed: %s", exc)
         return report
@@ -630,6 +670,12 @@ class SKComms:
                 # The federation outbox understands the signed wire shape and
                 # owns durable retry for it (classify_envelope_json -> "signed").
                 self._outbox.enqueue_signed(signed, error=error_msg)
+            except OutboxFullError as exc:
+                # Explicit backpressure (coord 74d7b799): the durable queue is
+                # at its bound. Surface it to the local caller (the API maps
+                # this to HTTP 429) instead of silently dropping retryability.
+                self._alert_outbox_full(envelope.envelope_id, recipient, exc)
+                raise
             except Exception as exc:  # noqa: BLE001
                 logger.warning(
                     "outbox enqueue failed for %s: %s", envelope.envelope_id[:8], exc
@@ -678,12 +724,18 @@ class SKComms:
         if not report.delivered:
             last_error = report.attempts[-1].error if report.attempts else "all transports failed"
             error_msg = last_error or "all transports failed"
-            self._outbox.enqueue(
-                envelope.envelope_id,
-                envelope.recipient,
-                envelope.model_dump_json(),
-                error_msg,
-            )
+            try:
+                self._outbox.enqueue(
+                    envelope.envelope_id,
+                    envelope.recipient,
+                    envelope.model_dump_json(),
+                    error_msg,
+                )
+            except OutboxFullError as exc:
+                # Explicit backpressure (coord 74d7b799): surface it rather
+                # than pretending the message is safely queued for retry.
+                self._alert_outbox_full(envelope.envelope_id, envelope.recipient, exc)
+                raise
             logger.warning(
                 "Delivery failed for %s -> %s: queued for retry",
                 envelope.envelope_id[:8],
@@ -754,10 +806,39 @@ class SKComms:
                 envelope.envelope_id[:8],
                 transport,
             )
+        except OutboxFullError as exc:
+            # The message DID reach the queue rail, so this is not a failed
+            # send; but its ACK hold could not be recorded. Alert loudly (the
+            # outbox is at its bound) without failing the delivered send.
+            self._alert_outbox_full(envelope.envelope_id, envelope.recipient, exc)
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "outbox hold enqueue failed for %s: %s", envelope.envelope_id[:8], exc
             )
+
+    def _alert_outbox_full(self, envelope_id: str, recipient: str, exc: Exception) -> None:
+        """Log + sk-alert an outbox-full backpressure event (coord 74d7b799).
+
+        Args:
+            envelope_id: The envelope that could not be queued.
+            recipient: Its recipient.
+            exc: The OutboxFullError raised by the enqueue.
+        """
+        logger.error(
+            "Outbox full: could not queue %s -> %s (%s)",
+            envelope_id[:8],
+            recipient,
+            exc,
+        )
+        _integration.alert(
+            "outbox_full",
+            {
+                "envelope_id": envelope_id[:8],
+                "recipient": recipient,
+                "error": str(exc),
+            },
+            level="error",
+        )
 
     def sweep_ack_timeouts(self) -> list:
         """Fire ``delivery_failed`` for queued sends whose ACK horizon lapsed.

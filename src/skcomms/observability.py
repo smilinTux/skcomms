@@ -301,6 +301,16 @@ def render_prometheus(
         http_4xx = int(failure_counters[name].get("http_4xx", 0))
         lines.append(f'skcomms_transport_http_4xx_total{{transport="{label}"}} {http_4xx}')
 
+    lines.append(
+        "# HELP skcomms_transport_throttled_total Cumulative outbound-throttled "
+        "send attempts per rail (local pacing, not failures)."
+    )
+    lines.append("# TYPE skcomms_transport_throttled_total counter")
+    for name in sorted(failure_counters):
+        label = _escape_label(name)
+        throttled = int(failure_counters[name].get("throttled", 0))
+        lines.append(f'skcomms_transport_throttled_total{{transport="{label}"}} {throttled}')
+
     if transport_health:
         lines.append("# HELP skcomms_transport_up Whether a rail is currently reachable (1/0).")
         lines.append("# TYPE skcomms_transport_up gauge")

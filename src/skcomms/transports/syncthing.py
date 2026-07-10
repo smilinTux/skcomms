@@ -50,6 +50,13 @@ logger = logging.getLogger("skcomms.transports.syncthing")
 ENVELOPE_SUFFIX = ".skc.json"
 LOCK_SUFFIX = ".skc.lock"
 
+# Per-peer outbox depth cap (coord 74d7b799): hard bound on envelope files in
+# each outbox/<peer>/ directory, enforced at send time with oldest-eviction.
+# The TTL pruner (prune_outbox) bounds AGE but not COUNT, so a burst or a
+# broken housekeeping timer could still pile files up without limit (the
+# 140k-file leak that pegged Syncthing). <= 0 disables the cap.
+DEFAULT_MAX_OUTBOX_DEPTH = 1000
+
 # Characters that must never appear in a peer/recipient name because they would
 # create a dangerous or junk outbox/inbox subdirectory. Glob metacharacters are
 # the headline offenders: a v1 ``recipient="*"`` (a presence broadcast) was once
@@ -131,6 +138,7 @@ class SyncthingTransport(Transport):
         comms_root: Optional[Path] = None,
         priority: int = 1,
         archive: bool = True,
+        max_outbox_depth: int = DEFAULT_MAX_OUTBOX_DEPTH,
         **kwargs,
     ):
         """Initialize the Syncthing transport.
@@ -140,9 +148,13 @@ class SyncthingTransport(Transport):
                         ~/.skcapstone/comms/ (same Syncthing share as vault sync).
             priority: Transport priority for routing (lower = higher priority).
             archive: Whether to move processed envelopes to archive/.
+            max_outbox_depth: Per-peer cap on envelope files in
+                ``outbox/<peer>/``, enforced at send time with oldest-eviction
+                (coord 74d7b799). <= 0 disables the cap.
         """
         self.priority = priority
         self._archive = archive
+        self._max_outbox_depth = max_outbox_depth
         self._local_names: list[str] = []
 
         # Auto-add agent name from env so per-agent receive works
@@ -165,7 +177,8 @@ class SyncthingTransport(Transport):
         """Load transport-specific configuration.
 
         Args:
-            config: Dict with optional keys: comms_root, archive, identity, agents.
+            config: Dict with optional keys: comms_root, archive, identity,
+                    agents, max_outbox_depth.
                     identity (str or list[str]): local agent names so the
                     transport can pick up messages from outbox/{name}/ dirs
                     that arrive via bidirectional Syncthing sync.
@@ -181,6 +194,8 @@ class SyncthingTransport(Transport):
             self._archive_dir = self._root / "archive"
 
         self._archive = config.get("archive", self._archive)
+        if "max_outbox_depth" in config:
+            self._max_outbox_depth = int(config["max_outbox_depth"])
 
         identity = config.get("identity")
         if identity:
@@ -293,6 +308,16 @@ class SyncthingTransport(Transport):
             # Reason: atomic write prevents Syncthing from syncing partial files
             tmp_target.write_bytes(envelope_bytes)
             tmp_target.rename(target)
+
+            # Per-peer depth cap (coord 74d7b799): keep at most
+            # max_outbox_depth envelopes per outbox/<peer>/, evicting
+            # oldest-first, so no single peer's queue can grow without bound
+            # between housekeeping passes.
+            from .file import _trim_dir_to_depth
+
+            _trim_dir_to_depth(
+                peer_outbox, self._max_outbox_depth, ENVELOPE_SUFFIX, logger
+            )
 
             elapsed = (time.monotonic() - start) * 1000
             logger.info(
