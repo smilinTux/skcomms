@@ -265,6 +265,10 @@ class Router:
             # able to defer the envelope (offline recipient), so don't give up
             # before trying it.
             logger.warning("No direct rails for %s (mode=%s)", recipient, mode.value)
+        elif mode == RoutingMode.BROADCAST:
+            # Honor broadcast semantics for signed bytes too (sign-at-send
+            # callers pass the same routing modes route() supported).
+            report = self._route_broadcast(envelope_bytes, carrier, candidates, report)
         else:
             report = self._route_failover(envelope_bytes, carrier, candidates, report)
         if not report.delivered:

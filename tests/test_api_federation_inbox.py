@@ -103,9 +103,15 @@ def _pin(from_fqid: str, pub_armor: str) -> None:
 # --- POST /api/v1/inbox ----------------------------------------------------
 
 
-def test_inbox_happy_path_stores_and_200(client, jarvis_keys, tmp_path):
+def test_inbox_happy_path_stores_and_200(client, jarvis_keys, tmp_path, monkeypatch):
     priv, pub = jarvis_keys
     _pin(JARVIS_FQID, pub)
+
+    # Per-recipient routing writes to the recipient agent's CANONICAL comms
+    # inbox (~/.skcapstone/agents/<agent>/comms/inbox), so isolate HOME.
+    fake_home = tmp_path / "home"
+    fake_home.mkdir()
+    monkeypatch.setenv("HOME", str(fake_home))
 
     raw = _signed_bytes(priv)
     resp = client.post(
@@ -118,10 +124,9 @@ def test_inbox_happy_path_stores_and_200(client, jarvis_keys, tmp_path):
     assert body["ok"] is True
     env_id = body["id"]
 
-    # Verified envelope was written to the recipient's file-transport inbox.
-    # Per-recipient routing (multi-agent nodes) writes to inbox/<recipient-agent>/,
-    # so recurse rather than globbing only the base dir.
-    inbox = tmp_path / "inbox"
+    # Verified envelope was written to the recipient agent's canonical
+    # comms inbox (the tree each agent's daemon polls).
+    inbox = fake_home / ".skcapstone" / "agents" / "lumina" / "comms" / "inbox"
     files = list(inbox.rglob("*.skc.json"))
     assert len(files) == 1
     assert files[0].name == f"{env_id}.skc.json"
