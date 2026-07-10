@@ -79,7 +79,39 @@ log "Initializing skcomms realm tree (skcomms init)"
 "$SKCOMMS_VENV/bin/skcomms" init
 
 # --------------------------------------------------------------------------
-# 4. Systemd user units (install + enable)
+# 4. Identity gate: restore BEFORE first service start (coord 7d5344f2)
+# --------------------------------------------------------------------------
+# A cold machine must have its CapAuth private key and trust state RESTORED
+# from backup before the daemon ever starts. Regenerating the key instead
+# TOFU-conflicts on every remote peer and bricks federation fleet-wide.
+# Restore with: skcomms identity restore <archive>   (see SOP.md section 11)
+# Set SKCOMMS_ALLOW_NO_IDENTITY=1 only for keyless dev/test standups.
+#
+# The gate guards SERVICE ENABLEMENT, so it only runs when units are about
+# to be installed. Under --no-service nothing starts, and that pass is the
+# documented FIRST command on a wiped (still keyless) machine: venv +
+# install + init so `skcomms identity restore` can run at all. Gating that
+# pass would deadlock the restore ordering in SOP.md section 11.
+if [ "$INSTALL_UNITS" -eq 1 ]; then
+    if ! "$SKCOMMS_VENV/bin/skcomms" identity check --strict; then
+        if [ "${SKCOMMS_ALLOW_NO_IDENTITY:-0}" = "1" ]; then
+            log "WARNING: no CapAuth private key; continuing because SKCOMMS_ALLOW_NO_IDENTITY=1"
+        else
+            echo "" >&2
+            echo "  FATAL: no CapAuth private key found. Restore the identity backup" >&2
+            echo "  BEFORE starting services:" >&2
+            echo "      $SKCOMMS_VENV/bin/skcomms identity restore <archive>" >&2
+            echo "  (SOP.md section 11). Set SKCOMMS_ALLOW_NO_IDENTITY=1 to override" >&2
+            echo "  for a keyless dev standup." >&2
+            exit 1
+        fi
+    fi
+else
+    log "Skipping identity gate (--no-service: no units are enabled on this pass)"
+fi
+
+# --------------------------------------------------------------------------
+# 5. Systemd user units (install + enable)
 # --------------------------------------------------------------------------
 if [ "$INSTALL_UNITS" -eq 1 ]; then
     if command -v systemctl >/dev/null 2>&1; then
@@ -113,7 +145,7 @@ EOF
 fi
 
 # --------------------------------------------------------------------------
-# 5. Tailscale Funnel mounts (documented, not executed)
+# 6. Tailscale Funnel mounts (documented, not executed)
 # --------------------------------------------------------------------------
 # The loopback API (127.0.0.1:$API_PORT) is exposed to the internet ONLY via a
 # Tailscale Funnel :443 path-route. Every request self-authenticates at the

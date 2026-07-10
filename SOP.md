@@ -363,10 +363,14 @@ That single command, in order:
    otherwise it falls back to unpinned resolution.
 3. **scaffold**: `skcomms init` builds the `<realm>/<operator>/<agent>/{outbox,inbox}`
    tree plus the top-level `.stignore` (idempotent; honors `SKCOMMS_HOME`).
-4. **units**: installs `skcomms-api.service`, `skcomms-housekeep.service`, and
+4. **identity gate**: `skcomms identity check --strict`. The bootstrap ABORTS
+   (exit 1) if no CapAuth private key is present, because the restore MUST
+   happen before the daemon's first start (section 11). Keyless dev standups
+   may set `SKCOMMS_ALLOW_NO_IDENTITY=1` to continue.
+5. **units**: installs `skcomms-api.service`, `skcomms-housekeep.service`, and
    `skcomms-housekeep.timer` into `~/.config/systemd/user/`, then
    `systemctl --user enable --now` on the API service and the housekeeping timer.
-5. **Funnel**: prints (does not run) the Tailscale Funnel `:443` mount commands.
+6. **Funnel**: prints (does not run) the Tailscale Funnel `:443` mount commands.
 
 Pass `--no-service` to do the env/install/init steps only and skip the unit install
 (useful in containers or CI where there is no user systemd bus).
@@ -423,3 +427,135 @@ crontab -e                                                    # delete the skcom
 
 Do not remove the cron line until the timer shows at least one successful pass in the
 journal, so retention coverage is never dropped.
+
+## 11. Identity + trust-state backup/restore and key-loss re-pin runbook
+
+A wiped machine bricks federation even when every message-path fix is in
+place. The failure chain: the CapAuth signing/decryption key lives OUTSIDE
+the repo, a cold bootstrap without it comes up with a working socket and
+dead crypto, and if the key is REGENERATED instead of restored, every
+remote peer's TOFU store (`known_fingerprints.json`) hard-CONFLICTs the new
+fingerprint. The node is then rejected fleet-wide until each peer manually
+re-pins. This section is the standing defense: what to back up, the restore
+ordering, the enforcement, and the key-loss recovery procedure.
+
+### The backup set
+
+`skcomms identity backup` archives exactly these (roles in parentheses):
+
+| File | Role |
+|------|------|
+| `~/.capauth/identity/private.asc` | operator CapAuth private key (SECRET) |
+| `~/.capauth/identity/public.asc` | operator CapAuth public key |
+| `~/.capauth/identity/profile.json` | CapAuth profile (fingerprint metadata) |
+| `~/.skcapstone/agents/<agent>/capauth/identity/{private.asc,public.asc,profile.json}` | per-agent CapAuth keypair + profile (private is SECRET) |
+| `~/.skcapstone/agents/<agent>/identity/agent.pub` | agent public key (canonical fingerprint source) |
+| `~/.skcapstone/cluster.json` | realm/operator identity tier |
+| `$SKCOMMS_HOME/known_fingerprints.json` | TOFU trust store (every peer pin) |
+| `$SKCOMMS_HOME/peers.json` | peer connectivity bindings |
+| `$SKCOMMS_HOME/outbox/pending/*.json` | undelivered outbox entries |
+
+### Backup (do this NOW, and after any key or peer change)
+
+```bash
+skcomms identity backup -o /secure/media/skcomms-identity.tar.gz
+skcomms identity check            # verify what the set looks like on this host
+```
+
+The archive is written `0600` and contains PRIVATE KEY material: store it
+encrypted and OFF the machine (offline media, or a vault reachable without
+this node, per the "if you need one, get two" mantra). The backup verb
+REFUSES to produce an archive with no private key in it (an archive that
+cannot restore crypto is a trap); `--allow-partial` overrides for
+trust-state-only snapshots.
+
+### Restore ordering (enforced, not just documented)
+
+On a rebuilt machine the order is: **restore identity and trust state
+FIRST, start the daemon SECOND.** Never the reverse, and never regenerate.
+
+```bash
+git clone https://github.com/smilinTux/skcomms && cd skcomms
+scripts/bootstrap.sh --no-service          # venv + install + init, NO units yet
+~/.skenv/bin/skcomms identity restore /secure/media/skcomms-identity.tar.gz
+~/.skenv/bin/skcomms identity check --strict   # must exit 0 before continuing
+scripts/bootstrap.sh                        # now enable the units
+```
+
+The first pass runs on a still-keyless machine by design: `--no-service`
+enables nothing, so the identity gate is skipped there (it only guards the
+unit-enabling pass). That is what makes step 1 runnable at all before the
+restore in step 2.
+
+Enforcement (all three fail loudly, none quietly INFO-log):
+
+- `scripts/bootstrap.sh` runs `skcomms identity check --strict` and ABORTS
+  before enabling any unit when no private key is present (skipped under
+  `--no-service`, which enables no units).
+- `skcomms-api.service` has an `ExecStartPre` identity gate, so even a
+  hand-enabled unit refuses to start keyless
+  (`SKCOMMS_ALLOW_NO_IDENTITY=1` in the EnvironmentFile overrides for dev).
+- `skcomms serve` / `skcomms daemon` warn loudly by default and exit 1 when
+  `SKCOMMS_REQUIRE_IDENTITY=1` is set; `/health` and `/healthz` report
+  `"status": "degraded"` with an `identity` block whenever the key is
+  absent, so a green probe can never hide dead crypto. The probe check is
+  a two-path stat (never a backup-set walk, which would be O(n) in pending
+  outbox entries), and if the check itself fails the body degrades with an
+  explicit `"identity": {"status": "unknown"}` instead of dropping the
+  block.
+
+Restore semantics are fail-closed: every payload is checksum-verified
+against the archive manifest before anything is written, and an existing
+file with DIFFERENT content is a conflict that is left untouched (and exits
+nonzero) unless `--force`. Use `--dry-run` to preview.
+
+Scope of the checksum: it detects CORRUPTION (truncation, bit rot, bad
+media), not tampering. The manifest is unsigned, so an attacker who can
+modify the archive can rewrite manifest and payload consistently and a
+restore would implant a forged TOFU store or `peers.json`. Store archives
+on trusted, encrypted media only. Future hardening: sign the manifest with
+the operator capauth key at backup time and verify the signature before
+restore.
+
+### Key-loss runbook (the key is GONE, no backup restores it)
+
+This is the expensive path; it exists so a fleet outage has a procedure
+instead of a panic. Losing the private key means a new keypair, and every
+peer that ever pinned the old fingerprint will (correctly) reject the new
+one as a TOFU CONFLICT until re-pinned.
+
+1. **Declare it.** Treat the old key as compromised from this moment. If any
+   copy might have leaked (stolen laptop vs dead disk), notify the fleet
+   out of band FIRST so peers know to distrust the old fingerprint too.
+2. **Rotate.** Generate the new CapAuth keypair with the standard capauth
+   provisioning for the agent (this recreates
+   `~/.capauth/identity/{private.asc,public.asc,profile.json}` or the
+   per-agent layout). Record the NEW fingerprint:
+   `skcomms identity check` then read it from the CapAuth profile.
+3. **Restore trust state.** The TOFU store, `peers.json`, and `cluster.json`
+   from the latest backup are still valid (they describe OTHER nodes):
+   `skcomms identity restore <archive>` restores them. Expect the CapAuth
+   key files to report as conflicts (the archive holds the OLD key, the
+   disk holds the NEW one); that is correct, do NOT `--force` over the new
+   key. This node still trusts its peers; they do not yet trust it.
+4. **Publish the new fingerprint out of band.** Voice, video, or an already
+   trusted channel. NEVER over the rejected rail itself: a conflict window
+   is exactly when an attacker would race you with their own "new key".
+5. **Re-pin on EVERY peer.** On each remote node, the operator verifies the
+   fingerprint out of band and runs:
+
+   ```bash
+   skcomms identity repin <fqid> <NEW_FINGERPRINT> --reason "key loss 2026-07-10" --yes
+   ```
+
+   `repin` is the ONLY sanctioned way to replace a pin. The receive path
+   never overwrites on conflict; the previous fingerprint and re-pin
+   timestamp stay in the store for audit. Fleet sweep: walk the peer list
+   from `skcomms peers`, and confirm on each node that
+   `skcomms identity check` shows the updated pin before moving on.
+6. **Verify end to end.** From the rotated node, send a signed message to
+   each re-pinned peer and confirm delivery (no TOFU CONFLICT in the peer's
+   log). From one peer, send back and confirm decryption works.
+7. **New backup.** The old archives restore the OLD key. Immediately:
+   `skcomms identity backup -o <new archive>`, distribute per the backup
+   section, and only then delete archives of the compromised key.

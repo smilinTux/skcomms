@@ -601,8 +601,45 @@ async def health():
     ``/health`` is the historical alias; ``/healthz`` is the path the SKStacks v2
     descriptor and the Dockerfile HEALTHCHECK probe. Both return 200 so any
     probe path works (reconciles the /health vs /healthz mismatch).
+
+    Identity honesty (coord 7d5344f2): a node without its CapAuth private
+    key cannot sign or decrypt anything, so it must NOT report a clean
+    green. The probe stays HTTP 200 (the process IS alive; liveness probes
+    must not kill it) but ``status`` degrades and an ``identity`` block
+    explains why, so orchestration and operators see the dead crypto
+    instead of a false green after a cold bootstrap.
+
+    The check is :func:`skcomms.trustbackup.private_key_present`: two path
+    stats, O(1). It must NEVER be the full ``identity_check`` (that walks
+    the backup set, which globs every pending-outbox entry; on a node with
+    a six-figure outbox pileup an O(n) probe would time out and
+    Restart=always would restart-loop exactly the degraded node this
+    feature exists to surface). If the check itself blows up the body says
+    so explicitly (``identity.status: unknown`` + degraded), never a
+    silent green.
     """
-    return {"status": "ok", "service": "SKComms API"}
+    body: dict = {"status": "ok", "service": "SKComms API"}
+    try:
+        from .trustbackup import private_key_present
+
+        present = private_key_present()
+        body["identity"] = {"private_key_present": present}
+        if not present:
+            body["status"] = "degraded"
+            body["identity"]["detail"] = (
+                "CapAuth private key absent: signing and decryption disabled. "
+                "Restore the identity backup (skcomms identity restore). "
+                "See SOP.md section 11."
+            )
+    except Exception as exc:  # liveness must never 500, but never fail open
+        logger.warning("identity check failed for /health: %s", exc)
+        body["status"] = "degraded"
+        body["identity"] = {
+            "private_key_present": None,
+            "status": "unknown",
+            "detail": f"identity check failed: {exc}",
+        }
+    return body
 
 
 # ---------------------------------------------------------------------------

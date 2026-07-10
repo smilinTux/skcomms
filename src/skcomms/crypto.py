@@ -101,7 +101,17 @@ class EnvelopeCrypto:
         profile_path = base / "identity" / "profile.json"
 
         if not priv_path.exists():
-            logger.info("No CapAuth private key at %s — encryption disabled", priv_path)
+            # WARNING, not INFO: a cold bootstrap without the restored key
+            # comes up with a green /health and dead crypto, and a
+            # REGENERATED key TOFU-conflicts on every remote peer. The
+            # daemon entrypoints additionally hard-fail under
+            # SKCOMMS_REQUIRE_IDENTITY (see trustbackup.enforce_identity_gate).
+            logger.warning(
+                "No CapAuth private key at %s: encryption and signing DISABLED. "
+                "Restore the identity backup (skcomms identity restore), do not "
+                "regenerate. See SOP.md section 11.",
+                priv_path,
+            )
             return None
 
         try:

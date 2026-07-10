@@ -34,6 +34,12 @@ Type=simple
 EnvironmentFile=-%h/.config/skcomms/skcomms.env
 Environment=SKCOMMS_API_HOST=127.0.0.1
 Environment=SKCOMMS_API_PORT=9384
+# Identity gate (coord 7d5344f2): refuse to start with no CapAuth private key.
+# A keyless start comes up with a green socket and dead crypto, and a
+# regenerated key TOFU-conflicts on every remote peer. Restore first:
+#   skcomms identity restore <archive>     (SOP.md section 11)
+# Keyless dev standups may set SKCOMMS_ALLOW_NO_IDENTITY=1 in the EnvironmentFile.
+ExecStartPre=/bin/sh -c 'if [ "$${SKCOMMS_ALLOW_NO_IDENTITY:-0}" = "1" ]; then exit 0; fi; exec %h/.skenv/bin/skcomms identity check --strict'
 ExecStart=%h/.skenv/bin/uvicorn skcomms.api:app --host ${SKCOMMS_API_HOST} --port ${SKCOMMS_API_PORT}
 Restart=always
 RestartSec=5
