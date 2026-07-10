@@ -65,8 +65,11 @@ class GroupJoinResult:
     captcha_required: bool = False
     challenge_id: Optional[str] = None
     captcha_prompt: Optional[str] = None
-    #: The seed the captcha was derived from — surfaced so the *issuer* (the bot)
-    #: can drive verification deterministically; never shown to the solver.
+    #: DEPRECATED, always ``None``. The derivation seed is answer-equivalent
+    #: (``derive_challenge(seed)`` yields the answer), so surfacing it here was a
+    #: leak: any caller serializing this result toward the joiner handed over the
+    #: answer. Verification needs only ``challenge_id`` + the solver's answer
+    #: (the expected answer is persisted hashed). Kept for wire/API compat.
     seed: Optional[str] = None
 
     @classmethod
@@ -187,9 +190,9 @@ class GroupConsentGate:
         captcha seed so the expected answer is NOT computable from public inputs
         (group_id + fqid) alone. It is generated once per group (on first
         configure/join), persisted alongside the group's policy store, and NEVER
-        surfaced to a joiner. Fresh gate handles over the same home re-read it, so
-        the issuer/bot verifies deterministically while the joiner cannot
-        precompute.
+        surfaced to a joiner (nor on any result object). Verification never needs
+        it back: :meth:`Captcha.verify` checks the solver's answer against the
+        persisted answer hash by ``challenge_id``.
 
         Uses the same on-disk layout as :class:`GroupJoinPolicy`
         (``consent/groups/<group_id>/secret.db``); ``persisted=False`` groups keep
@@ -246,8 +249,10 @@ class GroupConsentGate:
         Args:
             group_id: The group being joined.
             fqid: The prospective member.
-            seed: Optional captcha seed (defaults to a deterministic per-join
-                value). Surfaced on the result so the issuer can verify.
+            seed: Optional caller context mixed into the captcha seed (e.g. an
+                envelope nonce). It never carries the challenge alone: a
+                per-group server secret AND a fresh per-issue CSPRNG nonce are
+                always mixed in, and the composed seed is never surfaced.
 
         Returns:
             GroupJoinResult: the admission outcome (+ captcha state when issued).
@@ -263,13 +268,22 @@ class GroupConsentGate:
                 return GroupJoinResult(group_id, fqid, JoinStatus.MEMBER)
             if pol.is_blocked(fqid):
                 return GroupJoinResult(group_id, fqid, JoinStatus.BLOCKED)
-            # Public part of the seed (deterministic per-join handle).
+            # Public/context part of the seed (caller may inject e.g. an
+            # envelope nonce; it is context only, never the sole entropy).
             public_seed = seed if seed is not None else f"{group_id}:{fqid}"
-            # SECURITY: mix a per-group SERVER-SIDE secret so the expected answer
-            # cannot be precomputed from public inputs (group_id + fqid) alone.
-            # The joiner never sees this secret; only the issuer/bot (which reads
-            # the persisted secret via the surfaced seed) can verify.
-            use_seed = f"{self._group_secret(group_id)}:{public_seed}"
+            # SECURITY (coord 193a2605): the seed mixes
+            #   1. a per-group SERVER-SIDE secret, so the expected answer is not
+            #      computable from public inputs (group_id + fqid) alone, and
+            #   2. a fresh per-issue CSPRNG nonce, so every issuance is a NEW
+            #      unpredictable challenge. Without the nonce the seed was
+            #      deterministic per (group, fqid): re-requesting a join reissued
+            #      the SAME challenge_id, which reset the attempt budget on a
+            #      fixed answer drawn from a tiny space, and the answer could be
+            #      brute-forced to self-admit.
+            # Neither the secret nor the composed seed is ever surfaced; the
+            # issuer verifies against the persisted answer hash by challenge_id.
+            issue_nonce = secrets.token_hex(16)
+            use_seed = f"{self._group_secret(group_id)}:{public_seed}:{issue_nonce}"
             challenge_id, prompt = self._captcha(group_id).generate(use_seed)
             # Park them PENDING (knock-style) until the captcha verifies.
             self._set_pending(group_id, fqid)
@@ -280,7 +294,6 @@ class GroupConsentGate:
                 captcha_required=True,
                 challenge_id=challenge_id,
                 captcha_prompt=prompt,
-                seed=use_seed,
             )
 
         req = pol.request_join(fqid)
