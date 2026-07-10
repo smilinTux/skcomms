@@ -373,11 +373,19 @@ def send_message(
     if not from_fqid:
         raise ValueError("cannot resolve sender fqid (cluster.json missing?)")
 
+    # Pin the sending agent ONCE from the resolved identity and reuse it for
+    # every per-agent path/key below. Passing the raw ``agent`` (often None)
+    # back into scaffold() would let home.py re-resolve independently against
+    # the ambient SKAGENT env, so the outbox could land under a different agent
+    # dir than the signer/reader use. read_outbox(agent=X) would then miss the
+    # record. Resolve here, scope everything to it.
+    resolved_agent = ident.get("agent") or from_fqid.split("@", 1)[0]
+
     # Validate recipient + resolve its inbox before doing any work.
     peer_path_dir = peer_inbox(to_fqid)
 
-    tree = scaffold(agent=agent)
-    signer = _load_signer(ident.get("agent") or from_fqid.split("@", 1)[0])
+    tree = scaffold(agent=resolved_agent)
+    signer = _load_signer(resolved_agent)
 
     env = build_envelope(
         from_fqid,
