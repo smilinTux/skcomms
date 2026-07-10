@@ -270,6 +270,82 @@ def daemon(config: Optional[str], interval: int, all_agents: bool):
 
 @main.command()
 @click.option("--config", "-c", default=None, help="Config file path.")
+@click.option(
+    "--outbox-max-age-hours",
+    type=float,
+    default=None,
+    help="Override sender-outbox prune age (default from config, 48h).",
+)
+@click.option(
+    "--archive-ttl-hours",
+    type=float,
+    default=None,
+    help="Override receiver-archive TTL (default from config, 168h).",
+)
+@click.option(
+    "--mailbox-ttl-hours",
+    type=float,
+    default=None,
+    help="Override mailbox outbox-record TTL (default from config, 168h).",
+)
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+def housekeep(
+    config: Optional[str],
+    outbox_max_age_hours: Optional[float],
+    archive_ttl_hours: Optional[float],
+    mailbox_ttl_hours: Optional[float],
+    json_out: bool,
+):
+    """Run one full housekeeping pass and exit.
+
+    Prunes stale sender-outbox envelopes, applies the receiver-archive TTL,
+    and sweeps stale mailbox outbox records for every enabled file-based
+    transport. The same pass the daemon runs periodically; this verb is
+    designed to be called from a systemd timer or cron as belt-and-braces.
+
+    \b
+    Examples:
+        skcomms housekeep                          # config-driven retention
+        skcomms housekeep --outbox-max-age-hours 24
+        skcomms housekeep --json-out               # machine-readable counts
+    """
+    from .config import load_config
+    from .core import _load_transport
+    from .housekeeping import run_housekeeping_pass
+
+    cfg = load_config(config)
+    hk = cfg.housekeeping
+    if outbox_max_age_hours is not None:
+        hk.outbox_max_age_hours = outbox_max_age_hours
+    if archive_ttl_hours is not None:
+        hk.archive_ttl_hours = archive_ttl_hours
+    if mailbox_ttl_hours is not None:
+        hk.mailbox_ttl_hours = mailbox_ttl_hours
+
+    # Build the enabled transports directly (no full SKComms engine: a
+    # housekeeping pass needs no crypto, outbox writer, or retry threads).
+    transports = []
+    for name, tconf in cfg.transports.items():
+        if not tconf.enabled:
+            continue
+        transport = _load_transport(name, tconf.priority, tconf.settings)
+        if transport is not None:
+            transports.append(transport)
+
+    results = run_housekeeping_pass(transports, hk)
+
+    if json_out:
+        click.echo(json.dumps(results, indent=2))
+        return
+
+    _print("\n  [bold]Housekeeping pass complete[/]")
+    _print(f"    Outbox envelopes pruned:  {results['outbox_pruned']}")
+    _print(f"    Archive files pruned:     {results['archive_pruned']}")
+    _print(f"    Mailbox records pruned:   {results['mailbox_pruned']}\n")
+
+
+@main.command()
+@click.option("--config", "-c", default=None, help="Config file path.")
 @click.option("--json-out", is_flag=True, help="Output as JSON.")
 def status(config: Optional[str], json_out: bool):
     """Show SKComms status and transport health."""

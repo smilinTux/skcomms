@@ -602,6 +602,25 @@ class SyncthingTransport(Transport):
             )
         return deleted
 
+    def prune_archive(self, ttl_hours: float = 168.0) -> int:
+        """Delete archived (already-processed) envelopes older than *ttl_hours*.
+
+        The receive path moves processed envelopes into ``archive/`` and
+        nothing ever deletes them, so the archive grows without bound. This
+        trims it on a TTL. Default 168h (7 days). Call it from the same
+        periodic maintenance task as :meth:`prune_outbox`.
+
+        Args:
+            ttl_hours: Age threshold in hours. Files older than this (by
+                mtime) are deleted. Values <= 0 prune nothing.
+
+        Returns:
+            int: The number of archive files deleted.
+        """
+        from .file import _prune_dir_by_ttl
+
+        return _prune_dir_by_ttl(self._archive_dir, ttl_hours, logger)
+
     def _ensure_dirs(self) -> None:
         """Create the comms directory structure if it doesn't exist."""
         self._outbox.mkdir(parents=True, exist_ok=True)
