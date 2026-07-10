@@ -131,9 +131,12 @@ class MessageQueue:
             # location before per-agent scoping must not be stranded there
             # (never drained). Only ever looks INSIDE the current
             # skcomms_home(), so a custom/temporary home never reaches into
-            # real production state.
+            # real production state. Queue entries are envelope + meta file
+            # PAIRS, so adoption claims by meta first (adopt_legacy_pairs):
+            # two agent daemons adopting concurrently can never split a pair
+            # across their trees (which would silently strand the message).
             legacy = skcomms_home() / QUEUE_DIR_NAME
-            paths.adopt_legacy_tree(legacy, queue_dir)
+            paths.adopt_legacy_pairs(legacy, queue_dir, META_SUFFIX, ENVELOPE_SUFFIX)
         self._dir = Path(queue_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
 

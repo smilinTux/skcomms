@@ -195,20 +195,30 @@ def file_transport_outbox(agent: Optional[str] = None) -> Path:
     return skcomms_home() / "outbox"
 
 
+def legacy_transfers_dir() -> Path:
+    """The pre-scoping transfer-state location (also the agentless fallback).
+
+    ``~/.skcapstone/transfers`` in the legacy layout, or
+    ``$SKCOMMS_HOME/transfers`` under a custom home. Agent-scoped callers
+    adopt in-flight state from here (see ``FileTransport._default_state_dir``)
+    so resumable transfers survive the upgrade to per-agent scoping.
+    """
+    if os.environ.get("SKCOMMS_HOME"):
+        return skcomms_home() / "transfers"
+    return Path.home() / ".skcapstone" / "transfers"
+
+
 def transfers_dir(agent: Optional[str] = None) -> Path:
     """Chunked file-transfer state directory, per-agent scoped.
 
     Per-agent (``agents_root()/<agent>/transfers``) when an agent is
     resolvable, so two agents on one node never share resume state. Falls
-    back to the legacy per-user ``~/.skcapstone/transfers`` (or
-    ``$SKCOMMS_HOME/transfers`` under a custom home) for agentless callers.
+    back to :func:`legacy_transfers_dir` for agentless callers.
     """
     name = resolve_agent(agent)
     if name:
         return agents_root() / name / "transfers"
-    if os.environ.get("SKCOMMS_HOME"):
-        return skcomms_home() / "transfers"
-    return Path.home() / ".skcapstone" / "transfers"
+    return legacy_transfers_dir()
 
 
 def queue_dir(agent: Optional[str] = None) -> Path:
@@ -256,13 +266,20 @@ def adopt_legacy_tree(legacy: Path, new: Path, subdirs: tuple[str, ...] = ("",))
     per-agent one, entries queued before the upgrade must not be stranded
     (never drained, never retried). This moves the regular files found in
     *legacy* (or its listed *subdirs*) into the same spot under *new* via
-    atomic rename. Races between two upgrading daemons are safe: a losing
-    rename raises and is skipped, and every entry is pre-signed so whichever
-    daemon adopted it can still deliver it.
+    atomic rename.
 
-    Only ever call this with a *legacy* path inside the current
-    ``skcomms_home()`` so a custom/temporary home never reaches into real
-    production state.
+    ONLY safe for stores whose entries are SINGLE files (PersistentOutbox
+    entries, transfer state). Races between two upgrading daemons are then
+    safe: a losing rename raises and is skipped, and every entry is
+    pre-signed so whichever daemon adopted it can still deliver it. Stores
+    whose entries are file PAIRS (the message queue's envelope + meta) must
+    use :func:`adopt_legacy_pairs` instead: per-file renames can split a
+    pair across two agents' trees, stranding both halves.
+
+    Only ever call this with a *legacy* path derived from the CURRENT home
+    context (inside ``skcomms_home()``, or the matching legacy per-user spot
+    when no home override is set) so a custom/temporary home never reaches
+    into real production state.
 
     Args:
         legacy: The old shared directory.
@@ -303,3 +320,77 @@ def adopt_legacy_tree(legacy: Path, new: Path, subdirs: tuple[str, ...] = ("",))
     if moved:
         logger.info("adopted %d legacy entrie(s) from %s into %s", moved, legacy, new)
     return moved
+
+
+def adopt_legacy_pairs(
+    legacy: Path,
+    new: Path,
+    meta_suffix: str,
+    data_suffix: str,
+) -> int:
+    """Adopt legacy store entries that are META + DATA file pairs, atomically.
+
+    The message queue stores each entry as two files
+    (``{id}.skc.json`` envelope + ``{id}.skc.meta.json`` retry state).
+    Renaming them individually (as :func:`adopt_legacy_tree` does) is racy:
+    two agent daemons adopting the same legacy queue concurrently can each
+    win one rename, splitting the pair across two trees. The meta-less
+    envelope is then stranded forever (drain and purge glob only meta files)
+    and the envelope-less meta is skipped until TTL expiry: silent message
+    loss plus a permanent file leak.
+
+    This claims by META first: the meta rename is the claim token. Only the
+    daemon whose meta rename succeeds moves the matching data file; losers
+    never touch either half of the pair, so a pair always lands whole in
+    exactly one agent's tree.
+
+    Args:
+        legacy: The old shared directory.
+        new: The new per-agent directory.
+        meta_suffix: Filename suffix of the meta (claim) file,
+            e.g. ``".skc.meta.json"``.
+        data_suffix: Filename suffix of the paired data file,
+            e.g. ``".skc.json"``.
+
+    Returns:
+        The number of pairs claimed (data-file move counted best-effort).
+    """
+    claimed = 0
+    try:
+        if legacy.resolve() == new.resolve() or not legacy.is_dir():
+            return 0
+    except OSError:
+        return 0
+    try:
+        metas = sorted(legacy.glob(f"*{meta_suffix}"))
+    except OSError:
+        return 0
+    for meta in metas:
+        if not meta.is_file():
+            continue
+        base = meta.name[: -len(meta_suffix)]
+        data = legacy / f"{base}{data_suffix}"
+        try:
+            new.mkdir(parents=True, exist_ok=True)
+            target_meta = new / meta.name
+            if target_meta.exists():
+                continue
+            # The claim: whoever wins this rename owns the whole pair.
+            meta.rename(target_meta)
+        except OSError:
+            # Lost the claim (or the meta vanished): never touch the pair.
+            continue
+        claimed += 1
+        try:
+            target_data = new / data.name
+            if data.is_file() and not target_data.exists():
+                data.rename(target_data)
+        except OSError:
+            logger.warning(
+                "claimed queue meta %s but could not move its envelope from %s",
+                meta.name,
+                legacy,
+            )
+    if claimed:
+        logger.info("adopted %d legacy pair(s) from %s into %s", claimed, legacy, new)
+    return claimed

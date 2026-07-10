@@ -11,7 +11,10 @@ base that the code then overrode. These tests prove the unified behavior:
   config transport paths) in ONE agreeing tree (the old split is dead),
 * two agents on one node get fully separated storage trees,
 * the peer-controlled recipient component fails closed on traversal,
-* legacy node-shared queue / retry-outbox entries are adopted, not stranded.
+* legacy node-shared queue / retry-outbox / transfer-state entries are
+  adopted, not stranded,
+* queue adoption is pair-atomic: concurrent adopting daemons can never split
+  an envelope/meta pair across two agents' trees.
 """
 
 from __future__ import annotations
@@ -180,7 +183,7 @@ def test_s2s_write_lands_in_reader_inbox_under_custom_home(monkeypatch, tmp_path
     monkeypatch.setenv("HOME", str(fake_user_home))
     monkeypatch.setenv("SKAGENT", "lumina")
 
-    from skcomms import api, paths
+    from skcomms import api
     from skcomms.config import load_config
     from skcomms.envelope import Envelope
 
@@ -246,6 +249,86 @@ def test_message_queue_default_is_per_agent_and_adopts_legacy(monkeypatch, tmp_p
     assert not (legacy / "abc.skc.json").exists()
 
 
+def test_concurrent_queue_adoption_never_splits_a_pair(monkeypatch, tmp_path):
+    """Two agent daemons adopting the same legacy queue concurrently must
+    never split an envelope/meta pair across their trees (the demonstrated
+    live race). The meta rename is the claim token: the loser of that rename
+    never touches either half of the pair."""
+    monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
+    from skcomms import paths
+    from skcomms.queue import ENVELOPE_SUFFIX, META_SUFFIX
+
+    legacy = tmp_path / "queue"
+    legacy.mkdir(parents=True)
+    (legacy / f"abc{ENVELOPE_SUFFIX}").write_bytes(b"{}")
+    (legacy / f"abc{META_SUFFIX}").write_bytes(b"{}")
+
+    dir_a = paths.queue_dir("opus")
+    dir_b = paths.queue_dir("jarvis")
+
+    real_rename = Path.rename
+    fired = {"done": False}
+
+    def racing_rename(self, target):
+        # The instant agent A reaches for its meta claim, agent B adopts the
+        # whole legacy queue first. A's claim then loses; it must skip the
+        # pair entirely instead of moving the now-orphaned envelope.
+        if not fired["done"] and self.name.endswith(META_SUFFIX):
+            fired["done"] = True
+            paths.adopt_legacy_pairs(legacy, dir_b, META_SUFFIX, ENVELOPE_SUFFIX)
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", racing_rename)
+    claimed_a = paths.adopt_legacy_pairs(legacy, dir_a, META_SUFFIX, ENVELOPE_SUFFIX)
+
+    assert claimed_a == 0
+    # The whole pair landed in exactly one tree (agent B's), nothing split.
+    assert (dir_b / f"abc{ENVELOPE_SUFFIX}").exists()
+    assert (dir_b / f"abc{META_SUFFIX}").exists()
+    assert not dir_a.exists() or not list(dir_a.iterdir())
+    assert not list(legacy.glob("abc*"))
+
+
+def test_adoption_loser_never_touches_an_orphaned_envelope(monkeypatch, tmp_path):
+    """A meta already claimed by another agent means the envelope is theirs:
+    the loser leaves it in place for the winner to collect."""
+    monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
+    from skcomms import paths
+    from skcomms.queue import ENVELOPE_SUFFIX, META_SUFFIX
+
+    legacy = tmp_path / "queue"
+    legacy.mkdir(parents=True)
+    # Envelope whose meta was already renamed away by the race winner.
+    (legacy / f"abc{ENVELOPE_SUFFIX}").write_bytes(b"{}")
+
+    claimed = paths.adopt_legacy_pairs(
+        legacy, paths.queue_dir("opus"), META_SUFFIX, ENVELOPE_SUFFIX
+    )
+    assert claimed == 0
+    assert (legacy / f"abc{ENVELOPE_SUFFIX}").exists()
+
+
+def test_transfer_state_adopted_into_per_agent_dir(monkeypatch, tmp_path):
+    """In-flight resumable transfer state at the legacy shared location is
+    adopted by the agent-scoped default, so resume_file still finds it after
+    the upgrade (no restarted transfers)."""
+    monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
+    monkeypatch.setenv("SKAGENT", "opus")
+
+    from skcomms import paths
+    from skcomms.transports.file import FileTransport
+
+    legacy = paths.legacy_transfers_dir()
+    legacy.mkdir(parents=True)
+    (legacy / "abc123.json").write_text("{}", encoding="utf-8")
+
+    t = FileTransport(outbox_path=tmp_path / "o", inbox_path=tmp_path / "i")
+    sdir = t._default_state_dir()
+    assert sdir == paths.agents_root() / "opus" / "transfers"
+    assert (sdir / "abc123.json").exists()
+    assert not (legacy / "abc123.json").exists()
+
+
 def test_persistent_outbox_default_is_per_agent_and_adopts_legacy(monkeypatch, tmp_path):
     monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
     monkeypatch.setenv("SKAGENT", "opus")
@@ -304,3 +387,31 @@ def test_file_transport_defaults_meet_the_api_writer(monkeypatch, tmp_path):
 
     t = FileTransport()
     assert t._inbox == paths.fed_inbox_dir("lumina")
+
+
+def test_discovery_defaults_follow_agent_scoping(monkeypatch, tmp_path):
+    """Peer-trace discovery scans where per-agent envelopes actually land,
+    not the stale node-shared inbox/outbox."""
+    import json
+
+    monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
+    monkeypatch.setenv("SKAGENT", "lumina")
+
+    from skcomms import paths
+    from skcomms.discovery import discover_file_transport
+
+    inbox = paths.file_transport_inbox()
+    inbox.mkdir(parents=True)
+    (inbox / "e1.skc.json").write_text(
+        json.dumps({"sender": "jarvis", "recipient": "lumina"}), encoding="utf-8"
+    )
+
+    peers = discover_file_transport()
+    assert [p.name for p in peers] == ["jarvis"]
+
+    # Agentless nodes keep the legacy node-shared scan locations.
+    monkeypatch.delenv("SKAGENT")
+    base_inbox = tmp_path / "inbox"
+    base_inbox.mkdir()
+    (base_inbox / "e2.skc.json").write_text(json.dumps({"sender": "ava"}), encoding="utf-8")
+    assert "ava" in [p.name for p in discover_file_transport()]

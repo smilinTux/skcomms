@@ -185,12 +185,8 @@ class FileTransport(Transport):
         # from the same resolver.
         from ..paths import file_transport_inbox, file_transport_outbox
 
-        self._outbox = (
-            Path(outbox_path).expanduser() if outbox_path else file_transport_outbox()
-        )
-        self._inbox = (
-            Path(inbox_path).expanduser() if inbox_path else file_transport_inbox()
-        )
+        self._outbox = Path(outbox_path).expanduser() if outbox_path else file_transport_outbox()
+        self._inbox = Path(inbox_path).expanduser() if inbox_path else file_transport_inbox()
         self._archive_dir = (
             Path(archive_path).expanduser() if archive_path else self._inbox.parent / "archive"
         )
@@ -361,10 +357,20 @@ class FileTransport(Transport):
         path resolver, coord 119b49f1): two agents on one node never share
         resume state. Agentless callers keep the legacy per-user
         ``~/.skcapstone/transfers``.
-        """
-        from ..paths import transfers_dir
 
-        return transfers_dir()
+        In-flight resumable transfer state written at the legacy shared
+        location before per-agent scoping is adopted on first use (same
+        upgrade contract as the message queue and retry outbox), so
+        ``resume_file`` still finds it and receive-side chunk reassembly
+        does not restart after the upgrade. Transfer state entries are
+        single files, so per-file rename adoption is race-safe.
+        """
+        from ..paths import adopt_legacy_tree, legacy_transfers_dir, transfers_dir
+
+        sdir = transfers_dir()
+        # No-op when agentless (legacy == sdir) or nothing is pending.
+        adopt_legacy_tree(legacy_transfers_dir(), sdir)
+        return sdir
 
     def send_file(
         self,

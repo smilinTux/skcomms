@@ -17,6 +17,43 @@
 - **SOP.md**: "Crash recovery and the second-node story" section documents what
   survives a restart, what a second instance shares, and what stays per-node.
 
+### Changed
+- **Behavior change (per-agent path scoping, coord 119b49f1):**
+  `config.load_config` now raises `ValueError` at startup when the selected
+  agent name (`SKAGENT` / `SKCAPSTONE_AGENT`) is path-unsafe (contains a
+  separator, traversal token, or NUL). Previously such a value was used
+  silently. Fail closed: fix the env var rather than letting storage scope
+  into a rogue tree.
+- **Behavior change:** the `inbox_path` / `outbox_path` transport settings
+  and `daemon.log_file` produced by `load_config` are now absolute expanded
+  paths instead of `~`-prefixed strings. Equivalent after `expanduser`, but
+  visible to anything that displays or persists the config.
+- The `SKCOMMS_OUTBOX_DIR` env override now also drives a default-constructed
+  `PersistentOutbox()` (via `paths.retry_outbox_dir`), not only the CLI-passed
+  root. Explicit env override wins over per-agent scoping, keeping
+  `outbox.default_outbox_dir()` and `PersistentOutbox().root` in agreement.
+- Peer-trace discovery (`discovery.discover_file_transport`) defaults now
+  resolve through `skcomms.paths` (per-agent comms inbox/outbox when an
+  agent is resolvable) instead of the node-shared `SKCOMMS_HOME`
+  inbox/outbox, so discovery keeps seeing envelopes on agent-scoped nodes.
+
+### Fixed
+- **Queue adoption pair-split race:** two agent daemons adopting the same
+  legacy node-shared queue concurrently could split an envelope/meta file
+  pair across their trees, silently stranding the message (drain and purge
+  glob only meta files). Adoption now claims by meta rename first
+  (`paths.adopt_legacy_pairs`); only the claim winner moves the matching
+  envelope, so a pair always lands whole in exactly one agent's tree.
+- In-flight resumable transfer state at the legacy shared location is now
+  adopted into the per-agent transfers dir on first use, matching the queue
+  and retry-outbox upgrade contract: `resume_file` keeps finding pre-upgrade
+  state instead of restarting transfers. Adoption stays within the current
+  `skcomms_home()`; a deployment relocated onto a custom `SKCOMMS_HOME`
+  migrates any state left at the fixed `~/.skcapstone/transfers` /
+  `~/.skcapstone/skcomms/outbox` locations by hand (those stores never
+  honored `SKCOMMS_HOME`, so reaching into the fixed path from a custom home
+  is deliberately avoided).
+
 ## [0.2.0] - 2026-07-03
 
 ### Changed
