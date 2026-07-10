@@ -16,7 +16,9 @@ Wire protocol:
 
 Status mapping (drives router retry vs. drop decisions):
     - 2xx              → success (delivered)
-    - 4xx              → permanent failure (bad request/auth/replay — no retry)
+    - 425 Too Early    → retryable failure (stale envelope: freshness-window
+      expiry from clock skew or a delayed retry, valid on a fresh attempt)
+    - 4xx (other)      → permanent failure (bad request/auth/replay — no retry)
     - 5xx / timeout /
       connection error → retryable failure (router falls back / re-queues)
 
@@ -407,9 +409,14 @@ class HttpS2STransport(Transport):
 
         Returns:
             SendResult with ``perm:`` prefix for 4xx, ``retry:`` for 5xx/other.
+            The one 4xx exception is 425 (Too Early): the inbox emits it for a
+            stale-but-valid envelope (freshness-window expiry from clock skew or
+            a delayed retry), which is retryable rather than permanent.
         """
         elapsed = (time.monotonic() - start) * 1000
-        if 400 <= status < 500:
+        if status == 425:
+            kind = "retry"
+        elif 400 <= status < 500:
             kind = "perm"
         else:
             kind = "retry"
