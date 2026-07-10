@@ -64,17 +64,23 @@ def peer_store(tmp_path, monkeypatch):
     return store
 
 
+#: The confirming body ``POST /api/v1/inbox`` returns AFTER the per-recipient
+#: write. A 2xx must carry this (``{"ok": true}``) to count as delivered.
+OK_BODY = b'{"ok": true, "id": "env-123"}'
+
+
 class _FakeResponse:
     """Minimal stand-in for an http.client.HTTPResponse usable as a context manager."""
 
-    def __init__(self, status: int):
+    def __init__(self, status: int, body: bytes = OK_BODY):
         self.status = status
+        self._body = body
 
     def getcode(self):
         return self.status
 
     def read(self):
-        return b""
+        return self._body
 
     def __enter__(self):
         return self
@@ -83,13 +89,13 @@ class _FakeResponse:
         return False
 
 
-def _capturing_urlopen(status, captured):
+def _capturing_urlopen(status, captured, body: bytes = OK_BODY):
     """Return a urlopen replacement that records the request and returns `status`."""
 
     def _urlopen(req, timeout=None):
         captured["req"] = req
         captured["timeout"] = timeout
-        return _FakeResponse(status)
+        return _FakeResponse(status, body)
 
     return _urlopen
 
@@ -148,6 +154,54 @@ def test_2xx_201_maps_to_ok(peer_store, monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", _capturing_urlopen(201, {}))
     result = HttpS2STransport().send(ENVELOPE, "jarvis")
     assert result.success is True
+
+
+# ---------------------------------------------------------------------------
+# Body verification: a 2xx without {"ok": true} is NOT delivery
+# (the opus-delivery incident: a funnel/proxy 200s but never runs post_inbox's
+#  per-recipient write, which returns {"ok": true} only after that write).
+# ---------------------------------------------------------------------------
+
+
+def test_2xx_without_ok_body_is_failure(peer_store, monkeypatch):
+    """A 200 whose body does not confirm the write is an undelivered failure."""
+    monkeypatch.setattr(
+        urllib.request, "urlopen", _capturing_urlopen(200, {}, body=b'{"status": "queued"}')
+    )
+    result = HttpS2STransport().send(ENVELOPE, "jarvis")
+    assert result.success is False
+    assert result.error.startswith("retry:")
+    assert "200" in result.error
+
+
+def test_2xx_empty_body_is_failure(peer_store, monkeypatch):
+    """A 200 with an empty body (a bare funnel ack) is not confirmed receipt."""
+    monkeypatch.setattr(urllib.request, "urlopen", _capturing_urlopen(200, {}, body=b""))
+    result = HttpS2STransport().send(ENVELOPE, "jarvis")
+    assert result.success is False
+    assert result.error.startswith("retry:")
+
+
+def test_2xx_ok_false_is_failure(peer_store, monkeypatch):
+    """An explicit {"ok": false} 2xx body is a failure, not a delivery."""
+    monkeypatch.setattr(
+        urllib.request, "urlopen", _capturing_urlopen(200, {}, body=b'{"ok": false}')
+    )
+    result = HttpS2STransport().send(ENVELOPE, "jarvis")
+    assert result.success is False
+
+
+def test_2xx_with_ok_true_is_delivered(peer_store, monkeypatch):
+    """The canonical {"ok": true, "id": ...} body confirms delivery."""
+    monkeypatch.setattr(
+        urllib.request,
+        "urlopen",
+        _capturing_urlopen(200, {}, body=b'{"ok": true, "id": "env-123"}'),
+    )
+    result = HttpS2STransport().send(ENVELOPE, "jarvis")
+    assert result.success is True
+    assert result.error is None
+    assert result.queued is False
 
 
 def test_404_maps_to_permanent_failure(peer_store, monkeypatch):

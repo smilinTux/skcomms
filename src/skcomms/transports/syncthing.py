@@ -302,11 +302,17 @@ class SyncthingTransport(Transport):
                 elapsed,
             )
 
+            # A Syncthing outbox write is a QUEUE hand-off, not confirmed
+            # receipt: the envelope only reaches the peer once Syncthing
+            # replicates the folder and the peer polls its inbox. Report
+            # queued=True so the sender holds a durable outbox entry pending an
+            # ACK rather than treating the sneakernet write as delivered.
             return SendResult(
                 success=True,
                 transport_name=self.name,
                 envelope_id=envelope_id,
                 latency_ms=elapsed,
+                queued=True,
             )
 
         except OSError as exc:

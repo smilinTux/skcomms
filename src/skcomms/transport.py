@@ -50,13 +50,23 @@ class HealthStatus(BaseModel):
 
 
 class SendResult(BaseModel):
-    """Outcome of a single send attempt through one transport."""
+    """Outcome of a single send attempt through one transport.
+
+    ``success`` means the transport accepted the bytes for onward carriage, so
+    failover stops. ``queued`` further qualifies that acceptance: a file /
+    syncthing sneakernet write hands the bytes to a shared filesystem, which is
+    a *queue* hand-off, NOT confirmed receipt by the recipient. A queued send is
+    ``success=True, queued=True``; a rail that confirms the far end accepted the
+    write (e.g. https-s2s with an ``{"ok": true}`` body) is
+    ``success=True, queued=False``.
+    """
 
     success: bool
     transport_name: str
     envelope_id: str
     latency_ms: float = 0.0
     error: Optional[str] = None
+    queued: bool = False
 
 
 class DeliveryReport(BaseModel):
@@ -73,6 +83,27 @@ class DeliveryReport(BaseModel):
             if attempt.success:
                 return attempt.transport_name
         return None
+
+    @property
+    def confirmed(self) -> bool:
+        """True when at least one rail confirmed receipt (a non-queued success).
+
+        Distinguishes a confirmed delivery from a mere queue hand-off: a
+        file/syncthing write reports ``success`` + ``queued``, which lands the
+        bytes on a shared filesystem but does not prove the recipient received
+        them.
+        """
+        return any(a.success and not a.queued for a in self.attempts)
+
+    @property
+    def queued_only(self) -> bool:
+        """True when the send succeeded ONLY via a queue (file/syncthing).
+
+        The bytes were handed to a sneakernet queue but no rail confirmed
+        receipt. Delivery stays unconfirmed until an ACK arrives, so the sender
+        holds a durable outbox entry rather than treating this as done.
+        """
+        return self.delivered and not self.confirmed
 
 
 class TransportError(Exception):

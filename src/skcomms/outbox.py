@@ -113,6 +113,11 @@ class OutboxEntry(BaseModel):
             key (e.g. re-beaconed CoT position reports for one entity+peer)
             evict older undelivered peers so the outbox keeps only the latest
             and never accumulates stale state. ``None`` = durable (never evicted).
+        await_ack: When True this entry is NOT a failed send awaiting retry; it
+            is a queued (file/syncthing sneakernet) send that succeeded onto a
+            shared filesystem but is not yet confirmed received. The retry sweep
+            leaves it untouched. It is removed when its ACK arrives
+            (:meth:`remove`) or surfaced via ``delivery_failed`` on ACK timeout.
     """
 
     envelope_id: str
@@ -125,6 +130,7 @@ class OutboxEntry(BaseModel):
     next_retry_at: Optional[datetime] = None
     last_error: str = ""
     supersede_key: Optional[str] = None
+    await_ack: bool = False
 
 
 class PersistentOutbox:
@@ -183,14 +189,19 @@ class PersistentOutbox:
         error: str = "",
         *,
         supersede_key: Optional[str] = None,
+        await_ack: bool = False,
     ) -> OutboxEntry:
-        """Add a failed message to the outbox queue.
+        """Add a message to the outbox queue.
 
         Args:
             envelope_id: The envelope's unique ID.
             recipient: Target agent/peer.
             envelope_json: Full serialized envelope JSON.
             error: Error from the failed delivery attempt.
+            supersede_key: Optional ephemeral-supersede key (see OutboxEntry).
+            await_ack: When True the entry is a queued (file/syncthing) send held
+                until its ACK confirms receipt, not a failed send awaiting retry.
+                The retry sweep leaves such entries untouched.
 
         Returns:
             OutboxEntry: The queued entry.
@@ -205,6 +216,7 @@ class PersistentOutbox:
             last_error=error,
             next_retry_at=self._compute_next_retry(1),
             supersede_key=supersede_key,
+            await_ack=await_ack,
         )
 
         # Ephemeral entries (e.g. CoT position beacons) carry a supersede_key:
@@ -270,6 +282,15 @@ class PersistentOutbox:
                 logger.warning("Skipping corrupt outbox entry %s: %s", entry_path.name, exc)
                 continue
 
+            # Queued (file/syncthing) sends held for an ACK are NOT failed sends:
+            # they already reached a shared-filesystem queue. Re-sending would
+            # write duplicate envelopes and a queued re-send would even look
+            # "delivered" and unlink the hold. Leave them for the ACK path
+            # (:meth:`remove` on confirmation, ``delivery_failed`` on timeout).
+            if entry.await_ack:
+                results["skipped"] += 1
+                continue
+
             if entry.next_retry_at and entry.next_retry_at > now:
                 results["skipped"] += 1
                 continue
@@ -312,6 +333,72 @@ class PersistentOutbox:
             list[OutboxEntry]: Dead-lettered messages sorted by creation time.
         """
         return self._list_dir(self._dead)
+
+    def get(self, envelope_id: str) -> Optional[OutboxEntry]:
+        """Look up a pending entry by envelope_id.
+
+        Args:
+            envelope_id: The envelope ID (the pending file is ``{id}.json``).
+
+        Returns:
+            OutboxEntry if a pending entry exists, else None.
+        """
+        path = self._pending / f"{envelope_id}.json"
+        if not path.exists():
+            return None
+        try:
+            return self._load_entry(path)
+        except (json.JSONDecodeError, ValueError, OSError) as exc:
+            logger.warning("Unreadable pending entry %s: %s", path.name, exc)
+            return None
+
+    def remove(self, envelope_id: str) -> bool:
+        """Delete a pending entry (e.g. when its delivery ACK confirms receipt).
+
+        This is the ACK-tied cleanup for queued (file/syncthing) sends held via
+        :meth:`enqueue` with ``await_ack=True``: once the recipient's ACK lands,
+        the durable entry is removed.
+
+        Args:
+            envelope_id: The envelope ID whose pending entry to delete.
+
+        Returns:
+            True if a pending entry was found and removed.
+        """
+        path = self._pending / f"{envelope_id}.json"
+        if path.exists():
+            path.unlink(missing_ok=True)
+            logger.info("Removed outbox entry %s (ACK confirmed / resolved)", envelope_id[:8])
+            return True
+        return False
+
+    def mark_dead(self, envelope_id: str, error: str = "") -> bool:
+        """Move a pending entry to the dead-letter queue.
+
+        Used when a held (``await_ack``) queued send exhausts its ACK horizon:
+        the message reached only a queue and was never confirmed received, so it
+        is dead-lettered for inspection (and a ``delivery_failed`` alert fires
+        separately).
+
+        Args:
+            envelope_id: The envelope ID whose pending entry to dead-letter.
+            error: Optional error/reason recorded on the entry.
+
+        Returns:
+            True if a pending entry was found and moved.
+        """
+        path = self._pending / f"{envelope_id}.json"
+        if not path.exists():
+            return False
+        try:
+            entry = self._load_entry(path)
+        except (json.JSONDecodeError, ValueError, OSError) as exc:
+            logger.warning("Unreadable pending entry %s: %s", path.name, exc)
+            return False
+        if error:
+            entry.last_error = error
+        self._move_to_dead(entry, path)
+        return True
 
     def purge_pending(self) -> int:
         """Remove all messages from the pending queue.
