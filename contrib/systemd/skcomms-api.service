@@ -20,6 +20,13 @@ Description=SKComms S2S API (skcomms.api:app on 127.0.0.1:9384)
 Documentation=https://github.com/smilinTux/skcomms
 After=network-online.target
 Wants=network-online.target
+# Restart watchdog: never let systemd give up on the S2S rail. Without this,
+# the default start-rate limit (5 starts in 10s) can park a fast crash loop
+# in a permanent 'failed' state; with it, Restart=always + RestartSec=5 keep
+# retrying forever, so the daemon always comes back after a crash. The nonce
+# replay cache is durable (SQLite under skcomms state/), so the restart does
+# NOT open a replay window on the public inbox.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple

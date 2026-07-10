@@ -42,6 +42,9 @@ daemon.pid
 .DS_Store
 logs/
 *.log
+// Per-node daemon state (nonce replay cache etc.) must NEVER sync between
+// nodes: each node keeps its own replay history.
+state/
 """
 
 

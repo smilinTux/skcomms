@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Durable nonce replay cache** (coord 11e295a3): `federation.DurableNonceCache`,
+  a SQLite-backed drop-in for the in-memory `NonceCache`. The S2S inbox replay
+  guard now survives daemon restarts (no replay window on the Funnel-exposed
+  inbox after a crash or deploy). Default store `skcomms_home()/state/nonce_cache.db`,
+  path override `SKCOMMS_NONCE_DB`, explicit in-memory opt-out
+  `SKCOMMS_NONCE_CACHE=memory`. Fails closed if the store cannot be opened.
+  Entries expire with the nonce TTL so the file stays bounded. `state/` added
+  to the generated `.stignore` (per-node, never synced).
+- **Restart watchdog hardening**: `contrib/systemd/skcomms-api.service` gains
+  `StartLimitIntervalSec=0` so systemd never parks a crash loop in a permanent
+  failed state; combined with `Restart=always` the rail always comes back.
+- **SOP.md**: "Crash recovery and the second-node story" section documents what
+  survives a restart, what a second instance shares, and what stays per-node.
+
 ## [0.2.0] - 2026-07-03
 
 ### Changed
