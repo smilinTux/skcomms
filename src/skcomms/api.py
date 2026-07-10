@@ -1030,10 +1030,20 @@ def _envelope_v1_to_message(env) -> MessageEnvelope:
 
 
 def _consent_classify(recipient: str, sender: str, *, token: Optional[str] = None) -> str:
-    """Return ``'deliver'|'quarantine'|'drop'`` per ``SKCOMMS_CONSENT_MODE``.
+    """Return ``'deliver'|'quarantine'|'drop'|'defer'`` per ``SKCOMMS_CONSENT_MODE``.
 
-    Default (``off``/unset) and any error → ``'deliver'`` — the gate is opt-in and
-    **fail-open**, so a consent bug or missing config never blackholes federation.
+    Two-layer semantics (coord ad0c4c01):
+
+    * **Ban gate (fail-closed, mode-independent).** The ban gate
+      (:meth:`skcomms.consent_pipeline.ConsentPipeline.ban_gate`: signed
+      ban-feeds + locally blocked contacts) runs UNCONDITIONALLY, before any
+      admit, regardless of consent mode (including ``off`` and ``tailnet``) and
+      independently of tiering. If the gate cannot even be built or consulted,
+      the sender is dropped, never admitted past a gate that could not run.
+    * **Tiering / quarantine (opt-in, fail-open).** The rest of the pipeline
+      (invite policy, greylist, knock) only runs when ``SKCOMMS_CONSENT_MODE``
+      is set (non-``off``); a tiering bug or missing config never blackholes
+      federation, so an error there still delivers.
 
     ``token`` is the OUTER-envelope gate-4 capability token the sender lifted from
     its :class:`skchat.token_wallet.TokenWallet` (see
@@ -1046,17 +1056,39 @@ def _consent_classify(recipient: str, sender: str, *, token: Optional[str] = Non
     import os
 
     mode = (os.environ.get("SKCOMMS_CONSENT_MODE") or "off").strip().lower()
-    if mode in ("", "off") or not recipient or not sender:
+    if not recipient or not sender:
+        # No identities to gate on; nothing checkable, legacy passthrough.
         return "deliver"
+
+    # SECURITY (fail-closed ban gate): runs for EVERY mode, before any admit.
     try:
         from .consent_runtime import build_pipeline
 
-        # Config-driven gate: build_pipeline loads runtime.yml (trusted ban-feeds +
-        # per-tier friction) and wires the full stack — MSC4155 policy → ban-feeds →
-        # blocked → tailnet → known(+token) → tier+greylist → knock. SKCOMMS_CONSENT_MODE
+        pipeline = build_pipeline(recipient)
+        banned = pipeline.ban_gate(sender)
+    except Exception as exc:
+        logger.warning(
+            "consent ban gate could not run for %s (dropping, fail-closed): %s",
+            recipient, exc,
+        )
+        return "drop"
+    if banned is not None:
+        logger.info(
+            "consent: ban gate dropped %s -> %s (%s)", sender, recipient, banned.reason
+        )
+        return "drop"
+
+    if mode in ("", "off"):
+        # Tiering opt-out: the legacy deliver-everything path, except the ban
+        # gate above already ran (a blocked/banned sender never fails open).
+        return "deliver"
+    try:
+        # Config-driven gate: build_pipeline loaded runtime.yml (trusted ban-feeds +
+        # per-tier friction) and wired the full stack: ban gate → MSC4155 policy →
+        # tailnet → known(+token) → tier+greylist → knock. SKCOMMS_CONSENT_MODE
         # still wins for the mode. Returns deliver|quarantine|drop|defer.
-        return build_pipeline(recipient).decide(sender, token=token).decision
-    except Exception as exc:  # never let the gate break delivery
+        return pipeline.decide(sender, token=token).decision
+    except Exception as exc:  # tiering never breaks delivery (ban gate already ran)
         logger.debug("consent pipeline failed for %s (delivering): %s", recipient, exc)
         return "deliver"
 
