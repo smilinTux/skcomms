@@ -22,6 +22,9 @@ Public API:
     record_fingerprint(fqid, fingerprint, pubkey=None)  -- TOFU first-contact record
     fingerprint_for(fqid) -> str | None                 -- lookup
     verify_fingerprint(fqid, fingerprint) -> TofuResult  -- TRUST_NEW/MATCH/CONFLICT
+    repin_fingerprint(fqid, fingerprint, ...)            -- EXPLICIT operator re-pin
+        after a verified key rotation (coord 7d5344f2); never called from any
+        receive path, records previous_fingerprint + repinned_at for audit
 """
 
 from __future__ import annotations
@@ -145,6 +148,62 @@ def record_fingerprint(
     store[fqid] = entry
     _save_store(store)
     logger.debug("recorded fingerprint for %s: %s", fqid, entry["fingerprint"])
+    return entry
+
+
+def repin_fingerprint(
+    fqid: str,
+    fingerprint: str,
+    pubkey: Optional[str] = None,
+    reason: str = "",
+) -> dict:
+    """EXPLICITLY re-pin *fqid* to a new fingerprint after a key rotation.
+
+    This is the ONLY sanctioned way to replace a stored fingerprint. It is
+    an operator action (``skcomms identity repin``), never called from any
+    receive/verify path, so the TOFU CONFLICT semantics of
+    :func:`verify_fingerprint` stay fail-closed. The previous fingerprint
+    and the re-pin timestamp are recorded for audit.
+
+    Use ONLY after verifying the new fingerprint out of band (voice, video,
+    or an existing trusted channel). Runbook: skcomms SOP.md section 11.
+
+    Args:
+        fqid: The peer FQID handle being re-pinned.
+        fingerprint: The NEW fingerprint (verified out of band).
+        pubkey: Optional new ASCII-armored public key to cache.
+        reason: Optional operator note stored with the entry.
+
+    Returns:
+        The stored entry dict, including ``previous_fingerprint`` and
+        ``repinned_at`` when a prior pin existed.
+    """
+    presented = _normalize(fingerprint)
+    store = _load_store()
+    previous = store.get(fqid) or {}
+    entry: dict = {
+        "fingerprint": presented,
+        "first_seen": previous.get("first_seen") or _utc_now_iso(),
+        "repinned_at": _utc_now_iso(),
+    }
+    if previous.get("fingerprint"):
+        entry["previous_fingerprint"] = previous["fingerprint"]
+    if reason:
+        entry["repin_reason"] = reason
+    if pubkey is not None:
+        entry["pubkey"] = pubkey
+    elif "pubkey" in previous:
+        # A stale pubkey for a rotated key is worse than none: drop it.
+        logger.warning("repin for %s drops the cached pubkey (rotated key)", fqid)
+    store[fqid] = entry
+    _save_store(store)
+    logger.warning(
+        "TOFU RE-PIN for %s: %s -> %s (operator action%s)",
+        fqid,
+        previous.get("fingerprint") or "<none>",
+        presented,
+        f", reason: {reason}" if reason else "",
+    )
     return entry
 
 

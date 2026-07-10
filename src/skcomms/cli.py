@@ -46,6 +46,32 @@ def _print(msg: str) -> None:
         click.echo(msg)
 
 
+def _identity_startup_gate() -> None:
+    """Fail loudly at daemon startup when the CapAuth private key is absent.
+
+    Default: a LOUD warning (plus a degraded /health once serving); with
+    ``SKCOMMS_REQUIRE_IDENTITY`` truthy the process exits 1 instead of
+    coming up green with dead crypto (coord 7d5344f2).
+    """
+    from .trustbackup import IdentityMissingError, enforce_identity_gate
+
+    try:
+        check = enforce_identity_gate()
+    except IdentityMissingError as exc:
+        _print(f"\n  [red]FATAL:[/] {exc}\n")
+        raise SystemExit(1)
+    if not check["private_key_present"]:
+        _print(
+            "\n  [red]WARNING: no CapAuth private key. Signing and decryption are "
+            "DISABLED and /health will report degraded.[/]"
+        )
+        _print(
+            "  Restore the identity backup before serving traffic: "
+            "[cyan]skcomms identity restore <archive>[/] (SOP.md section 11). "
+            "Set SKCOMMS_REQUIRE_IDENTITY=1 to make this fatal.\n"
+        )
+
+
 @click.group()
 @click.version_option(version=__version__, prog_name="skcomms")
 def main():
@@ -210,6 +236,8 @@ def daemon(config: Optional[str], interval: int, all_agents: bool):
 
     from .config import load_config
     from .core import SKComms
+
+    _identity_startup_gate()
 
     cfg = load_config(config)
 
@@ -2254,6 +2282,162 @@ def queue_purge(expired: bool, yes: bool):
         _print(f"\n  Purged [bold]{len(items)}[/] envelope(s).\n")
 
 
+# ---------------------------------------------------------------------------
+# identity: backup / restore / check / repin (coord 7d5344f2)
+# ---------------------------------------------------------------------------
+
+
+@main.group("identity")
+def identity_group():
+    """Identity + trust-state backup, restore, and key-loss recovery.
+
+    A wiped machine bricks federation unless the CapAuth key and TOFU
+    trust state are RESTORED (never regenerated) before the daemon's
+    first start. Runbook: SOP.md section 11.
+    """
+
+
+@identity_group.command("check")
+@click.option("--agent", "-a", default=None, help="Agent name (default: resolve current).")
+@click.option("--strict", is_flag=True, help="Exit nonzero if the private key is missing.")
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+def identity_check_cmd(agent: Optional[str], strict: bool, json_out: bool):
+    """Report presence of every identity/trust-state file.
+
+    With --strict this is the bootstrap gate: it exits 1 when no CapAuth
+    private key is present, enforcing restore-before-first-start.
+    """
+    from .trustbackup import identity_check
+
+    check = identity_check(agent)
+    if json_out:
+        click.echo(json.dumps(check, indent=2))
+    else:
+        _print(f"\n  [bold]Identity check[/] (agent: {check['agent']})")
+        for item in check["items"]:
+            mark = "[green]present[/]" if item["present"] else "[red]MISSING[/]"
+            _print(f"    {item['role']:28s} {mark}  {item['path']}")
+        if check["private_key_present"]:
+            _print("\n  [green]OK[/]: CapAuth private key present.\n")
+        else:
+            _print(
+                "\n  [red]FAIL[/]: no CapAuth private key. Restore your identity "
+                "backup BEFORE starting the daemon (skcomms identity restore). "
+                "Regenerating the key will TOFU-conflict on every peer. "
+                "See SOP.md section 11.\n"
+            )
+    if strict and not check["private_key_present"]:
+        raise SystemExit(1)
+
+
+@identity_group.command("backup")
+@click.option(
+    "--output",
+    "-o",
+    default=None,
+    help="Archive path (default: ./skcomms-identity-<agent>-<utc>.tar.gz).",
+)
+@click.option("--agent", "-a", default=None, help="Agent name (default: resolve current).")
+@click.option(
+    "--allow-partial",
+    is_flag=True,
+    help="Permit an archive without any private key (normally refused).",
+)
+def identity_backup_cmd(output: Optional[str], agent: Optional[str], allow_partial: bool):
+    """Create an identity + trust-state backup archive (mode 0600).
+
+    Covers the CapAuth keypair + profile, the agent pubkey, cluster.json,
+    the TOFU store, peers.json, and any pending outbox entries. Store the
+    archive OFF this machine (it contains the private key).
+    """
+    from datetime import datetime, timezone
+
+    from .trustbackup import TrustBackupError, create_backup
+
+    if output is None:
+        from .trustbackup import _resolve_agent
+
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        output = f"skcomms-identity-{_resolve_agent(agent)}-{stamp}.tar.gz"
+    try:
+        report = create_backup(output, agent=agent, allow_partial=allow_partial)
+    except TrustBackupError as exc:
+        _print(f"\n  [red]Backup refused:[/] {exc}\n")
+        raise SystemExit(1)
+    _print(f"\n  [green]Backup written:[/] {report['archive']}")
+    _print(f"  Files: {report['count']}  Roles: {', '.join(report['roles'])}")
+    _print(
+        "  [yellow]This archive contains PRIVATE KEY material. Store it encrypted, off-box.[/]\n"
+    )
+
+
+@identity_group.command("restore")
+@click.argument("archive")
+@click.option("--force", is_flag=True, help="Overwrite existing files that differ.")
+@click.option("--dry-run", is_flag=True, help="Verify and report without writing.")
+def identity_restore_cmd(archive: str, force: bool, dry_run: bool):
+    """Restore an identity + trust-state backup archive.
+
+    Run this BEFORE the daemon's first start on a rebuilt machine.
+    Checksums are verified before anything is written; existing differing
+    files are left untouched unless --force. Exits 1 on any conflict.
+    """
+    from .trustbackup import TrustBackupError, restore_backup
+
+    try:
+        report = restore_backup(archive, force=force, dry_run=dry_run)
+    except TrustBackupError as exc:
+        _print(f"\n  [red]Restore failed:[/] {exc}\n")
+        raise SystemExit(1)
+    label = "would restore" if dry_run else "restored"
+    _print(f"\n  [green]{label}:[/] {len(report['restored'])} file(s)")
+    for path in report["restored"]:
+        _print(f"    + {path}")
+    if report["skipped_same"]:
+        _print(f"  unchanged: {len(report['skipped_same'])} file(s)")
+    if report["conflicts"]:
+        _print("  [red]conflicts (existing files differ, use --force):[/]")
+        for path in report["conflicts"]:
+            _print(f"    ! {path}")
+        raise SystemExit(1)
+    _print("")
+
+
+@identity_group.command("repin")
+@click.argument("fqid")
+@click.argument("fingerprint")
+@click.option("--pubkey-file", default=None, help="Path to the peer's NEW public key (armored).")
+@click.option("--reason", default="", help="Audit note stored with the re-pin.")
+@click.option("--yes", is_flag=True, help="Skip the confirmation prompt.")
+def identity_repin_cmd(
+    fqid: str, fingerprint: str, pubkey_file: Optional[str], reason: str, yes: bool
+):
+    """EXPLICITLY re-pin a peer's fingerprint after a verified key rotation.
+
+    This is the operator-only escape hatch for TOFU CONFLICT after a peer
+    lost its key. Verify the new fingerprint OUT OF BAND first (voice,
+    video, or an existing trusted channel). The previous fingerprint is
+    kept in the store for audit. Runbook: SOP.md section 11.
+    """
+    from .tofu import fingerprint_for, repin_fingerprint
+
+    stored = fingerprint_for(fqid)
+    _print(f"\n  Peer:    [cyan]{fqid}[/]")
+    _print(f"  Stored:  {stored or '<none>'}")
+    _print(f"  New:     {fingerprint}")
+    if not yes:
+        if not click.confirm(
+            "  Re-pin? Only proceed if you verified the NEW fingerprint out of band"
+        ):
+            _print("  [yellow]Aborted, nothing changed.[/]\n")
+            raise SystemExit(1)
+    pubkey = None
+    if pubkey_file:
+        pubkey = Path(pubkey_file).expanduser().read_text(encoding="utf-8")
+    entry = repin_fingerprint(fqid, fingerprint, pubkey=pubkey, reason=reason)
+    _print(f"  [green]Re-pinned.[/] previous={entry.get('previous_fingerprint', '<none>')}\n")
+
+
 @main.command("serve")
 @click.option("--host", default="127.0.0.1", help="Host to bind to.")
 @click.option("--port", "-p", default=9384, help="Port to bind to.")
@@ -2278,6 +2462,8 @@ def serve(host: str, port: int, reload: bool):
         _print("\n  [red]Error:[/] uvicorn not installed.")
         _print("  Install with: [cyan]pip install skcomms[api][/]\n")
         raise SystemExit(1)
+
+    _identity_startup_gate()
 
     _print("\n  [green]Starting SKComms API server[/]")
     _print(f"  Host: [cyan]{host}[/]")

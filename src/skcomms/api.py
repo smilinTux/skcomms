@@ -597,8 +597,30 @@ async def health():
     ``/health`` is the historical alias; ``/healthz`` is the path the SKStacks v2
     descriptor and the Dockerfile HEALTHCHECK probe. Both return 200 so any
     probe path works (reconciles the /health vs /healthz mismatch).
+
+    Identity honesty (coord 7d5344f2): a node without its CapAuth private
+    key cannot sign or decrypt anything, so it must NOT report a clean
+    green. The probe stays HTTP 200 (the process IS alive; liveness probes
+    must not kill it) but ``status`` degrades and an ``identity`` block
+    explains why, so orchestration and operators see the dead crypto
+    instead of a false green after a cold bootstrap.
     """
-    return {"status": "ok", "service": "SKComms API"}
+    body: dict = {"status": "ok", "service": "SKComms API"}
+    try:
+        from .trustbackup import identity_check
+
+        check = identity_check()
+        body["identity"] = {"private_key_present": check["private_key_present"]}
+        if not check["private_key_present"]:
+            body["status"] = "degraded"
+            body["identity"]["detail"] = (
+                "CapAuth private key absent: signing and decryption disabled. "
+                "Restore the identity backup (skcomms identity restore). "
+                "See SOP.md section 11."
+            )
+    except Exception as exc:  # pragma: no cover - liveness must never 500
+        logger.debug("identity check unavailable for /health: %s", exc)
+    return body
 
 
 # ---------------------------------------------------------------------------
