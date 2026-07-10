@@ -26,7 +26,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install package + dev deps
+        # -c constraints.txt pins to the versions this repo validated (inert on
+        # the fallback branch, which installs a smaller set).
         run: |
-          pip install -e ".[dev]" || { pip install -e . && pip install pytest pytest-asyncio; }
+          pip install -c constraints.txt -e ".[dev]" || { pip install -c constraints.txt -e . && pip install -c constraints.txt pytest pytest-asyncio; }
       - name: Run QA pytest suite
         run: python -m pytest tests/ -q

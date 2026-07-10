@@ -42,8 +42,10 @@ jobs:
           python-version: ${{ matrix.python-version }}
           cache: pip
       - name: Install skcomms + dev extras
+        # -c constraints.txt pins the dev/runtime set to the versions this repo
+        # validated, so a fresh runner installs exactly what CI last tested.
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev]"
+          pip install -c constraints.txt -e ".[dev]"
       - name: Run pytest (full suite)
         run: python -m pytest tests/ -q

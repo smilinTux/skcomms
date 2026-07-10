@@ -88,6 +88,32 @@ For the **PQ legs** (hybrid X25519+ML-KEM-768, ML-DSA-65), install `liboqs` + th
 Python binding. PQ tests **skip cleanly** when it is absent; the classical fallback still
 runs.
 
+### Refreshing the dependency lock
+
+`constraints.txt` at the repo root pins every runtime and dev dependency (plus the api,
+cli, crypto, and skcapstone extras the Dockerfile installs) to one validated version set.
+CI, the Dockerfile, and the bp/systemd bootstrap all install with `-c constraints.txt`, so
+a fresh machine runs exactly the versions CI tested instead of re-resolving to whatever is
+latest that day. For reproducible local work, install the same way:
+
+```bash
+pip install -c constraints.txt -e ".[dev]"
+```
+
+To pull in newer dependency versions (for example after bumping a floor in
+`pyproject.toml`), regenerate the lock with the one-command refresh, then review, test, and
+commit the diff:
+
+```bash
+scripts/refresh-constraints.sh      # requires Docker; resolves in python:3.12-slim
+git diff constraints.txt            # review what moved
+pytest                              # confirm the new set is green
+```
+
+The refresh resolves inside `python:3.12-slim` (the Dockerfile base and the top of the CI
+matrix) so the pins match what actually deploys, regardless of the Python on your machine.
+`constraints.txt` is machine-generated: do not hand-edit it, regenerate it.
+
 ---
 
 ## What a good PR looks like
