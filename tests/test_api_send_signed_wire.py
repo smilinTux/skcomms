@@ -138,16 +138,16 @@ def test_plain_send_wire_bytes_are_accepted_by_the_inbox_gate(api_env):
 def _recipient_inbox_file(fqid: str, envelope_id: str):
     """Path the inbox handler writes a delivered envelope to.
 
-    Mirrors ``skcomms.api._write_to_recipient_inbox``: the canonical per-agent
-    comms inbox under the (monkeypatched) HOME, named ``{id}.skc.json``.
+    Resolved through ``skcomms.paths.fed_inbox_dir``: the SAME single resolver
+    ``api._write_to_recipient_inbox`` uses (coord 119b49f1), so this helper can
+    never drift from the writer. Under the fixture's SKCOMMS_HOME the inbox
+    lives inside that home, not under the per-user HOME.
     """
-    from pathlib import Path
-
+    from skcomms.paths import fed_inbox_dir
     from skcomms.transports.file import ENVELOPE_SUFFIX
 
     agent = fqid.split("@")[0]
-    inbox = Path(f"~/.skcapstone/agents/{agent}/comms/inbox").expanduser()
-    return inbox / f"{envelope_id}{ENVELOPE_SUFFIX}"
+    return fed_inbox_dir(agent) / f"{envelope_id}{ENVELOPE_SUFFIX}"
 
 
 def test_send_federated_wire_bytes_are_accepted_by_the_inbox_gate(api_env, monkeypatch):

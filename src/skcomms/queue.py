@@ -5,8 +5,9 @@ When all transports are down, envelopes are queued to disk as JSON
 files. A drain loop retries delivery with exponential backoff and
 removes expired messages that exceed their TTL.
 
-Queue layout:
-    ~/.skcapstone/skcomms/queue/
+Queue layout (per-agent via :func:`skcomms.paths.queue_dir`; legacy
+node-shared ``skcomms_home()/queue`` for agentless callers):
+    ~/.skcapstone/agents/<agent>/comms/queue/
     ├── {envelope_id}.skc.json       # Envelope bytes
     └── {envelope_id}.skc.meta.json  # Retry state and metadata
 
@@ -23,8 +24,6 @@ from pathlib import Path
 from typing import Optional
 
 from pydantic import BaseModel, Field
-
-from .config import SKCOMMS_HOME
 
 logger = logging.getLogger("skcomms.queue")
 
@@ -116,11 +115,29 @@ class MessageQueue:
     TTL-based expiry, and crash-safe operation.
 
     Args:
-        queue_dir: Directory for queue files. Defaults to ~/.skcapstone/skcomms/queue/.
+        queue_dir: Directory for queue files. Defaults to the per-agent queue
+            from :func:`skcomms.paths.queue_dir` (the single path resolver,
+            coord 119b49f1), falling back to the legacy node-shared
+            ``skcomms_home()/queue`` for agentless callers.
     """
 
     def __init__(self, queue_dir: Optional[Path] = None):
-        self._dir = queue_dir or Path(SKCOMMS_HOME).expanduser() / QUEUE_DIR_NAME
+        if queue_dir is None:
+            from . import paths
+            from .home import skcomms_home
+
+            queue_dir = paths.queue_dir()
+            # One-time adoption: entries queued at the legacy node-shared
+            # location before per-agent scoping must not be stranded there
+            # (never drained). Only ever looks INSIDE the current
+            # skcomms_home(), so a custom/temporary home never reaches into
+            # real production state. Queue entries are envelope + meta file
+            # PAIRS, so adoption claims by meta first (adopt_legacy_pairs):
+            # two agent daemons adopting concurrently can never split a pair
+            # across their trees (which would silently strand the message).
+            legacy = skcomms_home() / QUEUE_DIR_NAME
+            paths.adopt_legacy_pairs(legacy, queue_dir, META_SUFFIX, ENVELOPE_SUFFIX)
+        self._dir = Path(queue_dir)
         self._dir.mkdir(parents=True, exist_ok=True)
 
     @property

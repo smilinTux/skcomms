@@ -331,7 +331,11 @@ def daemon(config: Optional[str], interval: int, all_agents: bool):
 @click.option(
     "--outbox-dir",
     default=None,
-    help="Persistent-outbox root (default ~/.skcapstone/skcomms/outbox or $SKCOMMS_OUTBOX_DIR).",
+    help=(
+        "Persistent-outbox root. Default: $SKCOMMS_OUTBOX_DIR if set, else the "
+        "per-agent ~/.skcapstone/agents/<agent>/comms/outbox-retry (node-shared "
+        "~/.skcapstone/skcomms/outbox when no agent is resolvable)."
+    ),
 )
 @click.option("--json-out", is_flag=True, help="Output as JSON.")
 def housekeep(
@@ -2328,7 +2332,11 @@ def _open_outbox(outbox_dir: Optional[str]):
 _OUTBOX_DIR_OPT = click.option(
     "--outbox-dir",
     default=None,
-    help="Persistent-outbox root (default ~/.skcapstone/skcomms/outbox or $SKCOMMS_OUTBOX_DIR).",
+    help=(
+        "Persistent-outbox root. Default: $SKCOMMS_OUTBOX_DIR if set, else the "
+        "per-agent ~/.skcapstone/agents/<agent>/comms/outbox-retry (node-shared "
+        "~/.skcapstone/skcomms/outbox when no agent is resolvable)."
+    ),
 )
 
 

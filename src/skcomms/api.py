@@ -1089,17 +1089,17 @@ def _build_inbox_verifier(from_fqid: str):
 
 
 def _fed_inbox_dir() -> Path:
-    """The federation inbox BASE — ``skcomms_home()/inbox`` (the canonical landing zone).
+    """The federation inbox BASE (the recipient-less landing zone).
 
-    :func:`_write_to_recipient_inbox` appends ``/<recipient-agent>`` to this base so
-    each agent's daemon polls its own ``inbox/<agent>`` subdir (multi-agent nodes).
-    A single-agent deployment's daemon simply sets its FileTransport ``inbox_path`` to
-    ``inbox/<that-agent>`` to meet the API here. Fixed (NOT config-derived) so the API
-    write location is deterministic regardless of any per-agent ``inbox_path`` override.
+    Thin delegator to :func:`skcomms.paths.fed_inbox_base`, kept for backward
+    compatibility. :func:`_write_to_recipient_inbox` resolves the actual
+    per-recipient inbox through :func:`skcomms.paths.fed_inbox_dir`, the ONE
+    resolver the daemon's reader config also derives from, so the API write
+    location and the daemon poll location can never diverge.
     """
-    from .home import skcomms_home
+    from .paths import fed_inbox_base
 
-    return skcomms_home() / "inbox"
+    return fed_inbox_base()
 
 
 def _envelope_v1_to_message(env) -> MessageEnvelope:
@@ -1191,16 +1191,28 @@ def _write_to_recipient_inbox(env) -> str:
     ``{envelope.id}.skc.json`` so :meth:`FileTransport.receive` (and hence
     ``comm.receive()``) picks it up. Returns the file path written.
     """
+    from .paths import fed_inbox_dir, safe_component
     from .transports.file import ENVELOPE_SUFFIX
 
-    inbox = _fed_inbox_dir()
-    # Per-recipient routing: write to inbox/<recipient-agent> so MULTIPLE agents
-    # on one node (e.g. opus + jarvis on .41) each poll their OWN inbox and don't
-    # cannibalise each other via the shared FileTransport.receive() (which consumes
-    # every file it sees). Each agent's daemon sets inbox_path = inbox/<its-agent>.
-    # Falls back to the base inbox when no recipient agent can be derived (single-
-    # agent nodes that poll the base directly stay unaffected if their subdir == "").
+    # Per-recipient routing: write to the recipient agent's canonical comms
+    # inbox so MULTIPLE agents on one node (e.g. opus + jarvis on .41) each
+    # poll their OWN inbox and don't cannibalise each other via the shared
+    # FileTransport.receive() (which consumes every file it sees). Falls back
+    # to the base fed inbox when no recipient agent can be derived.
     recipient = (getattr(env, "to_fqid", "") or "").split("@")[0].split(":")[-1].strip()
+    if recipient:
+        # SECURITY: to_fqid is peer-controlled. A component like "../../evil"
+        # must never be formatted into a filesystem path (consent quarantine
+        # dirs and the inbox both derive from it). Fail closed: treat an
+        # unsafe recipient as unroutable and land in the base fed inbox.
+        try:
+            recipient = safe_component(recipient, what="recipient")
+        except ValueError:
+            logger.warning(
+                "unsafe recipient component in to_fqid %r; writing to base fed inbox",
+                getattr(env, "to_fqid", ""),
+            )
+            recipient = ""
 
     # First-contact consent gate (skfed-consent-design gate 5). Opt-in via
     # SKCOMMS_CONSENT_MODE (off|public|tailnet); default off = byte-for-byte the
@@ -1237,13 +1249,12 @@ def _write_to_recipient_inbox(env) -> str:
         )
         return f"quarantined:{env.id}"
 
-    if recipient:
-        # Write to the recipient agent's CANONICAL comms inbox — the same tree
-        # each agent's daemon reads (skcomms config file-transport inbox_path =
-        # ~/.skcapstone/agents/<agent>/comms/inbox). Historically this wrote to a
-        # separate ~/.skcapstone/skcomms/inbox/<agent> tree that no daemon polled,
-        # so per-recipient mail piled up unread. Unified so writes and reads meet.
-        inbox = Path(f"~/.skcapstone/agents/{recipient}/comms/inbox").expanduser()
+    # Write to the recipient agent's CANONICAL comms inbox: the same tree each
+    # agent's daemon reads (config.load_config derives the file-transport
+    # inbox_path from the SAME skcomms.paths resolver). Historically this used
+    # a hardcoded ~/.skcapstone/agents/<agent>/comms/inbox template that
+    # bypassed SKCOMMS_HOME, so a custom home silently split writes from reads.
+    inbox = fed_inbox_dir(recipient or None)
     inbox.mkdir(parents=True, exist_ok=True)
     msg = _envelope_v1_to_message(env)
     filename = f"{env.id}{ENVELOPE_SUFFIX}"

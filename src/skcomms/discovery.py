@@ -312,14 +312,22 @@ def discover_file_transport(
     Extracts sender/recipient from envelope JSON files.
 
     Args:
-        inbox_path: File transport inbox (default ~/.skcapstone/skcomms/inbox).
-        outbox_path: File transport outbox (default ~/.skcapstone/skcomms/outbox).
+        inbox_path: File transport inbox. Defaults to
+            :func:`skcomms.paths.file_transport_inbox` (the single path
+            resolver, coord 119b49f1): the agent's comms inbox when an agent
+            is resolvable, else the node-shared ``skcomms_home()/inbox``.
+            Keeps read-only peer-trace discovery looking exactly where
+            per-agent envelopes actually land.
+        outbox_path: File transport outbox. Defaults to
+            :func:`skcomms.paths.file_transport_outbox` (same resolver).
 
     Returns:
         List of discovered PeerInfo.
     """
-    inbox = inbox_path or Path(SKCOMMS_HOME).expanduser() / "inbox"
-    outbox = outbox_path or Path(SKCOMMS_HOME).expanduser() / "outbox"
+    from . import paths
+
+    inbox = inbox_path or paths.file_transport_inbox()
+    outbox = outbox_path or paths.file_transport_outbox()
     peers: dict[str, PeerInfo] = {}
 
     for directory in [inbox, outbox]:
@@ -586,9 +594,7 @@ def inbox_url_for(
         try:
             from .skfed_resolve import resolve_agent
 
-            rec = resolve_agent(
-                fqid, http_get=http_get, dns=dns, verifier=verifier, cache=cache
-            )
+            rec = resolve_agent(fqid, http_get=http_get, dns=dns, verifier=verifier, cache=cache)
             if rec and rec.get("inbox_url"):
                 return rec["inbox_url"]
         except Exception as exc:  # never let directory resolution break delivery

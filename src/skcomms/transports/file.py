@@ -201,7 +201,7 @@ class _ChunkRecord:
 
 @dataclass
 class _TransferState:
-    """Mutable transfer state persisted to ~/.skcapstone/transfers/{id}.json.
+    """Mutable transfer state persisted to the transfer state dir as {id}.json.
 
     Written after each chunk so the transfer can resume safely if
     interrupted.  ``verified=True`` on a chunk means the chunk's
@@ -290,14 +290,15 @@ class FileTransport(Transport):
         # health_check details and the /metrics eviction counter.
         self._evictions_total = 0
 
-        self._outbox = (
-            Path(outbox_path).expanduser()
-            if outbox_path
-            else Path("~/.skcapstone/skcomms/outbox").expanduser()
-        )
-        self._inbox = (
-            Path(inbox_path).expanduser() if inbox_path else Path("~/.skcapstone/skcomms/inbox").expanduser()
-        )
+        # Defaults resolve through skcomms.paths (coord 119b49f1) so an
+        # unconfigured transport reads exactly where the S2S gate writes,
+        # honoring SKCOMMS_HOME and per-agent scoping. The daemon normally
+        # passes explicit paths from config.load_config, which derives them
+        # from the same resolver.
+        from ..paths import file_transport_inbox, file_transport_outbox
+
+        self._outbox = Path(outbox_path).expanduser() if outbox_path else file_transport_outbox()
+        self._inbox = Path(inbox_path).expanduser() if inbox_path else file_transport_inbox()
         self._archive_dir = (
             Path(archive_path).expanduser() if archive_path else self._inbox.parent / "archive"
         )
@@ -476,8 +477,34 @@ class FileTransport(Transport):
     # ── Chunked file transfer ─────────────────────────────────────────────────
 
     def _default_state_dir(self) -> Path:
-        """Default directory for transfer state JSON files."""
-        return Path("~/.skcapstone/transfers").expanduser()
+        """Default directory for transfer state JSON files.
+
+        Per-agent scoped via :func:`skcomms.paths.transfers_dir` (the single
+        path resolver, coord 119b49f1): two agents on one node never share
+        resume state. Agentless callers keep the legacy per-user
+        ``~/.skcapstone/transfers``.
+
+        In-flight resumable transfer state written at the in-home legacy
+        location before per-agent scoping is adopted on first use (same
+        upgrade contract as the message queue and retry outbox), so
+        ``resume_file`` still finds it and receive-side chunk reassembly
+        does not restart after the upgrade. Transfer state entries are
+        single files, so per-file rename adoption is race-safe.
+
+        Custom-home caveat: adoption looks only inside the current
+        ``skcomms_home()`` (via :func:`skcomms.paths.legacy_transfers_dir`).
+        The pre-scoping default was the FIXED ``~/.skcapstone/transfers``
+        regardless of ``SKCOMMS_HOME``, so relocating an existing install onto
+        a custom home does NOT auto-adopt state left at that fixed path; it is
+        migrated by hand (reaching into a fixed production path from a custom
+        or temporary home is deliberately avoided).
+        """
+        from ..paths import adopt_legacy_tree, legacy_transfers_dir, transfers_dir
+
+        sdir = transfers_dir()
+        # No-op when agentless (legacy == sdir) or nothing is pending.
+        adopt_legacy_tree(legacy_transfers_dir(), sdir)
+        return sdir
 
     def send_file(
         self,
@@ -499,7 +526,7 @@ class FileTransport(Transport):
             transfer_id: Optional existing transfer ID (for resume).
                 Auto-generated (12-char hex UUID) if not provided.
             state_dir: Directory for state JSON files.
-                Defaults to ``~/.skcapstone/transfers/``.
+                Defaults to :func:`skcomms.paths.transfers_dir` (per-agent).
             progress_callback: Called as ``(transfer_id, chunk_idx, total)``
                 after each chunk envelope is written to the outbox.
 
@@ -580,7 +607,7 @@ class FileTransport(Transport):
         Args:
             transfer_id: The transfer ID to resume.
             state_dir: Directory containing state JSON files.
-                Defaults to ``~/.skcapstone/transfers/``.
+                Defaults to :func:`skcomms.paths.transfers_dir` (per-agent).
             progress_callback: Called as ``(transfer_id, chunk_idx, total)``.
 
         Returns:
