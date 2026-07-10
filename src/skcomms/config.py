@@ -129,6 +129,68 @@ class ObservabilityConfig(BaseModel):
     alert_level: str = "warn"
 
 
+class OutboxConfig(BaseModel):
+    """Bounds for the PersistentOutbox pending queue (coord 74d7b799).
+
+    The pending queue is one JSON file per entry and historically had no size
+    bound, so a dead rail could grow it without limit (the 140k-file class of
+    failure). These settings bound it and pace how fast a backlog drains.
+
+    Attributes:
+        max_pending: Max entries in the pending queue. Enqueueing beyond this
+            raises :class:`skcomms.outbox.OutboxFullError` (mapped to HTTP 429
+            by the API). Values <= 0 disable the bound.
+        sweep_batch: Max delivery attempts per retry sweep so a backlog drains
+            in bounded, paced batches instead of flooding a recovering rail.
+            Values <= 0 disable pacing.
+
+            INVARIANT: keep ``sweep_batch <=
+            OutboundRateLimitConfig.peer_capacity``. A same-peer backlog
+            sweep larger than the peer token bucket guarantees the tail of
+            every sweep is locally throttled, so the paced sweep and the
+            outbound limiter fight instead of cooperate. The defaults are
+            aligned (20 == 20); raise both together.
+    """
+
+    max_pending: int = 5000
+    sweep_batch: int = 20
+
+
+class OutboundRateLimitConfig(BaseModel):
+    """Outbound send throttling (coord 74d7b799).
+
+    Rate limiting historically existed only on the INBOUND inbox gate; nothing
+    paced outbound sends, so a backlog flush or presence broadcast could flood
+    a peer's rate limiter and re-dead-letter en masse. These settings build the
+    router's outbound :class:`skcomms.ratelimit.RateLimiter` (token buckets,
+    per transport and per peer). Throttled attempts fail fast with a
+    ``throttled:`` error, stay out of the transport cooldown, and are retried
+    by the outbox on a later paced sweep.
+
+    Defaults are generous for interactive traffic (a burst of 60 per rail,
+    sustained 10/s) while bounding pathological floods.
+
+    Attributes:
+        enabled: Whether outbound throttling is active (default True).
+        transport_capacity: Max burst per transport rail.
+        transport_refill: Sustained sends/sec per transport rail.
+        peer_capacity: Max burst per recipient within a rail.
+
+            INVARIANT: keep ``peer_capacity >= OutboxConfig.sweep_batch`` so
+            one full outbox retry sweep aimed at a single peer fits inside
+            the peer bucket (defaults are aligned at 20). With the default
+            30s sweep interval and ``peer_refill`` of 2/s the bucket is back
+            at full burst before each sweep.
+        peer_refill: Sustained sends/sec per recipient.
+    """
+
+    enabled: bool = True
+    transport_capacity: float = 60.0
+    transport_refill: float = 10.0
+    peer_capacity: float = 20.0
+    peer_refill: float = 2.0
+
+
 class RegistryConfig(BaseModel):
     """Realm peer-registry settings (T11).
 
@@ -183,6 +245,8 @@ class SKCommsConfig(BaseModel):
     daemon: DaemonConfig = Field(default_factory=DaemonConfig)
     housekeeping: HousekeepingConfig = Field(default_factory=HousekeepingConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
+    outbox: OutboxConfig = Field(default_factory=OutboxConfig)
+    ratelimit: OutboundRateLimitConfig = Field(default_factory=OutboundRateLimitConfig)
     transports: dict[str, TransportConfig] = Field(default_factory=dict)
 
     @classmethod
@@ -219,6 +283,8 @@ class SKCommsConfig(BaseModel):
         daemon_data = skcomms_section.get("daemon", {})
         housekeeping_data = skcomms_section.get("housekeeping", {})
         observability_data = skcomms_section.get("observability", {})
+        outbox_data = skcomms_section.get("outbox", {})
+        ratelimit_data = skcomms_section.get("ratelimit", {})
 
         return cls(
             version=skcomms_section.get("version", "1.0.0"),
@@ -245,6 +311,12 @@ class SKCommsConfig(BaseModel):
                 ObservabilityConfig(**observability_data)
                 if observability_data
                 else ObservabilityConfig()
+            ),
+            outbox=OutboxConfig(**outbox_data) if outbox_data else OutboxConfig(),
+            ratelimit=(
+                OutboundRateLimitConfig(**ratelimit_data)
+                if ratelimit_data
+                else OutboundRateLimitConfig()
             ),
             transports=transport_configs,
         )

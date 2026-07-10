@@ -40,7 +40,7 @@ from .models import (
     RoutingMode,
     Urgency,
 )
-from .outbox import PersistentOutbox
+from .outbox import OutboxFullError, PersistentOutbox
 from .ratelimit import RateLimiter
 from .signaling import SignalingBroker, signaling_ws_endpoint
 
@@ -677,9 +677,9 @@ async def get_metrics():
     """Expose skcomms observability metrics in Prometheus text format.
 
     Dependency-free plain-text exposition (version 0.0.4): outbox depth per
-    rail + total, dead-letter queue depth, cumulative per-rail failure and 4xx
-    counters, and a per-rail ``up`` gauge. Everything a scrape needs to alert
-    on the outbox-depth leak that froze a fleet laptop.
+    rail + total, dead-letter queue depth, cumulative per-rail failure, 4xx,
+    and depth-cap eviction counters, and a per-rail ``up`` gauge. Everything a
+    scrape needs to alert on the outbox-depth leak that froze a fleet laptop.
 
     Returns:
         A ``text/plain`` Prometheus exposition response.
@@ -688,6 +688,7 @@ async def get_metrics():
 
     from .observability import (
         PROMETHEUS_CONTENT_TYPE,
+        collect_eviction_counts,
         collect_outbox_depths,
         dead_letter_depth,
         render_prometheus,
@@ -701,6 +702,7 @@ async def get_metrics():
         dead_letter_depth=dead_letter_depth(getattr(comm, "_outbox", None)),
         failure_counters=comm.router.failure_stats(),
         transport_health=comm.router.health_report(),
+        eviction_counts=collect_eviction_counts(transports),
     )
     return PlainTextResponse(body, media_type=PROMETHEUS_CONTENT_TYPE)
 
@@ -876,6 +878,15 @@ async def send_message(request: SendMessageRequest):
             attempts=attempts,
         )
 
+    except OutboxFullError as exc:
+        # Backpressure (coord 74d7b799): delivery failed AND the durable retry
+        # queue is at its bound. 429 tells the local caller to slow down and
+        # retry later instead of silently losing retryability.
+        logger.warning("Send rejected with backpressure: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"outbox full, retry later: {exc}",
+        ) from exc
     except Exception as exc:
         logger.exception("Failed to send message")
         raise HTTPException(

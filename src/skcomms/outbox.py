@@ -44,7 +44,7 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, NamedTuple, Optional
 
 from pydantic import BaseModel, Field
 
@@ -53,6 +53,54 @@ logger = logging.getLogger("skcomms.outbox")
 DEFAULT_OUTBOX_DIR = "~/.skcapstone/skcomms/outbox"
 DEFAULT_MAX_RETRIES = 10
 DEFAULT_BASE_BACKOFF = 5
+
+# Bounds (coord 74d7b799): the pending queue is one-file-per-entry on disk and
+# historically had NO size bound (only supersede_key eviction), so a dead rail
+# could grow it without limit (the 140k-file class of failure). The default cap
+# is generous for a healthy deploy but bounds the pathological case; <= 0
+# disables the bound (explicit opt-out, not the default).
+DEFAULT_MAX_PENDING = 5000
+
+# Paced draining (coord 74d7b799): a backlog flush that retries EVERY due entry
+# in a single sweep can DoS a receiving node's inbox rate limiter and re-dead-
+# letter en masse the moment a rail comes back. Each sweep now attempts at most
+# this many deliveries; the remainder stays queued for the next sweep interval,
+# so a large backlog drains in bounded, paced batches. <= 0 disables pacing.
+#
+# INVARIANT: keep this <= the outbound rate limiter's peer_capacity
+# (config.OutboundRateLimitConfig.peer_capacity, default 20). A same-peer
+# backlog sweep larger than the peer bucket guarantees the tail of every sweep
+# is throttled locally, so the paced sweep and the peer bucket would fight
+# instead of cooperate. 20 attempts per sweep with the default 30s sweep
+# interval and 2 tokens/s peer refill means the bucket is back at full burst
+# capacity before each sweep starts.
+DEFAULT_SWEEP_BATCH = 20
+
+
+class OutboxFullError(RuntimeError):
+    """Raised when the pending queue is at its bound and cannot accept more.
+
+    The explicit backpressure signal to local callers (coord 74d7b799): the
+    HTTP API maps it to a 429, library callers see the exception instead of
+    silently growing an unbounded on-disk queue.
+    """
+
+
+class _DeliveryOutcome(NamedTuple):
+    """Result of one outbox delivery attempt through the router.
+
+    Attributes:
+        delivered: True when a rail accepted the message.
+        throttled: True when the attempt failed ONLY because every attempted
+            rail was denied by the LOCAL outbound rate limiter (every failed
+            attempt error starts with ``throttled:``, so nothing reached the
+            wire). Per ``Router._throttle_check``'s contract that is pacing,
+            not a delivery failure: such an attempt must not consume the
+            entry's durable retry budget or advance it toward dead-letter.
+    """
+
+    delivered: bool
+    throttled: bool = False
 
 
 def default_outbox_dir() -> Path:
@@ -158,6 +206,11 @@ class PersistentOutbox:
         max_retries: Default max retries per message.
         base_backoff: Base backoff in seconds (doubled each retry).
         router: Optional SKComms Router for retry delivery.
+        max_pending: Bound on the pending queue's entry count. When a new
+            enqueue would exceed it, :class:`OutboxFullError` is raised
+            (explicit backpressure). Values <= 0 disable the bound.
+        sweep_batch: Max delivery attempts per retry sweep, so a backlog
+            drains in bounded, paced batches. Values <= 0 disable pacing.
     """
 
     def __init__(
@@ -166,6 +219,8 @@ class PersistentOutbox:
         max_retries: int = DEFAULT_MAX_RETRIES,
         base_backoff: int = DEFAULT_BASE_BACKOFF,
         router: Optional[object] = None,
+        max_pending: int = DEFAULT_MAX_PENDING,
+        sweep_batch: int = DEFAULT_SWEEP_BATCH,
     ) -> None:
         self._root = (
             Path(outbox_dir).expanduser() if outbox_dir is not None else default_outbox_dir()
@@ -176,6 +231,8 @@ class PersistentOutbox:
         self._max_retries = max_retries
         self._base_backoff = base_backoff
         self._router = router
+        self._max_pending = max_pending
+        self._sweep_batch = sweep_batch
 
         self._pending.mkdir(parents=True, exist_ok=True)
         self._dead.mkdir(parents=True, exist_ok=True)
@@ -225,6 +282,12 @@ class PersistentOutbox:
 
         Returns:
             OutboxEntry: The queued entry.
+
+        Raises:
+            OutboxFullError: The pending queue is at ``max_pending`` and this
+                enqueue would grow it (rewrites of an existing envelope_id and
+                supersede-key replacements do not grow the queue, so they are
+                always accepted).
         """
         entry = OutboxEntry(
             envelope_id=envelope_id,
@@ -251,6 +314,34 @@ class PersistentOutbox:
                     "Superseded %d stale outbox entr%s for key %s",
                     evicted, "y" if evicted == 1 else "ies", supersede_key,
                 )
+
+        # Bound check (after supersede eviction, which may have freed a slot).
+        # Rewriting an existing entry never grows the queue, so it is exempt.
+        #
+        # NOTE: this is a deliberate SOFT bound. pending_count is a directory
+        # glob, so (a) concurrent enqueues (e.g. from the FastAPI threadpool)
+        # can race the check-then-write and overshoot the cap by a few
+        # entries (a TOCTOU window), and (b) the count is an O(n) scan per
+        # enqueue at queue depth n. Both are accepted trade-offs: the bound
+        # exists to stop unbounded 140k-file growth, not to enforce an exact
+        # ceiling, and no correctness depends on the precise count. If the
+        # O(n) scan ever shows up in profiles, cache the count and reconcile
+        # it against the glob periodically.
+        if (
+            self._max_pending > 0
+            and not (self._pending / f"{entry.envelope_id}.json").exists()
+            and self.pending_count >= self._max_pending
+        ):
+            logger.warning(
+                "Outbox pending queue full (%d >= %d): refusing enqueue of %s",
+                self.pending_count,
+                self._max_pending,
+                envelope_id[:8],
+            )
+            raise OutboxFullError(
+                f"outbox pending queue is full ({self._max_pending} entries): "
+                f"refusing to enqueue {envelope_id}"
+            )
 
         self._write_entry(self._pending, entry)
         logger.info("Queued %s for retry (error: %s)", envelope_id[:8], error[:60])
@@ -282,17 +373,47 @@ class PersistentOutbox:
             supersede_key=supersede_key,
         )
 
-    def retry_all(self) -> dict[str, Any]:
-        """Sweep the pending queue and retry all eligible messages.
+    def retry_all(self, max_batch: Optional[int] = None) -> dict[str, Any]:
+        """Sweep the pending queue and retry eligible messages, paced.
 
         Only retries messages whose next_retry_at has passed.
         Successful deliveries are removed from the queue.
         Exhausted retries move to dead letter.
 
+        Draining is paced (coord 74d7b799): at most ``max_batch`` (default the
+        instance's ``sweep_batch``) delivery attempts are made per sweep, and
+        any further due entries are deferred to the next sweep. This keeps a
+        large backlog flush from flooding a recovering rail or a receiving
+        node's inbox rate limiter.
+
+        Throttle-only failures (every attempted rail denied by the LOCAL
+        outbound rate limiter, nothing reached the wire) are pacing, not
+        delivery failures: they do NOT consume the entry's durable retry
+        budget (no ``attempt_count`` increment, no progress toward
+        dead-letter) and are reported under 'throttled'. The entry is simply
+        retried on a later, paced sweep, per ``Router._throttle_check``'s
+        contract.
+
+        Args:
+            max_batch: Per-sweep delivery-attempt cap. ``None`` uses the
+                instance's ``sweep_batch``; values <= 0 disable pacing.
+
         Returns:
-            dict: Summary with 'retried', 'delivered', 'dead_lettered', 'skipped'.
+            dict: Summary with 'retried', 'delivered', 'dead_lettered',
+            'skipped', 'throttled' (attempts denied entirely by the local
+            outbound rate limiter, retried later with no retry-budget cost),
+            and 'deferred' (due entries left for the next sweep because the
+            batch cap was reached).
         """
-        results = {"retried": 0, "delivered": 0, "dead_lettered": 0, "skipped": 0}
+        batch_cap = self._sweep_batch if max_batch is None else max_batch
+        results = {
+            "retried": 0,
+            "delivered": 0,
+            "dead_lettered": 0,
+            "skipped": 0,
+            "throttled": 0,
+            "deferred": 0,
+        }
         now = datetime.now(timezone.utc)
 
         for entry_path in sorted(self._pending.glob("*.json")):
@@ -315,10 +436,31 @@ class PersistentOutbox:
                 results["skipped"] += 1
                 continue
 
-            results["retried"] += 1
-            delivered = self._attempt_delivery(entry)
+            # Paced batch: budget exhausted, leave the rest for the next sweep.
+            # Throttle-only attempts consume the SWEEP budget too (once the
+            # outbound buckets are dry, further attempts this sweep would
+            # throttle as well, so trying them is wasted work), but never the
+            # per-entry retry budget below.
+            if batch_cap > 0 and (results["retried"] + results["throttled"]) >= batch_cap:
+                results["deferred"] += 1
+                continue
 
-            if delivered:
+            outcome = self._attempt_delivery(entry)
+
+            if not outcome.delivered and outcome.throttled:
+                # Every attempted rail was denied by the LOCAL outbound rate
+                # limiter; nothing reached the wire. That is pacing, not a
+                # delivery failure: leave the entry untouched (no
+                # attempt_count increment, no dead-letter progress) so a
+                # throttled backlog can never dead-letter messages that were
+                # never actually attempted on the wire. It stays due and is
+                # retried on a later, paced sweep.
+                results["throttled"] += 1
+                continue
+
+            results["retried"] += 1
+
+            if outcome.delivered:
                 entry_path.unlink(missing_ok=True)
                 results["delivered"] += 1
                 logger.info("Retry delivered %s", entry.envelope_id[:8])
@@ -643,19 +785,63 @@ class PersistentOutbox:
         while not self._stop_event.is_set():
             try:
                 results = self.retry_all()
-                if results["retried"] > 0:
+                if (
+                    results["retried"] > 0
+                    or results.get("throttled", 0) > 0
+                    or results.get("deferred", 0) > 0
+                ):
                     logger.info(
-                        "Outbox sweep: retried=%d delivered=%d dead=%d skipped=%d",
+                        "Outbox sweep: retried=%d delivered=%d dead=%d "
+                        "skipped=%d throttled=%d deferred=%d",
                         results["retried"],
                         results["delivered"],
                         results["dead_lettered"],
                         results["skipped"],
+                        results.get("throttled", 0),
+                        results.get("deferred", 0),
                     )
             except Exception as exc:
                 logger.warning("Outbox retry sweep error: %s", exc)
             self._stop_event.wait(timeout=self._retry_interval)
 
-    def _deliver_federation(self, entry: OutboxEntry, kind: str) -> bool:
+    def _report_outcome(self, entry: OutboxEntry, report: object) -> _DeliveryOutcome:
+        """Fold a router :class:`DeliveryReport` into a :class:`_DeliveryOutcome`.
+
+        Also records WHY a failed attempt failed: ``entry.last_error`` is set
+        from the report's last failed attempt, so a dead-lettered entry shows
+        operators the actual reason instead of a stale or empty error (report
+        failures previously only surfaced when an exception was raised).
+
+        The throttled flag is True only when the report failed AND every
+        failed attempt error starts with ``throttled:`` (the router's local
+        outbound rate limiter denied the send before it reached the
+        transport). A report with no attempts at all (e.g. no candidate
+        rails) is a real failure, not a throttle.
+
+        Args:
+            entry: The outbox entry being delivered (last_error updated).
+            report: A router DeliveryReport (duck-typed for test stubs).
+
+        Returns:
+            _DeliveryOutcome: The delivery outcome.
+        """
+        delivered = bool(getattr(report, "delivered", False))
+        attempts = list(getattr(report, "attempts", None) or [])
+        failed_errors = [
+            (getattr(attempt, "error", None) or "")
+            for attempt in attempts
+            if not getattr(attempt, "success", False)
+        ]
+        if not delivered and failed_errors:
+            entry.last_error = failed_errors[-1]
+        throttled = (
+            not delivered
+            and bool(failed_errors)
+            and all(err.startswith("throttled:") for err in failed_errors)
+        )
+        return _DeliveryOutcome(delivered=delivered, throttled=throttled)
+
+    def _deliver_federation(self, entry: OutboxEntry, kind: str) -> _DeliveryOutcome:
         """Deliver a federation (Envelope v1 / SignedEnvelope) entry.
 
         Deserializes the entry into a :class:`~skcomms.envelope.SignedEnvelope`
@@ -679,7 +865,7 @@ class PersistentOutbox:
                 :func:`classify_envelope_json`).
 
         Returns:
-            bool: True if delivery succeeded.
+            _DeliveryOutcome: The delivery outcome (delivered / throttled).
         """
         from .envelope import Envelope, SignedEnvelope
 
@@ -694,12 +880,12 @@ class PersistentOutbox:
         route_signed = getattr(self._router, "route_signed", None)
         if callable(route_signed):
             report = route_signed(signed)
-            return getattr(report, "delivered", False)
+            return self._report_outcome(entry, report)
 
         route_bytes = getattr(self._router, "route_bytes", None)
         if callable(route_bytes):
             report = route_bytes(signed_bytes, entry.recipient)
-            return getattr(report, "delivered", False)
+            return self._report_outcome(entry, report)
 
         # No federation-aware router path available yet (pre-S3/S4). Keep the
         # canonical SignedEnvelope on disk; do not crash the sweep.
@@ -712,9 +898,9 @@ class PersistentOutbox:
             "federation route path",
             entry.envelope_id[:8],
         )
-        return False
+        return _DeliveryOutcome(delivered=False)
 
-    def _attempt_delivery(self, entry: OutboxEntry) -> bool:
+    def _attempt_delivery(self, entry: OutboxEntry) -> _DeliveryOutcome:
         """Try to deliver a queued message via the router.
 
         The federation contract (SKFed S7) is that ``envelope_json`` holds a
@@ -735,10 +921,12 @@ class PersistentOutbox:
             entry: The outbox entry to deliver.
 
         Returns:
-            bool: True if delivery succeeded.
+            _DeliveryOutcome: The delivery outcome. ``throttled=True`` means
+            every attempted rail was denied by the local outbound rate
+            limiter and nothing reached the wire (pacing, not failure).
         """
         if self._router is None:
-            return False
+            return _DeliveryOutcome(delivered=False)
 
         kind = classify_envelope_json(entry.envelope_json)
 
@@ -748,7 +936,7 @@ class PersistentOutbox:
                 "Outbox delivery skipped for %s: corrupt entry (run migrate_outbox)",
                 entry.envelope_id[:8],
             )
-            return False
+            return _DeliveryOutcome(delivered=False)
 
         try:
             if kind in ("signed", "envelope_v1"):
@@ -758,7 +946,7 @@ class PersistentOutbox:
 
             envelope = MessageEnvelope.from_bytes(entry.envelope_json.encode("utf-8"))
             report = self._router.route(envelope)
-            return getattr(report, "delivered", False)
+            return self._report_outcome(entry, report)
         except (json.JSONDecodeError, ValueError) as exc:
             entry.last_error = str(exc)
             logger.warning(
@@ -766,7 +954,7 @@ class PersistentOutbox:
                 entry.envelope_id[:8],
                 exc,
             )
-            return False
+            return _DeliveryOutcome(delivered=False)
         except OSError as exc:
             entry.last_error = str(exc)
             logger.warning(
@@ -774,7 +962,7 @@ class PersistentOutbox:
                 entry.envelope_id[:8],
                 exc,
             )
-            return False
+            return _DeliveryOutcome(delivered=False)
         except Exception as exc:
             entry.last_error = str(exc)
             logger.warning(
@@ -782,7 +970,7 @@ class PersistentOutbox:
                 entry.envelope_id[:8],
                 exc,
             )
-            return False
+            return _DeliveryOutcome(delivered=False)
 
     def _evict_superseded(self, supersede_key: str) -> int:
         """Evict pending entries sharing *supersede_key* (ephemeral supersede).

@@ -47,6 +47,110 @@ ENVELOPE_SUFFIX = ".skc.json"
 LARGE_FILE_THRESHOLD = 10 * 1024 * 1024  # 10 MB — threshold to trigger chunking
 TRANSFER_CHUNK_SIZE = 1 * 1024 * 1024  # 1 MB  — size of each chunk
 
+# Outbox depth cap (coord 74d7b799): hard bound on envelope files per outbox
+# directory, enforced at send time with oldest-eviction. The TTL pruners above
+# bound AGE but not COUNT, so a burst (or a broken housekeeping timer) could
+# still pile up files without limit (the 140k-file freeze). <= 0 disables.
+DEFAULT_MAX_OUTBOX_DEPTH = 1000
+
+
+def _trim_dir_to_depth(
+    directory: Path, max_depth: int, suffix: str, log: logging.Logger
+) -> int:
+    """Evict oldest envelope files so *directory* holds at most *max_depth*.
+
+    Shared depth cap used by the file and syncthing transports' send paths
+    (coord 74d7b799). Files are ordered oldest-first by (mtime, name) and
+    evicted until the count is within the cap. Hidden files (dot-prefixed
+    in-flight ``.tmp`` writes) are never counted or evicted.
+
+    Args:
+        directory: The outbox directory to trim. Missing dir trims nothing.
+        max_depth: Max number of envelope files to keep. <= 0 disables.
+        suffix: Envelope filename suffix to match (e.g. ``.skc.json``).
+        log: Logger for the eviction summary.
+
+    Returns:
+        int: The number of files evicted.
+    """
+    if max_depth <= 0 or not directory.exists():
+        return 0
+
+    files = [
+        f
+        for f in directory.glob(f"*{suffix}")
+        if f.is_file() and not f.name.startswith(".")
+    ]
+    excess = len(files) - max_depth
+    if excess <= 0:
+        return 0
+
+    def _sort_key(path: Path) -> tuple[float, str]:
+        try:
+            return (path.stat().st_mtime, path.name)
+        except OSError:
+            return (0.0, path.name)
+
+    files.sort(key=_sort_key)
+    evicted = 0
+    for stale in files[:excess]:
+        try:
+            stale.unlink()
+            evicted += 1
+        except OSError as exc:
+            log.warning("Failed to evict %s: %s", stale, exc)
+
+    if evicted:
+        log.warning(
+            "Outbox depth cap: evicted %d oldest envelope(s) from %s "
+            "(cap=%d)",
+            evicted,
+            directory,
+            max_depth,
+        )
+    return evicted
+
+
+# Depth-cap evictions delete UNDELIVERED envelopes: each one is accepted data
+# loss and must be visible beyond a log line. Every eviction batch fires an
+# ``outbox_evicted`` sk-alert, rate limited per transport so a sustained
+# overflow (one eviction per send) cannot storm the alert bus, and increments
+# a cumulative counter surfaced via health_check details and /metrics
+# (``skcomms_outbox_evictions_total``).
+_EVICTION_ALERT_MIN_INTERVAL_S = 300.0
+_eviction_alert_last: dict[str, float] = {}
+
+
+def _alert_evictions(transport_name: str, directory: Path, evicted: int, cap: int) -> None:
+    """Fire a rate-limited ``outbox_evicted`` sk-alert for depth-cap evictions.
+
+    Args:
+        transport_name: The evicting rail (rate-limit key).
+        directory: The outbox directory that was trimmed.
+        evicted: Number of envelope files deleted in this batch.
+        cap: The depth cap that triggered the eviction.
+    """
+    now = time.monotonic()
+    last = _eviction_alert_last.get(transport_name)
+    if last is not None and now - last < _EVICTION_ALERT_MIN_INTERVAL_S:
+        return
+    _eviction_alert_last[transport_name] = now
+    try:
+        from ..integration import alert
+
+        alert(
+            "outbox_evicted",
+            {
+                "transport": transport_name,
+                "directory": str(directory),
+                "evicted": evicted,
+                "max_outbox_depth": cap,
+            },
+            level="warn",
+        )
+    except Exception as exc:  # alerting must never break a send
+        logger.warning("outbox_evicted alert failed: %s", exc)
+
 
 def _prune_dir_by_ttl(directory: Path, ttl_hours: float, log: logging.Logger) -> int:
     """Delete regular files in *directory* older than *ttl_hours* (by mtime).
@@ -162,6 +266,7 @@ class FileTransport(Transport):
         archive: bool = True,
         archive_path: Optional[Path] = None,
         poll_interval_ms: int = 1000,
+        max_outbox_depth: int = DEFAULT_MAX_OUTBOX_DEPTH,
         **kwargs,
     ):
         """Initialize the file transport.
@@ -173,10 +278,17 @@ class FileTransport(Transport):
             archive: Whether to archive processed inbox files.
             archive_path: Override archive directory location.
             poll_interval_ms: Suggested polling interval (informational).
+            max_outbox_depth: Hard cap on envelope files in the outbox,
+                enforced at send time with oldest-eviction (coord 74d7b799).
+                <= 0 disables the cap.
         """
         self.priority = priority
         self._archive = archive
         self._poll_interval_ms = poll_interval_ms
+        self._max_outbox_depth = max_outbox_depth
+        # Cumulative depth-cap evictions (accepted data loss); surfaced via
+        # health_check details and the /metrics eviction counter.
+        self._evictions_total = 0
 
         self._outbox = (
             Path(outbox_path).expanduser()
@@ -195,7 +307,7 @@ class FileTransport(Transport):
 
         Args:
             config: Dict with optional keys: outbox_path, inbox_path,
-                    archive, archive_path, poll_interval_ms.
+                    archive, archive_path, poll_interval_ms, max_outbox_depth.
         """
         if "outbox_path" in config:
             self._outbox = Path(config["outbox_path"]).expanduser()
@@ -207,6 +319,8 @@ class FileTransport(Transport):
             self._archive = config["archive"]
         if "poll_interval_ms" in config:
             self._poll_interval_ms = config["poll_interval_ms"]
+        if "max_outbox_depth" in config:
+            self._max_outbox_depth = int(config["max_outbox_depth"])
 
     def is_available(self) -> bool:
         """Check if outbox and inbox directories are accessible.
@@ -246,6 +360,17 @@ class FileTransport(Transport):
 
             tmp_target.write_bytes(envelope_bytes)
             tmp_target.rename(target)
+
+            # Depth cap (coord 74d7b799): keep at most max_outbox_depth
+            # envelope files, evicting oldest-first, so a burst can never
+            # grow the outbox without bound between housekeeping passes.
+            # Evictions are accepted data loss: count them and sk-alert.
+            evicted = _trim_dir_to_depth(
+                self._outbox, self._max_outbox_depth, ENVELOPE_SUFFIX, logger
+            )
+            if evicted:
+                self._evictions_total += evicted
+                _alert_evictions(self.name, self._outbox, evicted, self._max_outbox_depth)
 
             elapsed = (time.monotonic() - start) * 1000
             logger.info("Wrote %s to %s (%0.1fms)", envelope_id[:8], target, elapsed)
@@ -327,6 +452,7 @@ class FileTransport(Transport):
                 "inbox_path": str(self._inbox),
                 "pending_outbox": outbox_count,
                 "pending_inbox": inbox_count,
+                "outbox_evictions_total": self._evictions_total,
                 "poll_interval_ms": self._poll_interval_ms,
             }
 
@@ -652,6 +778,7 @@ def create_transport(
     outbox_path: Optional[str] = None,
     inbox_path: Optional[str] = None,
     archive: bool = True,
+    max_outbox_depth: int = DEFAULT_MAX_OUTBOX_DEPTH,
     **kwargs,
 ) -> FileTransport:
     """Factory function for the router's transport loader.
@@ -661,6 +788,7 @@ def create_transport(
         outbox_path: Override outbox directory.
         inbox_path: Override inbox directory.
         archive: Whether to archive processed files.
+        max_outbox_depth: Outbox depth cap (oldest-eviction; <= 0 disables).
 
     Returns:
         Configured FileTransport instance.
@@ -670,4 +798,5 @@ def create_transport(
         inbox_path=Path(inbox_path) if inbox_path else None,
         priority=priority,
         archive=archive,
+        max_outbox_depth=max_outbox_depth,
     )

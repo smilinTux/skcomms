@@ -334,9 +334,10 @@ def test_attempt_delivery_routes_signed_envelope(tmp_path):
     outbox = PersistentOutbox(outbox_dir=tmp_path, router=router)
     entry = _signed_entry()
 
-    delivered = outbox._attempt_delivery(entry)
+    outcome = outbox._attempt_delivery(entry)
 
-    assert delivered is True
+    assert outcome.delivered is True
+    assert outcome.throttled is False
     assert len(router.routed_signed) == 1
     assert router.routed_signed[0].envelope.to_fqid == "jarvis@chef.skworld"
 
@@ -346,9 +347,9 @@ def test_attempt_delivery_routes_signed_via_bytes_router(tmp_path):
     outbox = PersistentOutbox(outbox_dir=tmp_path, router=router)
     entry = _signed_entry()
 
-    delivered = outbox._attempt_delivery(entry)
+    outcome = outbox._attempt_delivery(entry)
 
-    assert delivered is True
+    assert outcome.delivered is True
     assert len(router.routed_bytes) == 1
     data, recipient = router.routed_bytes[0]
     assert recipient == "jarvis@chef.skworld"
@@ -361,11 +362,11 @@ def test_attempt_delivery_signed_held_when_no_federation_path(tmp_path):
     outbox = PersistentOutbox(outbox_dir=tmp_path, router=router)
     entry = _signed_entry()
 
-    delivered = outbox._attempt_delivery(entry)
+    outcome = outbox._attempt_delivery(entry)
 
     # No crash; entry held (not delivered) and legacy route() NOT used for a
     # SignedEnvelope.
-    assert delivered is False
+    assert outcome.delivered is False
     assert router.calls == 0
     assert "federation route path" in entry.last_error
 
@@ -375,9 +376,9 @@ def test_attempt_delivery_legacy_uses_legacy_route(tmp_path):
     outbox = PersistentOutbox(outbox_dir=tmp_path, router=router)
     entry = _legacy_entry()
 
-    delivered = outbox._attempt_delivery(entry)
+    outcome = outbox._attempt_delivery(entry)
 
-    assert delivered is True
+    assert outcome.delivered is True
     assert router.calls == 1
 
 
@@ -390,8 +391,8 @@ def test_attempt_delivery_corrupt_does_not_crash(tmp_path):
         envelope_json="{ not json ",
     )
 
-    delivered = outbox._attempt_delivery(entry)
+    outcome = outbox._attempt_delivery(entry)
 
-    assert delivered is False
+    assert outcome.delivered is False
     assert router.routed_signed == []
     assert "corrupt" in entry.last_error.lower()

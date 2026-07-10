@@ -17,6 +17,7 @@ from typing import Optional
 
 from .envelope import SignedEnvelope
 from .models import MessageEnvelope, MessagePayload, RoutingConfig, RoutingMode
+from .ratelimit import RateLimiter
 from .transport import (
     DeliveryReport,
     SendResult,
@@ -92,6 +93,16 @@ class Router:
     Args:
         transports: List of configured Transport instances.
         default_mode: Fallback routing mode when envelope doesn't specify.
+        store_forward_transport: Name of the last-resort S&F rail.
+        rate_limiter: Optional outbound :class:`~skcomms.ratelimit.RateLimiter`
+            (coord 74d7b799). When set, EVERY send attempt (route/route_bytes/
+            route_signed, retries, broadcasts, store-and-forward) passes
+            through it in :meth:`_try_send`; throttled attempts fail fast with
+            a ``throttled:`` error and never reach the transport, so a backlog
+            flush or presence broadcast is paced instead of flooding a peer.
+            ``None`` (default) keeps the historical unthrottled behavior for
+            directly constructed routers; :class:`skcomms.core.SKComms` wires
+            one in from config.
     """
 
     STEALTH_CATEGORIES = {TransportCategory.STEALTH, TransportCategory.FILE_BASED}
@@ -102,9 +113,11 @@ class Router:
         transports: Optional[list[Transport]] = None,
         default_mode: RoutingMode = RoutingMode.FAILOVER,
         store_forward_transport: str = DEFAULT_STORE_FORWARD_TRANSPORT,
+        rate_limiter: Optional[RateLimiter] = None,
     ):
         self._transports: list[Transport] = transports or []
         self._default_mode = default_mode
+        self._rate_limiter = rate_limiter
         # Name of the designated store-and-forward fallback rail. When all
         # direct rails fail this rail is tried last (if available + not in
         # cooldown) as the final in-band delivery attempt.
@@ -794,8 +807,71 @@ class Router:
         """
         return {name: dict(stats) for name, stats in self._failure_counters.items()}
 
+    def _count_throttle(self, transport_name: str) -> None:
+        """Increment the cumulative outbound-throttle counter for a rail.
+
+        Kept separate from ``failures``/``http_4xx``: a throttle is local
+        pacing (coord 74d7b799), not a transport failure, so it never arms the
+        cooldown and never inflates the failure totals. Surfaced via
+        :meth:`failure_stats` as the ``throttled`` key.
+
+        Args:
+            transport_name: Rail whose send was throttled.
+        """
+        stats = self._failure_counters.get(transport_name)
+        if stats is None:
+            stats = {"failures": 0, "http_4xx": 0, "last_error": None}
+            self._failure_counters[transport_name] = stats
+        stats["throttled"] = stats.get("throttled", 0) + 1
+
+    def _throttle_check(self, transport: Transport, recipient: str) -> Optional[SendResult]:
+        """Outbound rate-limit gate for one send attempt (coord 74d7b799).
+
+        Consults the router's outbound :class:`RateLimiter` (transport bucket +
+        per-peer bucket). A denied attempt returns a failed
+        :class:`SendResult` whose error starts with ``throttled:`` WITHOUT
+        touching the transport, so throttling is pacing, never wire traffic.
+        The throttle is deliberately NOT a ``perm:`` error and is excluded
+        from the cooldown/failure accounting: durable callers (the
+        PersistentOutbox) simply retry the entry on a later, paced sweep.
+
+        Args:
+            transport: The rail about to be attempted.
+            recipient: The recipient (peer bucket key; ``*`` broadcasts use
+                only the transport bucket).
+
+        Returns:
+            A failed SendResult when throttled, else None (attempt allowed).
+        """
+        if self._rate_limiter is None:
+            return None
+        peer = recipient if recipient != "*" else ""
+        if self._rate_limiter.allow(transport.name, peer):
+            return None
+        wait = self._rate_limiter.wait_time(transport.name, peer)
+        self._count_throttle(transport.name)
+        logger.debug(
+            "Outbound throttled on '%s' for %s (retry in ~%.1fs)",
+            transport.name,
+            recipient,
+            wait,
+        )
+        return SendResult(
+            success=False,
+            transport_name=transport.name,
+            envelope_id="",
+            latency_ms=0.0,
+            error=(
+                f"throttled: outbound rate limit on '{transport.name}' "
+                f"(retry in ~{wait:.1f}s)"
+            ),
+        )
+
     def _try_send(self, transport: Transport, envelope_bytes: bytes, recipient: str) -> SendResult:
         """Attempt to send through a single transport with error handling."""
+        throttled = self._throttle_check(transport, recipient)
+        if throttled is not None:
+            return throttled
         start = time.monotonic()
         try:
             result = transport.send(envelope_bytes, recipient)

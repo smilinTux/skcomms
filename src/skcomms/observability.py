@@ -37,23 +37,23 @@ logger = logging.getLogger("skcomms.observability")
 AlertFn = Callable[..., bool]
 
 
-def collect_outbox_depths(transports: Iterable[object]) -> dict[str, int]:
-    """Return per-transport pending outbox depth from each ``health_check``.
+def _collect_detail_ints(transports: Iterable[object], key: str) -> dict[str, int]:
+    """Return a per-transport int detail from each ``health_check``.
 
-    Duck-typed: every transport whose ``health_check().details`` carries a
-    ``pending_outbox`` key contributes its count; rails without one (realtime
-    push rails, etc.) are skipped. Uses the SAME source GET /api/v1/status
-    already reports, so the numbers never disagree. A transport whose
-    health_check raises is skipped (logged at debug) rather than aborting the
-    sweep.
+    Duck-typed: every transport whose ``health_check().details`` carries
+    *key* contributes its value; rails without it (realtime push rails,
+    etc.) are skipped. Uses the SAME source GET /api/v1/status already
+    reports, so the numbers never disagree. A transport whose health_check
+    raises is skipped (logged at debug) rather than aborting the sweep.
 
     Args:
         transports: Transport instances to inspect (e.g. ``router.transports``).
+        key: The ``details`` key to collect (must coerce to int).
 
     Returns:
-        ``{transport_name: pending_outbox_count}`` for reporting rails.
+        ``{transport_name: int_value}`` for reporting rails.
     """
-    depths: dict[str, int] = {}
+    values: dict[str, int] = {}
     for transport in transports:
         name = getattr(transport, "name", transport.__class__.__name__)
         health = getattr(transport, "health_check", None)
@@ -64,12 +64,42 @@ def collect_outbox_depths(transports: Iterable[object]) -> dict[str, int]:
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("health_check failed for transport %s: %s", name, exc)
             continue
-        if "pending_outbox" in details:
+        if key in details:
             try:
-                depths[name] = int(details["pending_outbox"])
+                values[name] = int(details[key])
             except (TypeError, ValueError):
                 continue
-    return depths
+    return values
+
+
+def collect_outbox_depths(transports: Iterable[object]) -> dict[str, int]:
+    """Return per-transport pending outbox depth from each ``health_check``.
+
+    Args:
+        transports: Transport instances to inspect (e.g. ``router.transports``).
+
+    Returns:
+        ``{transport_name: pending_outbox_count}`` for reporting rails.
+    """
+    return _collect_detail_ints(transports, "pending_outbox")
+
+
+def collect_eviction_counts(transports: Iterable[object]) -> dict[str, int]:
+    """Return per-transport cumulative depth-cap eviction counts.
+
+    Depth-cap evictions (``_trim_dir_to_depth`` in the file / syncthing
+    rails) silently delete UNDELIVERED envelopes to hold the outbox cap:
+    each one is accepted data loss, so the cumulative count is surfaced as
+    a first-class counter (``skcomms_outbox_evictions_total``) rather than
+    only a log warning.
+
+    Args:
+        transports: Transport instances to inspect (e.g. ``router.transports``).
+
+    Returns:
+        ``{transport_name: evictions_total}`` for reporting rails.
+    """
+    return _collect_detail_ints(transports, "outbox_evictions_total")
 
 
 def total_outbox_depth(transports: Iterable[object]) -> int:
@@ -276,6 +306,7 @@ def render_prometheus(
     dead_letter_depth: int,
     failure_counters: dict[str, dict],
     transport_health: Optional[dict[str, dict]] = None,
+    eviction_counts: Optional[dict[str, int]] = None,
 ) -> str:
     """Render a Prometheus text exposition of skcomms observability metrics.
 
@@ -291,6 +322,9 @@ def render_prometheus(
             (see :meth:`skcomms.router.Router.failure_stats`).
         transport_health: Optional ``{transport: {"status": str, ...}}`` from
             ``router.health_report()``, used to emit an ``up`` gauge per rail.
+        eviction_counts: Optional ``{transport: evictions_total}`` (see
+            :func:`collect_eviction_counts`); each eviction is an undelivered
+            envelope deleted to hold a depth cap, i.e. accepted data loss.
 
     Returns:
         The exposition text, ending with a trailing newline.
@@ -328,6 +362,29 @@ def render_prometheus(
         label = _escape_label(name)
         http_4xx = int(failure_counters[name].get("http_4xx", 0))
         lines.append(f'skcomms_transport_http_4xx_total{{transport="{label}"}} {http_4xx}')
+
+    lines.append(
+        "# HELP skcomms_transport_throttled_total Cumulative outbound-throttled "
+        "send attempts per rail (local pacing, not failures)."
+    )
+    lines.append("# TYPE skcomms_transport_throttled_total counter")
+    for name in sorted(failure_counters):
+        label = _escape_label(name)
+        throttled = int(failure_counters[name].get("throttled", 0))
+        lines.append(f'skcomms_transport_throttled_total{{transport="{label}"}} {throttled}')
+
+    if eviction_counts is not None:
+        lines.append(
+            "# HELP skcomms_outbox_evictions_total Cumulative depth-cap evictions "
+            "per rail (each one is an undelivered envelope deleted: data loss)."
+        )
+        lines.append("# TYPE skcomms_outbox_evictions_total counter")
+        for name in sorted(eviction_counts):
+            label = _escape_label(name)
+            evictions = int(eviction_counts[name])
+            lines.append(
+                f'skcomms_outbox_evictions_total{{transport="{label}"}} {evictions}'
+            )
 
     if transport_health:
         lines.append("# HELP skcomms_transport_up Whether a rail is currently reachable (1/0).")

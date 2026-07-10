@@ -16,6 +16,27 @@
   failed state; combined with `Restart=always` the rail always comes back.
 - **SOP.md**: "Crash recovery and the second-node story" section documents what
   survives a restart, what a second instance shares, and what stays per-node.
+- **Bounded queues + outbound send throttling** (coord 74d7b799):
+  - `PersistentOutbox` now enforces a configurable `max_pending` bound
+    (default 5000; `outbox.max_pending` in config). Enqueueing past the bound
+    raises `OutboxFullError`, an `outbox_full` sk-alert fires, and the HTTP
+    API maps it to a 429 so local callers get explicit backpressure instead
+    of a silently unbounded on-disk queue. Rewrites of an existing entry and
+    supersede-key replacements never grow the queue, so they stay exempt.
+  - Retry sweeps drain in bounded, paced batches (`outbox.sweep_batch`,
+    default 50 delivery attempts per sweep; the remainder is deferred to the
+    next sweep) so a backlog flush can no longer flood a recovering rail or a
+    receiving node's inbox rate limiter.
+  - The router now passes every send attempt (route/route_bytes/route_signed,
+    retries, broadcasts, store-and-forward) through an outbound
+    `RateLimiter` (config `ratelimit:` section, enabled by default with
+    generous token-bucket limits per rail and per peer). Throttled attempts
+    fail fast with a `throttled:` error, never reach the transport, never arm
+    the cooldown, and are counted separately
+    (`skcomms_transport_throttled_total` in /metrics).
+  - `FileTransport` and `SyncthingTransport` cap outbox depth at send time
+    with oldest-eviction (`max_outbox_depth`, default 1000; per peer for
+    syncthing), bounding COUNT the same way the TTL pruners bound AGE.
 
 ## [0.2.0] - 2026-07-03
 
