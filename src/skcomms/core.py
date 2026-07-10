@@ -871,6 +871,10 @@ class SKComms:
                 },
                 level="warn",
             )
+        elif report.queued_only:
+            # Delivered ONLY to a file/syncthing queue: not confirmed receipt.
+            # Hold a durable outbox entry until an ACK confirms.
+            self._hold_queued_delivery(envelope, report, signed=signed)
 
         if report.delivered and self._ack_tracker:
             self._ack_tracker.track(envelope)
@@ -922,11 +926,110 @@ class SKComms:
                 },
                 level="warn",
             )
+        elif report.queued_only:
+            # Delivered ONLY to a file/syncthing queue: not confirmed receipt.
+            # Hold a durable outbox entry until an ACK confirms.
+            self._hold_queued_delivery(envelope, report)
 
         if report.delivered and self._ack_tracker:
             self._ack_tracker.track(envelope)
 
         return report
+
+    def _hold_queued_delivery(
+        self,
+        envelope: MessageEnvelope,
+        report: DeliveryReport,
+        *,
+        signed: Optional["SignedEnvelope"] = None,
+    ) -> None:
+        """Hold a durable outbox entry for a queued-only (sneakernet) delivery.
+
+        A file/syncthing write hands the bytes to a shared filesystem: that is a
+        QUEUE, not confirmed receipt. When the sender requested an ACK, keep a
+        durable outbox entry (``await_ack=True``, so the retry sweep leaves it
+        alone) so the message stays tracked. The entry is removed when the ACK
+        arrives (:meth:`receive`) and surfaced via a ``delivery_failed`` alert if
+        none lands within the retry horizon (:meth:`sweep_ack_timeouts`).
+
+        No-op unless the report is queued-only AND an ACK was requested (without
+        an ACK there is nothing to confirm, so nothing to hold for).
+
+        Args:
+            envelope: The MessageEnvelope that was sent.
+            report: The delivery report for the send.
+            signed: The SignedEnvelope actually put on the wire, if any, so the
+                held bytes match what was delivered (federation shape).
+        """
+        if not report.queued_only or not envelope.routing.ack_requested:
+            return
+
+        transport = report.successful_transport or "queue"
+        try:
+            if signed is not None:
+                envelope_json = signed.to_bytes().decode("utf-8")
+            else:
+                envelope_json = envelope.model_dump_json()
+            self._outbox.enqueue(
+                envelope.envelope_id,
+                envelope.recipient,
+                envelope_json,
+                error=f"queued on {transport}; awaiting ACK",
+                await_ack=True,
+            )
+            logger.info(
+                "Held %s in outbox: queued on %s, awaiting ACK",
+                envelope.envelope_id[:8],
+                transport,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "outbox hold enqueue failed for %s: %s", envelope.envelope_id[:8], exc
+            )
+
+    def sweep_ack_timeouts(self) -> list:
+        """Fire ``delivery_failed`` for queued sends whose ACK horizon lapsed.
+
+        Marks expired pending ACKs as timed-out (via the ACK tracker) and, for
+        each one that still has a durable outbox entry held awaiting its ACK
+        (i.e. a message that reached ONLY a file/syncthing queue and was never
+        confirmed received), emits a ``delivery_failed`` sk-alert and moves the
+        held entry to the dead-letter queue. Confirmed sends have already had
+        their held entry removed, so they never alert here.
+
+        Returns:
+            The list of PendingAck entries that just timed out.
+        """
+        if not self._ack_tracker:
+            return []
+
+        timed_out = self._ack_tracker.check_timeouts()
+        for pending in timed_out:
+            entry = self._outbox.get(pending.envelope_id)
+            if entry is None:
+                # No held entry: not a queued-only send we are tracking here
+                # (e.g. a confirmed rail whose entry was already removed).
+                continue
+            error_msg = (
+                "queued on file rail but no ACK within the retry horizon"
+            )
+            logger.warning(
+                "Delivery unconfirmed for %s -> %s: %s",
+                pending.envelope_id[:8],
+                pending.recipient,
+                error_msg,
+            )
+            _integration.alert(
+                "delivery_failed",
+                {
+                    "envelope_id": pending.envelope_id[:8],
+                    "recipient": pending.recipient,
+                    "error": error_msg,
+                },
+                level="warn",
+            )
+            self._outbox.mark_dead(pending.envelope_id, error=error_msg)
+        return timed_out
 
     def _resolve_peer_transports(self, recipient: str) -> list[str]:
         """Look up the preferred transports for a recipient from the peer store.
@@ -1029,12 +1132,22 @@ class SKComms:
                 envelope = self._apply_decompression(envelope)
 
                 if envelope.is_ack and self._ack_tracker:
-                    self._ack_tracker.process_ack(envelope)
+                    confirmed = self._ack_tracker.process_ack(envelope)
+                    if confirmed is not None:
+                        # ACK confirms receipt: drop the durable outbox entry
+                        # held for this queued (file/syncthing) send.
+                        self._outbox.remove(confirmed.envelope_id)
 
                 self._send_auto_ack(envelope)
                 pq.push(envelope)
             except Exception as exc:
                 logger.warning("Failed to deserialize incoming envelope — skipping: %s", exc)
+
+        # Surface any queued (file-rail) sends whose ACK horizon has lapsed.
+        try:
+            self.sweep_ack_timeouts()
+        except Exception as exc:  # noqa: BLE001 - never let the sweep break receive
+            logger.warning("ACK-timeout sweep failed: %s", exc)
 
         envelopes = pq.drain()
         logger.info("Received %d message(s)", len(envelopes))

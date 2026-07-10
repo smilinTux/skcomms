@@ -250,11 +250,17 @@ class FileTransport(Transport):
             elapsed = (time.monotonic() - start) * 1000
             logger.info("Wrote %s to %s (%0.1fms)", envelope_id[:8], target, elapsed)
 
+            # A shared-filesystem write is a QUEUE hand-off, not confirmed
+            # receipt: the file only reaches the recipient once the filesystem
+            # syncs and the recipient polls its inbox. Report queued=True so the
+            # router/sender keeps a durable outbox entry pending an ACK instead
+            # of treating the sneakernet write as a delivered message.
             return SendResult(
                 success=True,
                 transport_name=self.name,
                 envelope_id=envelope_id,
                 latency_ms=elapsed,
+                queued=True,
             )
 
         except OSError as exc:

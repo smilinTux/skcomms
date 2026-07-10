@@ -201,8 +201,40 @@ class HttpS2STransport(Transport):
         try:
             with urllib.request.urlopen(req, timeout=self._timeout) as resp:
                 status = getattr(resp, "status", None) or resp.getcode()
+                try:
+                    body = resp.read()
+                except Exception:  # noqa: BLE001 - a body we cannot read is not a confirmation
+                    body = b""
                 elapsed = (time.monotonic() - start) * 1000
                 if 200 <= status < 300:
+                    # A 2xx alone is NOT delivery. ``POST /api/v1/inbox`` returns
+                    # ``{"ok": true, "id": ...}`` ONLY after the per-recipient
+                    # write (api.py::post_inbox). A 2xx WITHOUT that confirming
+                    # body (an empty 200, a funnel/proxy ack that never reached
+                    # post_inbox, or ``{"ok": false}``) is the exact
+                    # opus-delivery false-success: the peer never wrote the
+                    # envelope. Treat it as an undelivered, retryable failure so
+                    # the router fails over and the sender keeps the envelope.
+                    if not self._body_confirms_receipt(body):
+                        logger.warning(
+                            "https-s2s got %d from %s (%s) but body did not "
+                            "confirm receipt ({\"ok\": true}); treating as "
+                            "undelivered (opus-delivery guard)",
+                            status,
+                            recipient,
+                            inbox_url,
+                        )
+                        return SendResult(
+                            success=False,
+                            transport_name=self.name,
+                            envelope_id=envelope_id,
+                            latency_ms=elapsed,
+                            error=(
+                                f"retry: HTTP {status} without a confirming "
+                                '{"ok": true} body; the inbox did not accept '
+                                "the write"
+                            ),
+                        )
                     logger.info(
                         "Sent %d bytes to %s (%s) via https-s2s [%d] (%.1fms)",
                         len(envelope_bytes),
@@ -421,6 +453,30 @@ class HttpS2STransport(Transport):
             latency_ms=elapsed,
             error=f"{kind}: HTTP {status} {detail}",
         )
+
+    @staticmethod
+    def _body_confirms_receipt(body: bytes) -> bool:
+        """True only when the inbox response body confirms the per-recipient write.
+
+        ``POST /api/v1/inbox`` returns ``{"ok": true, "id": ...}`` ONLY after
+        :func:`skcomms.api._write_to_recipient_inbox` succeeds (see
+        ``api.py::post_inbox``). Any other 2xx body (empty, a funnel/proxy ack
+        that never ran the write, or ``{"ok": false}``) does NOT prove the
+        envelope was accepted, so it must not be counted as delivered.
+
+        Args:
+            body: The raw HTTP response body bytes.
+
+        Returns:
+            True iff the body parses to a JSON object with ``ok == True``.
+        """
+        if not body:
+            return False
+        try:
+            data = json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            return False
+        return isinstance(data, dict) and data.get("ok") is True
 
     @staticmethod
     def _extract_id(envelope_bytes: bytes) -> str:
