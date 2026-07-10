@@ -214,9 +214,13 @@ def test_default_chain_appends_unknown_rails_by_priority():
 
 def test_failover_tries_next_rail_on_failure():
     log: list[str] = []
+    # NOTE: "https-s2s" is deliberately NOT used as a stand-in name here (it is
+    # excluded from route()'s unsigned candidates — see
+    # test_router_unsigned_excludes_https_s2s.py); "tailscale"/"nostr" stand in
+    # for "some rail" to test pure failover-order mechanics instead.
     transports = [
-        FakeTransport("https-s2s", priority=1, send_log=log, succeed=False),
-        FakeTransport("tailscale", priority=2, send_log=log, succeed=False),
+        FakeTransport("tailscale", priority=1, send_log=log, succeed=False),
+        FakeTransport("nostr", priority=2, send_log=log, succeed=False),
         FakeTransport("file", priority=3, send_log=log, succeed=True),
     ]
     r = Router(transports=transports)
@@ -226,8 +230,8 @@ def test_failover_tries_next_rail_on_failure():
 
     assert report.delivered is True
     assert report.successful_transport == "file"
-    # Walked the chain in order: https-s2s, tailscale (both failed), then file.
-    assert log == ["https-s2s", "tailscale", "file"]
+    # Walked the chain in order: tailscale, nostr (both failed), then file.
+    assert log == ["tailscale", "nostr", "file"]
     assert len(report.attempts) == 3
 
 
@@ -238,22 +242,24 @@ def test_failover_tries_next_rail_on_failure():
 
 def test_store_forward_nostr_attempted_after_all_direct_fail():
     log: list[str] = []
-    # Direct rails (advertised) all fail; nostr is NOT advertised, so it is only
+    # Direct rails (advertised) all fail; ble is NOT advertised, so it is only
     # reached via the store-and-forward fallback seam.
+    # NOTE: "https-s2s" is deliberately NOT used as a stand-in (excluded from
+    # route()'s unsigned candidates — see test_router_unsigned_excludes_https_s2s.py).
     transports = [
-        FakeTransport("https-s2s", priority=1, send_log=log, succeed=False),
-        FakeTransport("tailscale", priority=2, send_log=log, succeed=False),
-        FakeTransport("nostr", priority=3, send_log=log, succeed=True),
+        FakeTransport("tailscale", priority=1, send_log=log, succeed=False),
+        FakeTransport("nostr", priority=2, send_log=log, succeed=False),
+        FakeTransport("ble", priority=3, send_log=log, succeed=True),
     ]
     r = Router(transports=transports)
-    env = make_envelope(preferred=["https-s2s", "tailscale"])
+    env = make_envelope(preferred=["tailscale", "nostr"])
 
     report = r.route(env)
 
     assert report.delivered is True
-    assert report.successful_transport == "nostr"
+    assert report.successful_transport == "ble"
     # Direct rails tried first, then the S&F fallback rail last.
-    assert log == ["https-s2s", "tailscale", "nostr"]
+    assert log == ["tailscale", "nostr", "ble"]
 
 
 def test_store_forward_not_double_sent_when_already_a_candidate():
@@ -261,7 +267,7 @@ def test_store_forward_not_double_sent_when_already_a_candidate():
     # nostr IS in the default chain (and thus a direct candidate). It must not be
     # sent twice — once as a direct rail and again as the S&F fallback.
     transports = [
-        FakeTransport("https-s2s", priority=1, send_log=log, succeed=False),
+        FakeTransport("tailscale", priority=1, send_log=log, succeed=False),
         FakeTransport("nostr", priority=2, send_log=log, succeed=False),
     ]
     r = Router(transports=transports)
@@ -271,37 +277,37 @@ def test_store_forward_not_double_sent_when_already_a_candidate():
 
     assert report.delivered is False
     # nostr attempted exactly once (as a direct rail), not re-attempted as S&F.
-    assert log == ["https-s2s", "nostr"]
+    assert log == ["tailscale", "nostr"]
 
 
 def test_store_forward_skipped_when_rail_unavailable():
     log: list[str] = []
     transports = [
-        FakeTransport("https-s2s", priority=1, send_log=log, succeed=False),
+        FakeTransport("tailscale", priority=1, send_log=log, succeed=False),
         FakeTransport("nostr", priority=2, send_log=log, succeed=True, available=False),
     ]
     r = Router(transports=transports)
-    env = make_envelope(preferred=["https-s2s"])
+    env = make_envelope(preferred=["tailscale"])
 
     report = r.route(env)
 
     assert report.delivered is False
     # nostr unavailable → never sent, even as S&F fallback.
-    assert log == ["https-s2s"]
+    assert log == ["tailscale"]
 
 
 def test_custom_store_forward_transport_name():
     log: list[str] = []
     transports = [
-        FakeTransport("https-s2s", priority=1, send_log=log, succeed=False),
+        FakeTransport("tailscale", priority=1, send_log=log, succeed=False),
         FakeTransport("ipfs", priority=9, send_log=log, succeed=True),
     ]
     r = Router(transports=transports, store_forward_transport="ipfs")
     # ipfs is not in the default chain, so only reached via the configurable seam.
-    env = make_envelope(preferred=["https-s2s"])
+    env = make_envelope(preferred=["tailscale"])
 
     report = r.route(env)
 
     assert report.delivered is True
     assert report.successful_transport == "ipfs"
-    assert log == ["https-s2s", "ipfs"]
+    assert log == ["tailscale", "ipfs"]

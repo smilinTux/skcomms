@@ -46,6 +46,19 @@ FEDERATION_DEFAULT_CHAIN = [
     "file",
 ]
 
+# Rails whose receiving endpoint only accepts a signed wire format (e.g.
+# https-s2s's ``POST /api/v1/inbox`` hard-requires a ``SignedEnvelope`` —
+# see ``api.py::post_inbox``, ``SignedEnvelope.from_bytes`` -> 422 on anything
+# else). ``Router.route()`` is the LEGACY/unsigned ``MessageEnvelope`` path
+# (used by ``Comm.send()`` for heartbeats, typing indicators, and any
+# non-federated send) and serializes a plain ``MessageEnvelope`` — never a
+# ``SignedEnvelope`` — so offering one of these rails as a candidate there is
+# a guaranteed, 100%-reproducible permanent failure, not a real fallback
+# option. The SIGNED federation path (``route_bytes``/``route_signed``, which
+# puts real ``SignedEnvelope`` bytes on the wire) is unaffected — these rails
+# stay full candidates there.
+SIGNED_ENVELOPE_ONLY_TRANSPORTS = frozenset({"https-s2s"})
+
 # Designated store-and-forward fallback rail. Tried last, after every direct
 # rail has failed, before an envelope is handed to the retry queue. This is the
 # SKFed P4 Nostr-relay S&F rail (``skcomms.store_forward.StoreForwardTransport``,
@@ -164,7 +177,10 @@ class Router:
         mode = envelope.routing.mode or self._default_mode
         report = DeliveryReport(envelope_id=envelope.envelope_id, delivered=False)
 
-        candidates = self._select_transports(mode, envelope)
+        # This is the unsigned/legacy MessageEnvelope path — exclude rails
+        # that require a SignedEnvelope on the wire (see
+        # SIGNED_ENVELOPE_ONLY_TRANSPORTS above).
+        candidates = self._select_transports(mode, envelope, exclude_signed_only=True)
         envelope_bytes = envelope.to_bytes()
 
         if not candidates:
@@ -512,7 +528,13 @@ class Router:
             return False
         return (time.monotonic() - last_fail) < COOLDOWN_SECONDS
 
-    def _select_transports(self, mode: RoutingMode, envelope: MessageEnvelope) -> list[Transport]:
+    def _select_transports(
+        self,
+        mode: RoutingMode,
+        envelope: MessageEnvelope,
+        *,
+        exclude_signed_only: bool = False,
+    ) -> list[Transport]:
         """Filter and order transports for the given routing mode.
 
         Ordering precedence (federation rail selection):
@@ -531,6 +553,11 @@ class Router:
             mode: The routing mode to apply.
             envelope: The envelope being routed (carries the peer-advertised
                 ordered rail list in ``routing.preferred_transports``).
+            exclude_signed_only: When True, drop rails in
+                :data:`SIGNED_ENVELOPE_ONLY_TRANSPORTS` from candidates. Set by
+                :meth:`route` (the unsigned/legacy path) — never by the signed
+                federation path (``route_bytes``/``route_signed``), which puts
+                a real ``SignedEnvelope`` on the wire and so those rails work.
 
         Returns:
             Ordered list of eligible, available transports.
@@ -543,6 +570,7 @@ class Router:
             # The designated store-and-forward rail is NEVER a direct candidate;
             # it is reserved for the _try_store_forward last-resort fallback.
             and t.name != self._store_forward_transport
+            and not (exclude_signed_only and t.name in SIGNED_ENVELOPE_ONLY_TRANSPORTS)
         ]
 
         if mode == RoutingMode.STEALTH:
