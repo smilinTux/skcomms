@@ -53,20 +53,21 @@ def test_default_http_get_blocks_bad_schemes(url):
 
 
 def test_default_http_get_allows_public_host(monkeypatch):
-    """A public host passes the guard and reaches the real fetch path.
+    """A public host passes the guard and the fetch is pinned to the vetted IP.
 
-    We stub name resolution to a public IP and stub urlopen so no real network
-    call is made; the point is the guard does NOT reject a legitimate public
-    directory URL.
+    We stub name resolution to a public IP and stub the pinned-opener factory
+    so no real network call is made; the point is the guard does NOT reject a
+    legitimate public directory URL, and the connection it builds is pinned to
+    the address that passed vetting (DNS-rebind hardening).
     """
-    import skcomms.skfed_resolve as mod
+    import skcomms.ssrf as ssrf
 
     # Force resolution to a public address.
     monkeypatch.setattr(
-        mod.socket,
+        ssrf.socket,
         "getaddrinfo",
         lambda host, port, *a, **k: [
-            (mod.socket.AF_INET, mod.socket.SOCK_STREAM, 6, "", ("93.184.216.34", port or 443))
+            (ssrf.socket.AF_INET, ssrf.socket.SOCK_STREAM, 6, "", ("93.184.216.34", port or 443))
         ],
     )
 
@@ -80,8 +81,18 @@ def test_default_http_get_allows_public_host(monkeypatch):
         def read(self):
             return b"OK"
 
-    import urllib.request
+    pinned = {}
 
-    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: _Resp())
+    class _Opener:
+        def open(self, req, timeout=None):
+            return _Resp()
+
+    def _fake_build_opener(pinned_ip):
+        pinned["ip"] = pinned_ip
+        return _Opener()
+
+    monkeypatch.setattr(ssrf, "_build_opener", _fake_build_opener)
 
     assert default_http_get("https://directory.example.com/.well-known/skfed/directory") == b"OK"
+    # The connection was pinned to the exact address that passed vetting.
+    assert pinned["ip"] == "93.184.216.34"

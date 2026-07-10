@@ -269,11 +269,17 @@ class SyncthingSharedBackend(RegistryBackend):
 
 
 def _default_https_fetcher(url: str) -> str:
-    """Real HTTPS GET (only used outside tests; tests inject a fake)."""
-    import urllib.request
+    """Real HTTPS GET (only used outside tests; tests inject a fake).
 
-    with urllib.request.urlopen(url, timeout=15) as resp:  # noqa: S310 (https template)
-        return resp.read().decode("utf-8")
+    SSRF-guarded and rebind-safe: the URL is templated from a realm name that
+    can be remote-influenced, so it is vetted and the connection is pinned to
+    the vetted address (see :mod:`skcomms.ssrf`). A blocked destination raises
+    :class:`~skcomms.ssrf.SSRFBlockedError` (a ``ValueError``) before any
+    socket is opened; the resolver treats a raising backend as no-result.
+    """
+    from .ssrf import guarded_get
+
+    return guarded_get(url, timeout=15).decode("utf-8")
 
 
 class HttpsBackend(RegistryBackend):

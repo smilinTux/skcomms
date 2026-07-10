@@ -47,6 +47,7 @@ import urllib.request
 from typing import Optional
 
 from ..outbox import classify_envelope_json
+from ..ssrf import SSRFBlockedError, guarded_urlopen, vet_url
 from ..transport import (
     HealthStatus,
     SendResult,
@@ -102,6 +103,11 @@ class HttpS2STransport(Transport):
 
         # Cached peer inbox URLs: name/fingerprint → https://host/api/v1/inbox
         self._peer_urls: dict[str, str] = {}
+
+        # inbox URLs that came from a REMOTE realm directory (attacker
+        # influenced, unlike operator-configured store/manual URLs). Sends to
+        # these go through the pinned, SSRF-guarded fetch path.
+        self._directory_urls: set[str] = set()
 
     # ──────────────────────────────────────────────────────────────────────
     # Transport ABC implementation
@@ -193,15 +199,33 @@ class HttpS2STransport(Transport):
                 error=f"perm: no https-s2s inbox_url known for '{recipient}'",
             )
 
-        req = urllib.request.Request(
-            inbox_url,
-            data=envelope_bytes,
-            method="POST",
-            headers={"Content-Type": CONTENT_TYPE},
-        )
-
         try:
-            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+            if inbox_url in self._directory_urls:
+                # Directory-derived target: the URL came from a REMOTE realm's
+                # signed directory, so its operator controls where it points
+                # (including this node's internal network) and its DNS can
+                # rebind between vetting and connect. POST through the central
+                # SSRF guard: policy-vetted, connection pinned to the vetted
+                # address, redirects on POST refused (see skcomms.ssrf).
+                opened = guarded_urlopen(
+                    inbox_url,
+                    data=envelope_bytes,
+                    method="POST",
+                    headers={"Content-Type": CONTENT_TYPE},
+                    timeout=self._timeout,
+                )
+            else:
+                # Operator-configured target (manual registration / local peer
+                # store): trusted local config, plain fetch (LAN/tailnet URLs
+                # are legitimate here).
+                req = urllib.request.Request(
+                    inbox_url,
+                    data=envelope_bytes,
+                    method="POST",
+                    headers={"Content-Type": CONTENT_TYPE},
+                )
+                opened = urllib.request.urlopen(req, timeout=self._timeout)
+            with opened as resp:
                 status = getattr(resp, "status", None) or resp.getcode()
                 try:
                     body = resp.read()
@@ -253,6 +277,24 @@ class HttpS2STransport(Transport):
                     )
                 # Non-2xx returned without raising (rare for urllib): treat by class.
                 return self._failure(envelope_id, start, status, "unexpected status")
+        except SSRFBlockedError as exc:
+            # The SSRF guard refused the destination (private/internal address,
+            # bad scheme, or a rebinding host). Permanent: retrying the same
+            # blocked URL can never succeed.
+            elapsed = (time.monotonic() - start) * 1000
+            logger.warning(
+                "https-s2s send to %s (%s) blocked by SSRF guard: %s",
+                recipient,
+                inbox_url,
+                exc,
+            )
+            return SendResult(
+                success=False,
+                transport_name=self.name,
+                envelope_id=envelope_id,
+                latency_ms=elapsed,
+                error=f"perm: {exc}",
+            )
         except urllib.error.HTTPError as exc:
             # HTTPError carries the response code: classify 4xx vs 5xx.
             return self._failure(envelope_id, start, exc.code, str(exc))
@@ -355,6 +397,7 @@ class HttpS2STransport(Transport):
         url = self._inbox_url_from_directory(recipient)
         if url:
             self._peer_urls[recipient] = url
+            self._directory_urls.add(url)
             return url
 
         return None
@@ -382,7 +425,13 @@ class HttpS2STransport(Transport):
                 return None
             from skcomms.discovery import inbox_url_for
 
-            return inbox_url_for(fqid, http_get=default_http_get, verifier=verifier)
+            url = inbox_url_for(fqid, http_get=default_http_get, verifier=verifier)
+            if url:
+                # SSRF guard: an inbox_url from a REMOTE directory is chosen by
+                # that realm's operator, so refuse private/internal targets up
+                # front (vet_url raises, caught below -> fail closed to None).
+                vet_url(url)
+            return url
         except Exception as exc:  # never let directory resolution break delivery
             logger.debug("skfed directory inbox_url for %s failed: %s", recipient, exc)
             return None

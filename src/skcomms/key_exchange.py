@@ -57,10 +57,12 @@ def fetch_peer_from_did(
         PeerInfo populated from the DID document.
 
     Raises:
-        KeyExchangeError: If fetch or parsing fails.
+        KeyExchangeError: If fetch or parsing fails, or the URL is blocked by
+            the SSRF guard (non-http(s) scheme or a private/internal host).
     """
     import urllib.error
-    import urllib.request
+
+    from .ssrf import guarded_urlopen
 
     if name_or_url.startswith("http://") or name_or_url.startswith("https://"):
         url = name_or_url
@@ -82,10 +84,13 @@ def fetch_peer_from_did(
     logger.info("Fetching DID from %s", url)
 
     try:
-        req = urllib.request.Request(
-            url, headers={"Accept": "application/did+json, application/json"}
-        )
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        # SSRF-guarded, rebind-safe fetch: the URL can be caller-supplied, so
+        # it is vetted and the connection is pinned (see skcomms.ssrf).
+        with guarded_urlopen(
+            url,
+            headers={"Accept": "application/did+json, application/json"},
+            timeout=15,
+        ) as resp:
             did_doc = json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         if exc.code == 404:
@@ -102,8 +107,7 @@ def fetch_peer_from_did(
     public_key_armor = None
     asc_url = url.rsplit("/did.json", 1)[0] + "/public.asc"
     try:
-        req2 = urllib.request.Request(asc_url)
-        with urllib.request.urlopen(req2, timeout=10) as resp2:
+        with guarded_urlopen(asc_url, timeout=10) as resp2:
             candidate = resp2.read().decode("utf-8")
             if "BEGIN PGP PUBLIC KEY BLOCK" in candidate:
                 public_key_armor = candidate
