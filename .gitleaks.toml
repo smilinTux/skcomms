@@ -1,0 +1,35 @@
+# gitleaks configuration for skcomms
+#
+# This is the baseline/allowlist that pairs with the secret-scan CI gate
+# (.github/workflows/secret-scan.yml). It keeps the full set of gitleaks
+# default rules and layers on an allowlist for known, non-secret placeholder
+# tokens so the build only fails on genuine findings.
+#
+# How to use it:
+#   * The CI gate (gitleaks GitHub Action) reads this file automatically because
+#     it lives at the repo root and is named .gitleaks.toml.
+#   * To scan locally the same way CI does:
+#       docker run --rm -v "$(pwd):/repo" zricethezav/gitleaks:latest \
+#         detect --source /repo -c /repo/.gitleaks.toml -v
+#   * If gitleaks flags a value that is a documented placeholder or fixture
+#     (not a real secret), add it below with a justification comment. If it
+#     flags a REAL secret, rotate it and purge it from history; do NOT allowlist.
+
+title = "skcomms gitleaks config"
+
+# Start from the full gitleaks default ruleset, then extend with the allowlist
+# below. Without this, only our custom rules would run.
+[extend]
+useDefault = true
+
+# Global allowlists apply to every rule.
+[[allowlists]]
+description = """
+Prose token "Ed25519-signed" in the BLE mesh proximity transport design spec.
+The generic-api-key rule flags the hyphenated cryptography term (high entropy)
+even though it is plain documentation text describing that packets are signed
+with Ed25519, not a credential. Confirmed non-secret on 2026-07-10 by reading
+docs/superpowers/specs/2026-06-13-ble-mesh-proximity-transport-design.md:178.
+"""
+paths = ['''docs/superpowers/specs/2026-06-13-ble-mesh-proximity-transport-design\.md''']
+regexes = ['''Ed25519-signed''']
