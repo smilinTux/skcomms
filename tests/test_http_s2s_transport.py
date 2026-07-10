@@ -229,6 +229,21 @@ def test_4xx_403_maps_to_permanent_failure(peer_store, monkeypatch):
     assert result.error.startswith("perm:")
 
 
+def test_425_stale_maps_to_retryable_failure(peer_store, monkeypatch):
+    """425 (Too Early) is the inbox's stale-envelope signal: a freshness-window
+    expiry that is retryable, NOT a permanent 4xx like a schema 422/403."""
+    def _raise(req, timeout=None):
+        raise urllib.error.HTTPError(
+            INBOX_URL, 425, "Too Early", hdrs=None, fp=io.BytesIO(b"")
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", _raise)
+    result = HttpS2STransport().send(ENVELOPE, "jarvis")
+    assert result.success is False
+    assert result.error.startswith("retry:")
+    assert "425" in result.error
+
+
 def test_503_maps_to_retryable_failure(peer_store, monkeypatch):
     def _raise(req, timeout=None):
         raise urllib.error.HTTPError(

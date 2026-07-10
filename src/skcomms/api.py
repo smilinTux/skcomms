@@ -1042,7 +1042,8 @@ async def post_inbox(request: Request):
 
     Raises:
         HTTPException: 403 (bad/untrusted signature), 409 (replay),
-            422 (stale or unparseable), 413 (too large), 429 (rate limited).
+            425 (stale: freshness-window expiry, retryable), 422 (unparseable
+            body, permanent), 413 (too large), 429 (rate limited).
     """
     from .envelope import SignedEnvelope
     from .federation import (
@@ -1087,8 +1088,13 @@ async def post_inbox(request: Request):
     except ReplayError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     except StaleError as exc:
+        # Freshness-window expiry is NOT a permanent structural failure like a
+        # 422: it is usually clock skew or a delayed retry, and the same bytes
+        # may verify fine on a fresh attempt. Return 425 (Too Early) so the
+        # sending transport classifies it as retryable instead of dropping the
+        # rail. Unparseable bodies stay 422 (permanent) above.
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            status_code=status.HTTP_425_TOO_EARLY, detail=str(exc)
         ) from exc
 
     try:

@@ -6,8 +6,9 @@ Covers ``POST /api/v1/inbox`` — the receive gate that parses a
 and stores the verified envelope in the recipient's file-transport inbox so the
 existing ``comm.receive()`` path delivers it.
 
-Reject mapping under test: 403 (untrusted/bad sig), 409 (replay), 422 (stale /
-unparseable). Also covers ``discovery.inbox_url_for`` resolution.
+Reject mapping under test: 403 (untrusted/bad sig), 409 (replay), 425 (stale,
+retryable), 422 (unparseable, permanent). Also covers
+``discovery.inbox_url_for`` resolution.
 
 PGP keys are generated in-process via pgpy (no live CapAuth), and the signer's
 pubkey is pinned in the TOFU store so the inbox verifier trusts it.
@@ -172,17 +173,25 @@ def test_inbox_replay_409(client, jarvis_keys):
     assert second.status_code == 409, second.text
 
 
-def test_inbox_stale_422(client, jarvis_keys):
+def test_inbox_stale_425(client, jarvis_keys):
+    """A stale-but-valid envelope is 425 (Too Early, retryable), NOT a 422.
+
+    Freshness-window expiry is usually clock skew or a delayed retry, so the
+    sending transport must be able to tell it apart from a permanent schema
+    failure and retry the same bytes.
+    """
     priv, pub = jarvis_keys
     _pin(JARVIS_FQID, pub)
 
     old = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
     raw = _signed_bytes(priv, created_at=old)
     resp = client.post("/api/v1/inbox", content=raw)
-    assert resp.status_code == 422, resp.text
+    assert resp.status_code == 425, resp.text
 
 
 def test_inbox_unparseable_422(client):
+    """An unparseable body stays 422: a permanent structural failure, distinct
+    from the 425 staleness response so the two are never conflated."""
     resp = client.post("/api/v1/inbox", content=b"this is not a signed envelope")
     assert resp.status_code == 422, resp.text
 
