@@ -8,24 +8,22 @@ dead letter queue for manual review.
 The outbox is filesystem-based: one JSON file per queued message.
 No database needed. Works offline. Survives daemon restarts.
 
-Federation queue of record (SKFed S7)
--------------------------------------
-There are historically THREE retry stores in skcomms:
+Single queue of record (coord eb659f61)
+----------------------------------------
+:class:`PersistentOutbox` is now the ONE retry store in skcomms. The two
+historical overlapping stores were removed: ``skcomms.core.RetryQueue`` and
+the router's own JSONL retry (``Router._enqueue_retry``), which both wrote
+incompatible schemas to the same ``~/.skcapstone/retry_queue.jsonl`` file
+under independent, unlocked one-second sweepers. Any pre-existing entries in
+that file are drained into this outbox by
+:func:`skcomms.outbox_migrate.migrate_retry_queue_jsonl` (both schemas), run
+best-effort at daemon startup.
 
-  1. :class:`PersistentOutbox` (this module)  -- durable, file-per-entry.
-  2. :class:`skcomms.core.RetryQueue`         -- fast JSONL, transient blips.
-  3. the router's own JSONL retry             -- :meth:`Router._enqueue_retry`.
-
-For the **federation** send path, :class:`PersistentOutbox` is the
-**authoritative queue of record**. ``core.send()`` enqueues here on
-delivery failure (RetryQueue / router JSONL remain as fast-path /
-transport backstops and are NOT removed -- they simply overlap). The
-federation contract is: an :attr:`OutboxEntry.envelope_json` holds a
-serialized **SignedEnvelope** (Envelope v1, the canonical wire format).
-Legacy entries holding a serialized
-:class:`~skcomms.models.MessageEnvelope` are tolerated (detected +
-skipped on delivery, converted by
-:func:`skcomms.outbox_migrate.migrate_outbox`).
+Every failed send enqueues here exactly once. The federation contract is:
+an :attr:`OutboxEntry.envelope_json` holds a serialized **SignedEnvelope**
+(Envelope v1, the canonical wire format). Legacy entries holding a serialized
+:class:`~skcomms.models.MessageEnvelope` are tolerated (detected + skipped on
+delivery, converted by :func:`skcomms.outbox_migrate.migrate_outbox`).
 
 Layout:
     ~/.skcapstone/skcomms/outbox/

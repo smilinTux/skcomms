@@ -33,6 +33,7 @@ Returns a summary dict: ``{"converted", "archived", "skipped"}``.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 from pathlib import Path
@@ -44,6 +45,14 @@ logger = logging.getLogger("skcomms.outbox_migrate")
 
 # Marker stored in last_error for converted-but-unsigned entries.
 NEEDS_SIGN_FLAG = "needs_sign:migrated-from-legacy-MessageEnvelope"
+
+# The historical JSONL retry queue location. Both the retired
+# ``skcomms.core.RetryQueue`` and the retired ``Router`` JSONL retry path wrote
+# (incompatible) entries here; :func:`migrate_retry_queue_jsonl` drains both.
+DEFAULT_RETRY_QUEUE_PATH = "~/.skcapstone/retry_queue.jsonl"
+
+# Marker stored in last_error for entries drained from the legacy JSONL queue.
+DRAINED_FLAG = "drained:migrated-from-legacy-retry_queue.jsonl"
 
 
 def _is_file_dead_end(value: Optional[str]) -> bool:
@@ -192,6 +201,151 @@ def migrate_outbox(
         "migrate_outbox: converted=%d archived=%d skipped=%d",
         summary["converted"],
         summary["archived"],
+        summary["skipped"],
+    )
+    return summary
+
+
+def _jsonl_entry_to_envelope_json(entry: dict) -> Optional[str]:
+    """Extract the serialized envelope JSON from one legacy JSONL retry entry.
+
+    Tolerates the two historical, incompatible schemas that both landed in
+    ``~/.skcapstone/retry_queue.jsonl``:
+
+      - ``skcomms.core.RetryQueue``: stores the serialized envelope directly in
+        an ``envelope_json`` string field.
+      - the router JSONL path: stores the raw envelope bytes base64-encoded in
+        an ``envelope_b64`` field.
+
+    Args:
+        entry: One parsed JSONL entry dict.
+
+    Returns:
+        Optional[str]: The serialized envelope JSON, or None if neither field
+        is present / decodable.
+    """
+    raw = entry.get("envelope_json")
+    if isinstance(raw, str) and raw.strip():
+        return raw
+
+    b64 = entry.get("envelope_b64")
+    if isinstance(b64, str) and b64.strip():
+        try:
+            return base64.b64decode(b64).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return None
+
+    return None
+
+
+def migrate_retry_queue_jsonl(
+    path: str | Path = DEFAULT_RETRY_QUEUE_PATH,
+    outbox: PersistentOutbox | str | Path = None,  # type: ignore[assignment]
+) -> dict[str, int]:
+    """Drain a legacy JSONL retry queue into the PersistentOutbox.
+
+    The old ``skcomms.core.RetryQueue`` and the old ``Router`` JSONL retry path
+    both wrote (incompatible) entries to ``~/.skcapstone/retry_queue.jsonl``.
+    Both are retired: :class:`~skcomms.outbox.PersistentOutbox` is now the
+    single queue of record. This helper reads every entry from the JSONL file,
+    enqueues each one onto the outbox exactly once (preserving the original
+    envelope_id / recipient / envelope bytes), and only then removes the JSONL
+    file, so no entry is lost. Idempotent: with no JSONL file present it does
+    nothing and returns all-zero counts.
+
+    Enqueued entries keep their original wire shape (typically a legacy
+    ``MessageEnvelope``); run :func:`migrate_outbox` afterwards to convert any
+    legacy entries onto the canonical SignedEnvelope wire format.
+
+    Args:
+        path: The JSONL file to drain (default the historical location).
+        outbox: A :class:`PersistentOutbox`, or a path to the outbox root dir,
+            or None to use the default outbox location.
+
+    Returns:
+        dict[str, int]: ``{"migrated", "skipped"}`` (skipped = corrupt /
+        undecodable lines that could not be drained).
+    """
+    if outbox is None:
+        outbox = PersistentOutbox()
+    elif isinstance(outbox, (str, Path)):
+        outbox = PersistentOutbox(outbox_dir=outbox)
+
+    summary = {"migrated": 0, "skipped": 0}
+
+    jsonl_path = Path(path).expanduser()
+    if not jsonl_path.exists():
+        return summary
+
+    try:
+        raw = jsonl_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Cannot read legacy retry queue %s: %s", jsonl_path, exc)
+        return summary
+
+    any_undrained = False
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            logger.warning("Skipping corrupt legacy retry queue entry")
+            summary["skipped"] += 1
+            any_undrained = True
+            continue
+
+        envelope_json = _jsonl_entry_to_envelope_json(entry)
+        if envelope_json is None:
+            logger.warning("Skipping legacy retry queue entry with no envelope payload")
+            summary["skipped"] += 1
+            any_undrained = True
+            continue
+
+        # Derive envelope_id / recipient, falling back to the serialized
+        # envelope when the JSONL entry omitted them.
+        envelope_id = entry.get("envelope_id") or ""
+        recipient = entry.get("recipient") or ""
+        if not envelope_id or not recipient:
+            try:
+                parsed = json.loads(envelope_json)
+                inner = parsed.get("envelope") if isinstance(parsed, dict) else None
+                if isinstance(inner, dict):
+                    envelope_id = envelope_id or inner.get("id") or ""
+                    recipient = recipient or inner.get("to_fqid") or ""
+                elif isinstance(parsed, dict):
+                    envelope_id = (
+                        envelope_id or parsed.get("envelope_id") or parsed.get("id") or ""
+                    )
+                    recipient = (
+                        recipient or parsed.get("recipient") or parsed.get("to_fqid") or ""
+                    )
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        if not envelope_id:
+            logger.warning("Skipping legacy retry queue entry with no envelope_id")
+            summary["skipped"] += 1
+            any_undrained = True
+            continue
+
+        outbox.enqueue(
+            envelope_id=envelope_id,
+            recipient=recipient,
+            envelope_json=envelope_json,
+            error=entry.get("last_error") or DRAINED_FLAG,
+        )
+        summary["migrated"] += 1
+
+    # Only remove the JSONL file once everything drainable has been enqueued.
+    # If some lines could not be drained, preserve the file for inspection.
+    if not any_undrained:
+        jsonl_path.unlink(missing_ok=True)
+
+    logger.info(
+        "migrate_retry_queue_jsonl: migrated=%d skipped=%d",
+        summary["migrated"],
         summary["skipped"],
     )
     return summary

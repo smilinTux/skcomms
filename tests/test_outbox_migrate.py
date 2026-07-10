@@ -15,7 +15,11 @@ import json
 from skcomms.envelope import Envelope, SignedEnvelope
 from skcomms.models import MessageEnvelope, MessagePayload, MessageType
 from skcomms.outbox import OutboxEntry, PersistentOutbox, classify_envelope_json
-from skcomms.outbox_migrate import NEEDS_SIGN_FLAG, migrate_outbox
+from skcomms.outbox_migrate import (
+    NEEDS_SIGN_FLAG,
+    migrate_outbox,
+    migrate_retry_queue_jsonl,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +174,116 @@ def test_migrate_outbox_accepts_path(tmp_path):
     _write_entry(outbox, _legacy_entry())
     summary = migrate_outbox(str(tmp_path))
     assert summary == {"converted": 1, "archived": 0, "skipped": 0}
+
+
+# ---------------------------------------------------------------------------
+# migrate_retry_queue_jsonl: drain the retired JSONL retry queue
+# ---------------------------------------------------------------------------
+
+
+def _core_schema_line(recipient: str = "jarvis") -> str:
+    """A legacy core.RetryQueue JSONL line (envelope_json string field)."""
+    legacy = MessageEnvelope(
+        sender="lumina",
+        recipient=recipient,
+        payload=MessagePayload(content="core body", content_type=MessageType.TEXT),
+    )
+    return json.dumps(
+        {
+            "envelope_id": legacy.envelope_id,
+            "recipient": recipient,
+            "envelope_json": legacy.model_dump_json(),
+            "attempt": 1,
+            "max_attempts": 10,
+            "next_retry_at": "2020-01-01T00:00:00+00:00",
+            "last_error": "core boom",
+            "queued_at": "2020-01-01T00:00:00+00:00",
+        }
+    )
+
+
+def _router_schema_line(recipient: str = "friday") -> str:
+    """A legacy router JSONL line (envelope_b64 base64 field)."""
+    import base64
+
+    legacy = MessageEnvelope(
+        sender="lumina",
+        recipient=recipient,
+        payload=MessagePayload(content="router body", content_type=MessageType.TEXT),
+    )
+    envelope_b64 = base64.b64encode(legacy.to_bytes()).decode()
+    return json.dumps(
+        {
+            "envelope_id": legacy.envelope_id,
+            "recipient": recipient,
+            "routing_mode": "failover",
+            "envelope_b64": envelope_b64,
+            "attempt": 0,
+            "next_retry_at": 1.0,
+            "queued_at": 1.0,
+        }
+    )
+
+
+def test_migrate_retry_queue_jsonl_drains_both_schemas(tmp_path):
+    outbox = PersistentOutbox(outbox_dir=tmp_path / "outbox")
+    jsonl = tmp_path / "retry_queue.jsonl"
+    jsonl.write_text(
+        _core_schema_line() + "\n" + _router_schema_line() + "\n",
+        encoding="utf-8",
+    )
+
+    summary = migrate_retry_queue_jsonl(path=jsonl, outbox=outbox)
+
+    assert summary == {"migrated": 2, "skipped": 0}
+    # Both entries landed on the outbox (single queue of record), no loss.
+    assert outbox.pending_count == 2
+    bodies = {
+        json.loads(e.envelope_json)["payload"]["content"]
+        for e in outbox.list_pending()
+    }
+    assert bodies == {"core body", "router body"}
+    # The drained JSONL file is removed once fully migrated.
+    assert not jsonl.exists()
+
+
+def test_migrate_retry_queue_jsonl_missing_file_is_noop(tmp_path):
+    outbox = PersistentOutbox(outbox_dir=tmp_path / "outbox")
+    summary = migrate_retry_queue_jsonl(path=tmp_path / "nope.jsonl", outbox=outbox)
+    assert summary == {"migrated": 0, "skipped": 0}
+    assert outbox.pending_count == 0
+
+
+def test_migrate_retry_queue_jsonl_preserves_file_on_corrupt_line(tmp_path):
+    outbox = PersistentOutbox(outbox_dir=tmp_path / "outbox")
+    jsonl = tmp_path / "retry_queue.jsonl"
+    jsonl.write_text(
+        _core_schema_line() + "\n" + "{ not json\n",
+        encoding="utf-8",
+    )
+
+    summary = migrate_retry_queue_jsonl(path=jsonl, outbox=outbox)
+
+    # The good line is drained; the corrupt one is counted skipped and the file
+    # is preserved for inspection (no silent loss).
+    assert summary == {"migrated": 1, "skipped": 1}
+    assert outbox.pending_count == 1
+    assert jsonl.exists()
+
+
+def test_migrate_retry_queue_jsonl_then_migrate_outbox_signs(tmp_path):
+    """End-to-end: drain legacy JSONL, then migrate_outbox converts to signed."""
+    outbox = PersistentOutbox(outbox_dir=tmp_path / "outbox")
+    jsonl = tmp_path / "retry_queue.jsonl"
+    jsonl.write_text(_router_schema_line() + "\n", encoding="utf-8")
+
+    migrate_retry_queue_jsonl(path=jsonl, outbox=outbox)
+    # Drained entry is a legacy MessageEnvelope; migrate_outbox converts it.
+    assert classify_envelope_json(outbox.list_pending()[0].envelope_json) == "legacy"
+
+    summary = migrate_outbox(outbox)
+    assert summary == {"converted": 1, "archived": 0, "skipped": 0}
+    assert classify_envelope_json(outbox.list_pending()[0].envelope_json) == "signed"
 
 
 # ---------------------------------------------------------------------------
