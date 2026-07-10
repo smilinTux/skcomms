@@ -212,8 +212,57 @@ class SKComms:
         if self._config.ack:
             from .ack import AckTracker
 
-            self._ack_tracker = AckTracker()
+            verifier = None
+            if self._config.ack_verify_signature:
+                # Config-gated cryptographic ACK authentication: bind inbound
+                # ACKs to their claimed sender via PGP payload signature.
+                # Fail closed: with the gate on, an ACK only confirms if its
+                # signature verifies against the sender's known public key.
+                verifier = self._make_ack_sender_verifier()
+            self._ack_tracker = AckTracker(sender_verifier=verifier)
         self._outbox = PersistentOutbox(router=self._router)
+
+    def _make_ack_sender_verifier(self):
+        """Build the fail-closed ACK sender authenticator.
+
+        Returns a callable used by :class:`~skcomms.ack.AckTracker` to
+        cryptographically authenticate an inbound ACK envelope against its
+        claimed sender. The ACK must carry a PGP payload signature that
+        verifies against the sender's public key from the keystore.
+
+        Fail closed on every degraded path: no crypto engine, no keystore,
+        unknown sender key, missing signature, or verification error all
+        reject the ACK.
+
+        Returns:
+            Callable[[MessageEnvelope], bool] suitable for
+            ``AckTracker(sender_verifier=...)``.
+        """
+
+        def _verify(ack_envelope: "MessageEnvelope") -> bool:
+            if not self._crypto or not self._keystore:
+                logger.warning(
+                    "ack_verify_signature is on but crypto/keystore unavailable: "
+                    "rejecting ACK from %s (fail closed)",
+                    ack_envelope.sender,
+                )
+                return False
+            if not ack_envelope.payload.signature:
+                logger.warning(
+                    "Rejecting unsigned ACK from %s (ack_verify_signature on)",
+                    ack_envelope.sender,
+                )
+                return False
+            pub_armor = self._keystore.get_public_key(ack_envelope.sender)
+            if not pub_armor:
+                logger.warning(
+                    "Rejecting ACK from %s: no known public key (fail closed)",
+                    ack_envelope.sender,
+                )
+                return False
+            return self._crypto.verify_signature(ack_envelope, pub_armor)
+
+        return _verify
 
     @classmethod
     def from_config(cls, config_path: Optional[str] = None) -> SKComms:
@@ -987,6 +1036,12 @@ class SKComms:
 
         ack = envelope.make_ack(self._identity)
         try:
+            # Sign (and, if configured, encrypt) the ACK like any other
+            # outbound envelope so the peer can bind it to our identity
+            # (see AckTracker sender_verifier / ack_verify_signature).
+            # sign_payload fails closed: on signing error the ACK is dropped
+            # and the sender's ACK timeout surfaces the miss.
+            ack = self._apply_outbound_crypto(ack)
             self._router.route(ack)
             logger.debug("Sent auto-ACK for %s to %s", envelope.envelope_id[:8], envelope.sender)
         except Exception as exc:

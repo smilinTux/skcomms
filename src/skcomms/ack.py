@@ -20,7 +20,7 @@ import logging
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from pydantic import BaseModel, Field
 
@@ -81,16 +81,27 @@ class AckTracker:
     Args:
         acks_dir: Directory for ACK tracking files.
         default_timeout: Default seconds to wait for ACK.
+        sender_verifier: Optional callable authenticating an ACK envelope
+            against its claimed sender (CapAuth/PGP signature). Fails closed:
+            a verifier that returns falsy or raises rejects the ACK.
     """
 
     def __init__(
         self,
         acks_dir: Optional[Path] = None,
         default_timeout: int = DEFAULT_ACK_TIMEOUT,
+        sender_verifier: Optional[Callable[[MessageEnvelope], bool]] = None,
     ):
         self._dir = acks_dir or Path(SKCOMMS_HOME).expanduser() / ACKS_DIR_NAME
         self._dir.mkdir(parents=True, exist_ok=True)
         self._default_timeout = default_timeout
+        # Optional cryptographic authenticator for inbound ACKs. Given the ACK
+        # envelope, returns True iff the ACK is authenticated as coming from its
+        # claimed sender (e.g. its CapAuth/PGP payload signature verifies). When
+        # wired in, string identity alone is not trusted. Reuses the existing
+        # signing stack (skcomms.crypto.EnvelopeCrypto.verify_signature), no new
+        # crypto scheme.
+        self._sender_verifier = sender_verifier
 
     @property
     def acks_dir(self) -> Path:
@@ -124,16 +135,51 @@ class AckTracker:
         logger.debug("Tracking ACK for %s -> %s", envelope.envelope_id[:8], envelope.recipient)
         return pending
 
+    @staticmethod
+    def _identity_matches(a: str, b: str) -> bool:
+        """Compare two identities (agent name, FQID, or PGP fingerprint).
+
+        Whitespace- and case-insensitive: a PGP fingerprint may be stored
+        spaced or unspaced as it crosses different transports. Empty values
+        never match (fail closed).
+
+        Args:
+            a: First identity string.
+            b: Second identity string.
+
+        Returns:
+            True if both are non-empty and equal after normalization.
+        """
+        if not a or not b:
+            return False
+        return a.replace(" ", "").casefold() == b.replace(" ", "").casefold()
+
     def process_ack(self, ack_envelope: MessageEnvelope) -> Optional[PendingAck]:
         """Process a received ACK envelope and resolve the pending entry.
 
-        The ACK's content holds the original envelope_id.
+        The ACK's content holds the original envelope_id. Before an ACK is
+        allowed to confirm delivery it is bound to the sender identity and
+        checked for replay:
+
+        * Sender binding (anti-forgery): only the party the original message
+          was delivered to (``pending.recipient``) may acknowledge it. An ACK
+          whose ``sender`` is not that recipient is rejected, so a third party
+          cannot forge a delivery confirmation just by learning the
+          ``envelope_id``.
+        * Cryptographic authentication (optional): when a ``sender_verifier``
+          is wired in, the ACK's CapAuth/PGP signature must authenticate its
+          claimed sender; string identity alone is not trusted. Fails closed.
+        * Replay / stale rejection: an ACK may confirm a pending entry exactly
+          once. A duplicate ACK for an already-confirmed message, or a stale
+          ACK replayed after the entry timed out, does not mutate state (no
+          re-confirmation, no resurrection).
 
         Args:
             ack_envelope: A received ACK-type envelope.
 
         Returns:
-            The resolved PendingAck, or None if no matching pending found.
+            The resolved PendingAck, or None if the ACK is unknown, forged,
+            unauthenticated, or a replay.
         """
         if not ack_envelope.is_ack:
             return None
@@ -142,7 +188,9 @@ class AckTracker:
         path = self._dir / f"{original_id}{ACK_SUFFIX}"
 
         if not path.exists():
-            logger.debug("ACK for unknown envelope %s — ignoring", original_id[:8])
+            # No pending entry: a forged ACK for a message we never sent, or a
+            # replay after the entry was purged. Either way, ignore.
+            logger.debug("ACK for unknown envelope %s: ignoring", original_id[:8])
             return None
 
         try:
@@ -151,27 +199,46 @@ class AckTracker:
             logger.warning("Failed to read pending ACK %s: %s", original_id[:8], exc)
             return None
 
-        # Replay/dedupe protection: only a still-pending entry may be confirmed.
-        # A replayed ACK (or an ACK for an already-resolved envelope) is rejected
-        # so it cannot re-confirm or mutate the entry.
-        if pending.status != AckStatus.PENDING:
-            logger.warning(
-                "Duplicate/replayed ACK for %s (status=%s) — ignoring",
-                original_id[:8],
-                pending.status.value,
-            )
-            return None
-
-        # Binding: the ACK must come from the identity the original message was
-        # delivered to. The transport already verified the envelope signature, so
-        # ack_envelope.sender is an authenticated identity — reject any ACK whose
+        # Sender-identity binding (anti-forgery): the ACK must come from the
+        # identity the original message was delivered to. Reject any ACK whose
         # sender is not the intended recipient (forgery by a third party).
-        if ack_envelope.sender != pending.recipient:
+        # Comparison is fingerprint-normalization aware and fails closed on
+        # empty identities.
+        if not self._identity_matches(ack_envelope.sender, pending.recipient):
             logger.warning(
-                "ACK for %s from unauthorized sender %r (expected recipient %r) — rejecting",
+                "Rejecting forged ACK for %s: sender %r is not tracked recipient %r",
                 original_id[:8],
                 ack_envelope.sender,
                 pending.recipient,
+            )
+            return None
+
+        # Optional cryptographic authentication of the ACK sender. Fail closed:
+        # a verifier error or a falsy result rejects the ACK.
+        if self._sender_verifier is not None:
+            try:
+                authenticated = bool(self._sender_verifier(ack_envelope))
+            except Exception as exc:
+                logger.warning(
+                    "ACK sender verification errored for %s: %s", original_id[:8], exc
+                )
+                authenticated = False
+            if not authenticated:
+                logger.warning(
+                    "Rejecting unauthenticated ACK for %s from %s (signature check failed)",
+                    original_id[:8],
+                    ack_envelope.sender,
+                )
+                return None
+
+        # Replay/dedupe protection: only a still-pending entry may be confirmed.
+        # A replayed ACK (or an ACK for an already-resolved or timed-out
+        # envelope) is rejected so it cannot re-confirm or mutate the entry.
+        if pending.status != AckStatus.PENDING:
+            logger.warning(
+                "Duplicate/replayed ACK for %s (status=%s): ignoring",
+                original_id[:8],
+                pending.status.value,
             )
             return None
 
