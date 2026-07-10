@@ -261,7 +261,13 @@ class TestRunHousekeepingPass:
 
         results = run_housekeeping_pass([t1, t2, _PrunerlessTransport()], cfg)
 
-        assert results == {"outbox_pruned": 4, "archive_pruned": 2, "mailbox_pruned": 0}
+        assert results == {
+            "outbox_pruned": 4,
+            "archive_pruned": 2,
+            "mailbox_pruned": 0,
+            "mailbox_resealed": 0,
+            "mailbox_purged": 0,
+        }
         assert t1.outbox_calls == [24.0]
         assert t1.archive_calls == [72.0]
         assert t2.outbox_calls == [24.0]

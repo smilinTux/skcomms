@@ -74,8 +74,8 @@ def signing_patch(lumina_keys):
     with patch("skcomms.mailbox.resolve_self_identity", return_value=ident), patch(
         "skcomms.mailbox._load_signer", return_value=EnvelopeSigner(priv, "")
     ), patch("skcomms.mailbox._load_verifier_key", return_value=pub), patch(
-        "skcomms.mailbox._load_private_armor", return_value=priv
-    ):
+        "skcomms.mailbox._load_recipient_key", return_value=pub
+    ), patch("skcomms.mailbox._load_private_armor", return_value=priv):
         yield priv, pub
 
 
@@ -94,8 +94,9 @@ class TestSend:
         scaffold(agent="lumina")
         result = send_message("opus@chef.skworld", "hello opus")
 
-        # sender outbox copy — the sender's own LOCAL record (not replicated to
-        # the peer) stays a readable SignedEnvelope.
+        # sender outbox record exists; it is sealed at rest (the operator
+        # subtree, including outbox/, is Syncthing-published to peers) and is
+        # read back via read_outbox below.
         out_path = Path(result["outbox_path"])
         assert out_path.exists()
         # peer inbox drop
@@ -105,19 +106,25 @@ class TestSend:
         assert "opus" in str(peer_path)
 
         from skcomms.envelope import SignedEnvelope
+        from skcomms.mailbox import read_outbox
 
-        signed = SignedEnvelope.from_bytes(out_path.read_bytes())
-        assert signed.envelope.from_fqid == "lumina@chef.skworld"
-        assert signed.envelope.to_fqid == "opus@chef.skworld"
-        assert signed.envelope.body == "hello opus"
-        assert signed.is_signed
+        # SECURITY: BOTH drops live in the Syncthing-replicated tree, so BOTH
+        # must be sealed at rest: never a plaintext body, never a bare
+        # readable SignedEnvelope.
+        for path in (out_path, peer_path):
+            raw = path.read_bytes()
+            assert b"hello opus" not in raw
+            with pytest.raises(Exception):
+                SignedEnvelope.from_bytes(raw)
 
-        # SECURITY: the peer inbox drop is Syncthing-replicated, so it MUST be
-        # sealed at rest — never a plaintext body, never a bare SignedEnvelope.
-        raw = peer_path.read_bytes()
-        assert b"hello opus" not in raw
-        with pytest.raises(Exception):
-            SignedEnvelope.from_bytes(raw)
+        # The sender reads its own record back through read_outbox.
+        records = read_outbox(agent="lumina")
+        assert len(records) == 1
+        env, verification = records[0]
+        assert env.from_fqid == "lumina@chef.skworld"
+        assert env.to_fqid == "opus@chef.skworld"
+        assert env.body == "hello opus"
+        assert verification.valid, verification.reason
 
     def test_invalid_fqid_rejected(self, cluster_env, signing_patch):
         from skcomms.mailbox import send_message

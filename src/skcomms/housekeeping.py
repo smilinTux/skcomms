@@ -124,12 +124,19 @@ def run_housekeeping_pass(
 
     Returns:
         dict: ``{"outbox_pruned": int, "archive_pruned": int,
-        "mailbox_pruned": int}`` totals for the pass, plus
+        "mailbox_pruned": int, "mailbox_resealed": int,
+        "mailbox_purged": int}`` totals for the pass, plus
         ``"dead_pruned"`` and ``"outbox_archive_pruned"`` when *outbox*
         was supplied.
     """
     cfg = config or HousekeepingConfig()
-    results = {"outbox_pruned": 0, "archive_pruned": 0, "mailbox_pruned": 0}
+    results = {
+        "outbox_pruned": 0,
+        "archive_pruned": 0,
+        "mailbox_pruned": 0,
+        "mailbox_resealed": 0,
+        "mailbox_purged": 0,
+    }
 
     for transport in transports:
         name = getattr(transport, "name", transport.__class__.__name__)
@@ -155,6 +162,20 @@ def run_housekeeping_pass(
     except Exception:
         logger.exception("mailbox outbox pruning failed")
 
+    # Migration sweep: pre-existing PLAINTEXT outbox records (written before
+    # the at-rest seal landed) sit in the Syncthing-published subtree until
+    # age-based pruning removes them. Re-seal them to the agent's own key (or
+    # purge when no key resolves) so the plaintext window closes now, not at
+    # TTL expiry. Lazy import keeps this module light for CLI use.
+    try:
+        from .mailbox import reseal_outbox_plaintext
+
+        reseal = reseal_outbox_plaintext()
+        results["mailbox_resealed"] = reseal["resealed"]
+        results["mailbox_purged"] = reseal["purged"]
+    except Exception:
+        logger.exception("mailbox outbox re-seal sweep failed")
+
     if outbox is not None:
         results["dead_pruned"] = 0
         results["outbox_archive_pruned"] = 0
@@ -174,11 +195,14 @@ def run_housekeeping_pass(
             logger.exception("outbox-archive retention pruning failed")
 
     logger.info(
-        "Housekeeping pass: %d outbox, %d archive, %d mailbox, "
+        "Housekeeping pass: %d outbox, %d archive, %d mailbox record(s) pruned, "
+        "%d legacy plaintext record(s) resealed, %d purged, "
         "%d dead-letter, %d outbox-archive record(s) pruned",
         results["outbox_pruned"],
         results["archive_pruned"],
         results["mailbox_pruned"],
+        results["mailbox_resealed"],
+        results["mailbox_purged"],
         results.get("dead_pruned", 0),
         results.get("outbox_archive_pruned", 0),
     )

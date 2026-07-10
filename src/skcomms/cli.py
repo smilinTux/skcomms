@@ -404,7 +404,9 @@ def housekeep(
     _print(f"    Archive files pruned:     {results['archive_pruned']}")
     _print(f"    Mailbox records pruned:   {results['mailbox_pruned']}")
     _print(f"    Dead letters pruned:      {results.get('dead_pruned', 0)}")
-    _print(f"    Outbox archive pruned:    {results.get('outbox_archive_pruned', 0)}\n")
+    _print(f"    Outbox archive pruned:    {results.get('outbox_archive_pruned', 0)}")
+    _print(f"    Plaintext records sealed: {results.get('mailbox_resealed', 0)}")
+    _print(f"    Plaintext records purged: {results.get('mailbox_purged', 0)}\n")
 
 
 @main.command()
