@@ -319,6 +319,86 @@ class RetryQueue:
             return False
 
 
+# ---------------------------------------------------------------------------
+# Signed wire format (sign-at-send)
+# ---------------------------------------------------------------------------
+#
+# Every rail carries canonical :class:`~skcomms.envelope.SignedEnvelope` bytes
+# (Envelope v1 + detached capauth signature): the ONE wire format every
+# receive gate parses (``POST /api/v1/inbox`` hard-requires it and 422s
+# anything else). The legacy :class:`MessageEnvelope` keeps its role as the
+# LOCAL delivery/persistence model; its payload metadata rides across the
+# wire in the Envelope v1 header map below and is reconstructed faithfully on
+# the receiving side by :func:`envelope_v1_to_message`.
+WIRE_HEADER_MESSAGE_TYPE = "x-skcomms-message-type"
+WIRE_HEADER_URGENCY = "x-skcomms-urgency"
+WIRE_HEADER_ENCRYPTED = "x-skcomms-encrypted"
+WIRE_HEADER_COMPRESSED = "x-skcomms-compressed"
+WIRE_HEADER_PAYLOAD_SIGNATURE = "x-skcomms-payload-signature"
+WIRE_HEADER_ACK_REQUESTED = "x-skcomms-ack-requested"
+
+#: Envelope v1 content types that map back to the legacy TEXT message type.
+_TEXTUAL_CONTENT_TYPES = frozenset({"text/plain", "text/markdown"})
+
+
+def envelope_v1_to_message(env) -> MessageEnvelope:
+    """Convert a (verified) Envelope v1 into the local transport MessageEnvelope.
+
+    The inverse of the sign-at-send wrap in :meth:`SKComms.send`: local
+    delivery (file inboxes, ``comm.receive()``) speaks MessageEnvelope, so
+    the Envelope v1 wire format is mapped onto it. The Envelope v1 ``id`` is
+    preserved as ``envelope_id`` for dedup; payload metadata (typed content,
+    encrypted/compressed flags, payload signature, urgency, ack request) is
+    restored from the ``x-skcomms-*`` header map when present, so inbound
+    decrypt/decompress/ack keep working end to end. Envelopes from senders
+    that never set those headers (plain federation sends) fall back to a
+    plaintext payload with the historical inbox-conversion defaults.
+
+    Args:
+        env: A verified :class:`~skcomms.envelope.Envelope` (v1).
+
+    Returns:
+        MessageEnvelope: The reconstructed local envelope.
+    """
+    headers: dict = dict(getattr(env, "headers", None) or {})
+
+    content_type = headers.get(WIRE_HEADER_MESSAGE_TYPE) or (
+        MessageType.TEXT.value
+        if env.content_type in _TEXTUAL_CONTENT_TYPES
+        else env.content_type
+    )
+
+    try:
+        urgency = Urgency(headers.get(WIRE_HEADER_URGENCY, ""))
+    except ValueError:
+        urgency = Urgency.NORMAL
+
+    # Absent header (a plain federation send) keeps the historical inbox
+    # default (RoutingConfig.ack_requested = True); a sign-at-send wrap is
+    # explicit either way ("1"/"0").
+    ack_header = headers.get(WIRE_HEADER_ACK_REQUESTED)
+    ack_requested = True if ack_header is None else ack_header == "1"
+
+    return MessageEnvelope(
+        envelope_id=env.id,
+        sender=env.from_fqid,
+        recipient=env.to_fqid,
+        payload=MessagePayload(
+            content=env.body,
+            content_type=content_type,
+            encrypted=headers.get(WIRE_HEADER_ENCRYPTED) == "1",
+            compressed=headers.get(WIRE_HEADER_COMPRESSED) == "1",
+            signature=headers.get(WIRE_HEADER_PAYLOAD_SIGNATURE) or None,
+        ),
+        routing=RoutingConfig(ack_requested=ack_requested),
+        metadata=MessageMetadata(
+            thread_id=env.thread_id,
+            in_reply_to=env.reply_to,
+            urgency=urgency,
+        ),
+    )
+
+
 # Mapping of transport name to module path within skcomms.transports
 BUILTIN_TRANSPORTS: dict[str, str] = {
     "file": "skcomms.transports.file",
@@ -513,22 +593,12 @@ class SKComms:
         Returns:
             DeliveryReport for the immediate attempt.
         """
-        from .crypto import EnvelopeCrypto
         from .envelope import Envelope
         from .identity import resolve_self_identity
 
         ident = resolve_self_identity()
         from_fqid = ident.get("fqid") or self._identity
-        crypto = self._crypto
-        if crypto is None:
-            # Resolve the running agent's capauth dir (SKAGENT-aware) rather than
-            # the hardcoded ~/.capauth default — keys live under
-            # ~/.skcapstone/agents/<agent>/capauth in the multi-agent layout.
-            from pathlib import Path
-
-            agent = ident.get("agent") or self._identity
-            cap_dir = Path.home() / ".skcapstone" / "agents" / str(agent) / "capauth"
-            crypto = EnvelopeCrypto.from_capauth(cap_dir if cap_dir.exists() else None)
+        crypto = self._signing_crypto()
         if crypto is None:
             raise RuntimeError("no capauth key available to sign federation envelope")
 
@@ -563,6 +633,84 @@ class SKComms:
                 logger.warning("federation outbox enqueue failed: %s", exc)
         return report
 
+    def _signing_crypto(self) -> Optional["EnvelopeCrypto"]:
+        """Resolve the crypto engine holding this agent's capauth signing key.
+
+        Prefers the injected engine; otherwise resolves the running agent's
+        capauth dir (SKAGENT-aware) rather than the hardcoded ``~/.capauth``
+        default, since keys live under ``~/.skcapstone/agents/<agent>/capauth``
+        in the multi-agent layout.
+
+        Returns:
+            EnvelopeCrypto or None when no signing key is available.
+        """
+        if self._crypto is not None:
+            return self._crypto
+        try:
+            from .crypto import EnvelopeCrypto
+            from .identity import resolve_self_identity
+
+            ident = resolve_self_identity()
+            agent = ident.get("agent") or self._identity
+            cap_dir = Path.home() / ".skcapstone" / "agents" / str(agent) / "capauth"
+            return EnvelopeCrypto.from_capauth(cap_dir if cap_dir.exists() else None)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("capauth signing key resolution failed: %s", exc)
+            return None
+
+    def _sign_message_envelope(self, envelope: MessageEnvelope, crypto) -> "SignedEnvelope":
+        """Wrap a prepared MessageEnvelope in a signed canonical Envelope v1.
+
+        The sign-at-send seam: the legacy envelope's payload and metadata are
+        lifted onto Envelope v1 (body = payload content; the local-model
+        metadata rides in the ``x-skcomms-*`` header map, see
+        :func:`envelope_v1_to_message`) and the result is signed with this
+        agent's capauth key, producing the exact wire bytes every receive
+        gate parses. The Envelope v1 ``id`` is the legacy ``envelope_id`` so
+        dedup and delivery reports stay coherent across both models.
+
+        Args:
+            envelope: The fully prepared (compressed/encrypted) local envelope.
+            crypto: The EnvelopeCrypto engine holding the signing key.
+
+        Returns:
+            SignedEnvelope ready to put on the wire.
+        """
+        from .envelope import Envelope
+        from .identity import resolve_self_identity
+
+        ident = resolve_self_identity()
+        from_fqid = ident.get("fqid") or self._identity
+
+        raw_type = envelope.payload.content_type
+        type_value = raw_type.value if isinstance(raw_type, MessageType) else str(raw_type)
+        headers = {
+            WIRE_HEADER_MESSAGE_TYPE: type_value,
+            WIRE_HEADER_URGENCY: envelope.metadata.urgency.value,
+            WIRE_HEADER_ACK_REQUESTED: "1" if envelope.routing.ack_requested else "0",
+        }
+        if envelope.payload.encrypted:
+            headers[WIRE_HEADER_ENCRYPTED] = "1"
+        if envelope.payload.compressed:
+            headers[WIRE_HEADER_COMPRESSED] = "1"
+        if envelope.payload.signature:
+            headers[WIRE_HEADER_PAYLOAD_SIGNATURE] = envelope.payload.signature
+
+        return crypto.envelope_signer().sign(
+            Envelope(
+                id=envelope.envelope_id,
+                from_fqid=from_fqid,
+                to_fqid=envelope.recipient,
+                content_type=(
+                    "text/plain" if type_value == MessageType.TEXT.value else type_value
+                ),
+                body=envelope.payload.content,
+                thread_id=envelope.metadata.thread_id,
+                reply_to=envelope.metadata.in_reply_to,
+                headers=headers,
+            )
+        )
+
     def send(
         self,
         recipient: str,
@@ -574,12 +722,25 @@ class SKComms:
         in_reply_to: Optional[str] = None,
         urgency: Urgency = Urgency.NORMAL,
     ) -> DeliveryReport:
-        """Send a message to a recipient.
+        """Send a message to a recipient (sign-at-send).
 
-        Creates an envelope, routes it through available transports.
+        Creates the local envelope (compression and payload crypto exactly as
+        before), then signs it into the canonical Envelope v1 wire format with
+        this agent's capauth key, so EVERY rail carries
+        :class:`~skcomms.envelope.SignedEnvelope` bytes: the one format the
+        federation receive gates parse (``POST /api/v1/inbox`` 422s anything
+        else). Payload metadata rides in the ``x-skcomms-*`` Envelope v1
+        headers and is reconstructed on the receiving side by
+        :func:`envelope_v1_to_message`.
+
+        When no signing key is available the send falls back to the explicit
+        legacy unsigned path (:meth:`_route_legacy_unsigned`), whose router leg
+        (:meth:`Router.route`) never offers signed-envelope-only rails such as
+        https-s2s, so an unsigned envelope can never reach a gate that would
+        reject it.
 
         Args:
-            recipient: Agent name or PGP fingerprint of the recipient.
+            recipient: Agent name, fqid, or PGP fingerprint of the recipient.
             message: The message content (plaintext).
             message_type: Type of content being sent.
             mode: Override the default routing mode.
@@ -642,36 +803,62 @@ class SKComms:
                 ],
             )
 
+        crypto = self._signing_crypto()
+        if crypto is None:
+            # Explicit legacy local-only fallback: without a signing key the
+            # unsigned MessageEnvelope stays on rails that accept it
+            # (Router.route() excludes signed-envelope-only rails).
+            logger.warning(
+                "No capauth signing key available: sending %s to %s unsigned "
+                "over legacy local-only rails",
+                envelope.envelope_id[:8],
+                recipient,
+            )
+            return self._route_legacy_unsigned(envelope)
+
+        try:
+            signed = self._sign_message_envelope(envelope, crypto)
+        except Exception as exc:  # noqa: BLE001
+            # Signing broke unexpectedly (corrupt key, signer error). Fall back
+            # to the legacy local-only path rather than dropping the message.
+            logger.warning(
+                "Sign-at-send failed for %s (%s): falling back to legacy "
+                "local-only rails",
+                envelope.envelope_id[:8],
+                exc,
+            )
+            return self._route_legacy_unsigned(envelope)
+
         logger.info(
-            "Sending %s to %s [%s] via %s (compressed=%s, encrypted=%s, signed=%s)",
+            "Sending %s to %s [%s] via %s as SignedEnvelope "
+            "(compressed=%s, encrypted=%s)",
             message_type.value,
             recipient,
             envelope.envelope_id[:8],
             (mode or self._config.default_mode).value,
             envelope.payload.compressed,
             envelope.payload.encrypted,
-            bool(envelope.payload.signature),
         )
 
-        report = self._router.route(envelope)
+        report = self._router.route_signed(
+            signed,
+            preferred_transports=preferred_transports,
+            mode=mode or self._config.default_mode,
+        )
 
         if not report.delivered:
             last_error = report.attempts[-1].error if report.attempts else "all transports failed"
             error_msg = last_error or "all transports failed"
-            self._outbox.enqueue(
-                envelope.envelope_id,
-                recipient,
-                envelope.model_dump_json(),
-                error_msg,
-            )
-            self._retry_queue.enqueue(
-                envelope.envelope_id,
-                recipient,
-                envelope.model_dump_json(),
-                error_msg,
-            )
+            try:
+                # The federation outbox understands the signed wire shape and
+                # owns durable retry for it (classify_envelope_json -> "signed").
+                self._outbox.enqueue_signed(signed, error=error_msg)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "outbox enqueue failed for %s: %s", envelope.envelope_id[:8], exc
+                )
             logger.warning(
-                "Delivery failed for %s → %s — queued for retry",
+                "Delivery failed for %s -> %s: queued for retry",
                 envelope.envelope_id[:8],
                 recipient,
             )
@@ -680,6 +867,57 @@ class SKComms:
                 {
                     "envelope_id": envelope.envelope_id[:8],
                     "recipient": recipient,
+                    "error": error_msg,
+                },
+                level="warn",
+            )
+
+        if report.delivered and self._ack_tracker:
+            self._ack_tracker.track(envelope)
+
+        return report
+
+    def _route_legacy_unsigned(self, envelope: MessageEnvelope) -> DeliveryReport:
+        """Route a legacy unsigned MessageEnvelope (explicit local-only path).
+
+        :meth:`Router.route` excludes signed-envelope-only rails (https-s2s),
+        so the unsigned wire shape can never reach a gate that hard-requires a
+        SignedEnvelope. On failure the envelope is queued on both the legacy
+        outbox and the fast retry queue (both understand the legacy JSON).
+
+        Args:
+            envelope: The fully prepared local envelope.
+
+        Returns:
+            DeliveryReport with attempt results.
+        """
+        report = self._router.route(envelope)
+
+        if not report.delivered:
+            last_error = report.attempts[-1].error if report.attempts else "all transports failed"
+            error_msg = last_error or "all transports failed"
+            self._outbox.enqueue(
+                envelope.envelope_id,
+                envelope.recipient,
+                envelope.model_dump_json(),
+                error_msg,
+            )
+            self._retry_queue.enqueue(
+                envelope.envelope_id,
+                envelope.recipient,
+                envelope.model_dump_json(),
+                error_msg,
+            )
+            logger.warning(
+                "Delivery failed for %s -> %s: queued for retry",
+                envelope.envelope_id[:8],
+                envelope.recipient,
+            )
+            _integration.alert(
+                "delivery_failed",
+                {
+                    "envelope_id": envelope.envelope_id[:8],
+                    "recipient": envelope.recipient,
                     "error": error_msg,
                 },
                 level="warn",
@@ -738,10 +976,42 @@ class SKComms:
         """
         return self._router.route(envelope)
 
+    @staticmethod
+    def _parse_inbound(data: bytes) -> MessageEnvelope:
+        """Deserialize inbound wire bytes into a local MessageEnvelope.
+
+        Sign-at-send means rails now carry canonical SignedEnvelope bytes,
+        but legacy MessageEnvelope files (older peers, local drops, ACKs)
+        are still in circulation, so both shapes are accepted: legacy parses
+        directly; a SignedEnvelope is mapped back through
+        :func:`envelope_v1_to_message`. Signature VERIFICATION stays where
+        it always was: at the authenticated gates (``POST /api/v1/inbox``,
+        store-and-forward pull), not on the local file rails, which carry
+        the same trust as the legacy unsigned drops they replace.
+
+        Args:
+            data: Raw wire bytes from a transport.
+
+        Returns:
+            MessageEnvelope for local delivery.
+
+        Raises:
+            Exception: When the bytes parse as neither wire shape.
+        """
+        try:
+            return MessageEnvelope.from_bytes(data)
+        except Exception:
+            from .envelope import SignedEnvelope
+
+            signed = SignedEnvelope.from_bytes(data)
+            return envelope_v1_to_message(signed.envelope)
+
     def receive(self) -> list[MessageEnvelope]:
         """Check all transports for incoming messages.
 
         Polls every available transport, deduplicates, and deserializes.
+        Accepts both wire shapes (canonical SignedEnvelope and legacy
+        MessageEnvelope, see :meth:`_parse_inbound`).
 
         Returns:
             List of received MessageEnvelope objects.
@@ -751,7 +1021,7 @@ class SKComms:
 
         for data in raw_messages:
             try:
-                envelope = MessageEnvelope.from_bytes(data)
+                envelope = self._parse_inbound(data)
                 if envelope.is_expired:
                     logger.debug("Discarding expired envelope %s", envelope.envelope_id[:8])
                     continue

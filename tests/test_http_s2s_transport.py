@@ -1,8 +1,11 @@
 """Tests for the HTTP S2S federation transport (skfed S1).
 
-Covers inbox_url resolution from the peer store and the HTTP status →
-SendResult mapping: 2xx → ok, 4xx → permanent failure, 5xx/timeout →
-retryable failure. The HTTP POST is mocked so no network is touched.
+Covers inbox_url resolution from the peer store, the HTTP status →
+SendResult mapping (2xx → ok, 4xx → permanent failure, 5xx/timeout →
+retryable failure), and the local structural gate: payloads that are not a
+SignedEnvelope (the only shape the receiving inbox parses) are refused
+locally as a permanent failure without any HTTP round trip. The HTTP POST is
+mocked so no network is touched.
 """
 
 from __future__ import annotations
@@ -23,7 +26,16 @@ from skcomms.transports.http_s2s import (
 )
 
 INBOX_URL = "https://noroc2027.ts.net/api/v1/inbox"
-ENVELOPE = b'{"envelope_id": "env-123", "to": "jarvis", "body": "hi"}'
+# The wire shape https-s2s carries: SignedEnvelope JSON (nested Envelope v1).
+ENVELOPE = (
+    b'{"envelope": {"id": "env-123", "from_fqid": "opus@chef.skworld", '
+    b'"to_fqid": "jarvis@chef.skworld", "body": "hi"}, "signature": "sig"}'
+)
+# Legacy MessageEnvelope JSON: the inbox gate would 422 this shape.
+LEGACY_ENVELOPE = (
+    b'{"envelope_id": "env-legacy", "sender": "opus", "recipient": "jarvis", '
+    b'"payload": {"content": "hi"}}'
+)
 
 
 @pytest.fixture
@@ -204,6 +216,56 @@ def test_unknown_peer_is_permanent_failure_without_posting(peer_store, monkeypat
     result = HttpS2STransport().send(ENVELOPE, "nobody")
     assert result.success is False
     assert result.error.startswith("perm:")
+
+
+# ---------------------------------------------------------------------------
+# Structural gate: non-SignedEnvelope payloads never leave the box
+# ---------------------------------------------------------------------------
+
+
+def _no_network(monkeypatch):
+    def _boom(req, timeout=None):
+        raise AssertionError("urlopen must not be called for a non-signed payload")
+
+    monkeypatch.setattr(urllib.request, "urlopen", _boom)
+
+
+def test_legacy_message_envelope_refused_locally_without_posting(peer_store, monkeypatch):
+    """A legacy MessageEnvelope leak is a local perm failure, not a 422 round trip."""
+    _no_network(monkeypatch)
+    result = HttpS2STransport().send(LEGACY_ENVELOPE, "jarvis")
+    assert result.success is False
+    assert result.error.startswith("perm:")
+    assert "legacy" in result.error
+
+
+def test_bare_envelope_v1_refused_locally_without_posting(peer_store, monkeypatch):
+    """An unsigned bare Envelope v1 is also refused before the wire."""
+    _no_network(monkeypatch)
+    bare = b'{"id": "e1", "from_fqid": "a@x.y", "to_fqid": "b@x.y", "body": "hi"}'
+    result = HttpS2STransport().send(bare, "jarvis")
+    assert result.success is False
+    assert result.error.startswith("perm:")
+    assert "envelope_v1" in result.error
+
+
+def test_garbage_bytes_refused_locally_without_posting(peer_store, monkeypatch):
+    """Non-JSON (and non-UTF-8) payloads are refused before the wire."""
+    _no_network(monkeypatch)
+    for garbage in (b"not json at all", b"\xff\xfe\x00\x01"):
+        result = HttpS2STransport().send(garbage, "jarvis")
+        assert result.success is False
+        assert result.error.startswith("perm:")
+        assert "corrupt" in result.error
+
+
+def test_signed_envelope_passes_the_structural_gate(peer_store, monkeypatch):
+    """The canonical SignedEnvelope shape still goes out on the wire."""
+    captured: dict = {}
+    monkeypatch.setattr(urllib.request, "urlopen", _capturing_urlopen(200, captured))
+    result = HttpS2STransport().send(ENVELOPE, "jarvis")
+    assert result.success is True
+    assert captured["req"].data == ENVELOPE
 
 
 # ---------------------------------------------------------------------------

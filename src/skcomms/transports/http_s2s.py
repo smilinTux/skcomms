@@ -20,6 +20,15 @@ Status mapping (drives router retry vs. drop decisions):
     - 5xx / timeout /
       connection error → retryable failure (router falls back / re-queues)
 
+Structural gate (defense in depth, sign-at-send invariant):
+    The peer's inbox parses ONLY :class:`~skcomms.envelope.SignedEnvelope`
+    bytes, so any other payload shape is a guaranteed 422 on the far end.
+    ``send`` therefore refuses payloads that
+    :func:`skcomms.outbox.classify_envelope_json` does not classify as
+    ``"signed"`` locally, as a permanent (``perm:``) failure, WITHOUT making
+    the HTTP round trip. A legacy-envelope leak can then never re-create the
+    422 round-trip storm on this rail.
+
 Peer inbox_url discovery:
     Peer store YAML ``transports[].settings.inbox_url`` for a transport entry
     with ``transport == "https-s2s"`` — mirrors the tailscale transport's
@@ -35,6 +44,7 @@ import urllib.error
 import urllib.request
 from typing import Optional
 
+from ..outbox import classify_envelope_json
 from ..transport import (
     HealthStatus,
     SendResult,
@@ -141,11 +151,35 @@ class HttpS2STransport(Transport):
 
         Returns:
             SendResult. ``success=False`` with a ``perm:``-prefixed error for
-            permanent (4xx) failures; a plain error string for retryable
-            (5xx / timeout / connection) failures.
+            permanent (4xx or structural) failures; a plain error string for
+            retryable (5xx / timeout / connection) failures.
         """
         start = time.monotonic()
         envelope_id = self._extract_id(envelope_bytes)
+
+        # Structural gate (defense in depth): the receiving inbox parses ONLY
+        # SignedEnvelope bytes and 422s anything else, so a non-signed payload
+        # is refused locally as a permanent failure, with NO network call.
+        try:
+            payload_kind = classify_envelope_json(envelope_bytes.decode("utf-8"))
+        except UnicodeDecodeError:
+            payload_kind = "corrupt"
+        if payload_kind != "signed":
+            logger.warning(
+                "https-s2s refusing non-signed payload for %s (classified %r)",
+                recipient,
+                payload_kind,
+            )
+            return SendResult(
+                success=False,
+                transport_name=self.name,
+                envelope_id=envelope_id,
+                latency_ms=(time.monotonic() - start) * 1000,
+                error=(
+                    "perm: refusing non-SignedEnvelope payload on https-s2s "
+                    f"(classified {payload_kind!r}); the inbox gate would 422 it"
+                ),
+            )
 
         inbox_url = self._resolve_inbox_url(recipient)
         if not inbox_url:
@@ -400,12 +434,15 @@ class HttpS2STransport(Transport):
         """
         try:
             parsed = json.loads(envelope_bytes)
+            inner = parsed.get("envelope")
+            inner_id = inner.get("id") if isinstance(inner, dict) else None
             return (
                 parsed.get("envelope_id")
                 or parsed.get("id")
+                or inner_id
                 or f"unknown-{int(time.time())}"
             )
-        except (json.JSONDecodeError, UnicodeDecodeError):
+        except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
             return f"unknown-{int(time.time())}"
 
 

@@ -875,22 +875,17 @@ def _envelope_v1_to_message(env) -> MessageEnvelope:
 
     ``comm.receive()`` deserializes file-transport inbox files as
     :class:`MessageEnvelope`, so the federation Envelope v1 (the wire format)
-    is mapped onto it for local delivery. The Envelope v1 ``id`` is preserved
-    as the ``envelope_id`` for dedup; the body becomes the payload content.
+    is mapped onto it for local delivery. Delegates to the shared,
+    header-aware converter (:func:`skcomms.core.envelope_v1_to_message`):
+    sign-at-send lifts the legacy payload metadata (typed content,
+    encrypted/compressed flags, urgency, ack request) into the
+    ``x-skcomms-*`` Envelope v1 headers, and the converter restores it. The
+    Envelope v1 ``id`` is preserved as the ``envelope_id`` for dedup; the
+    body becomes the payload content.
     """
-    return MessageEnvelope(
-        envelope_id=env.id,
-        sender=env.from_fqid,
-        recipient=env.to_fqid,
-        payload=MessagePayload(
-            content=env.body,
-            content_type=MessageType.TEXT,
-        ),
-        metadata=MessageMetadata(
-            thread_id=env.thread_id,
-            in_reply_to=env.reply_to,
-        ),
-    )
+    from .core import envelope_v1_to_message
+
+    return envelope_v1_to_message(env)
 
 
 def _consent_classify(recipient: str, sender: str, *, token: Optional[str] = None) -> str:
