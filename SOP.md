@@ -122,6 +122,30 @@ Per sk-standards
 - **Rule:** Funnel `:443` is the sole ingress. No skcomms socket is ever published to a
   public interface directly.
 
+#### Browser origins / CORS
+
+The same `skcomms.api` app that Funnel exposes also carries loopback-gated **operator**
+surfaces: `POST /mcp` fires desktop notifications, `POST /api/v1/send` sends messages as
+the agent, and the consent endpoints (`/api/v1/consent/*`) trust the client IP, which a
+browser running on the operator's own machine satisfies. A permissive
+`Access-Control-Allow-Origin` therefore lets **any web page the operator visits** drive
+those operator actions cross-origin from inside the trust boundary. CORS is not an
+authentication layer, it only decides which origins a browser will let script the API, so
+it is scoped tight:
+
+- **Allowlist is empty by default.** No cross-origin browser request is approved unless an
+  origin is explicitly listed. There is no wildcard.
+- Configure via `SKCOMMS_CORS_ORIGINS`: a comma-separated list of exact origins (scheme +
+  host + optional port), e.g. `SKCOMMS_CORS_ORIGINS=https://hub.skworld.io,http://localhost:3000`.
+  Whitespace is trimmed and blank entries dropped (`api._cors_allow_origins`).
+- **Which surfaces need a browser:** none of the public federation routes in this section
+  (`/api/v1/inbox`, `/api/v1/prekey`, `/.well-known/skfed/directory`,
+  `/api/v1/skfed/announce`) are browser-driven, they are server-to-server and
+  self-authenticating at the envelope layer, so they need no CORS entry. The operator
+  surfaces (`/mcp`, `/api/v1/send`, `/api/v1/consent/*`) are reached from the same host and
+  likewise need none by default. Add an origin ONLY for a specific first-party web client
+  you intend to let script the API from a browser, and only for the host that serves it.
+
 ## 6. Configuration / Usage
 
 API port from config (default 9384, `config.py` / `mcp_server.py`). Peers wired in
