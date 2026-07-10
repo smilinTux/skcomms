@@ -156,6 +156,11 @@ class SKCommsConfig(BaseModel):
     encrypt: bool = True
     sign: bool = True
     ack: bool = True
+    # When True, an inbound ACK must carry a PGP payload signature that
+    # verifies against the claimed sender's known public key before it can
+    # confirm delivery (fail closed). Off by default for backward
+    # compatibility with peers that do not sign ACKs yet.
+    ack_verify_signature: bool = False
     retry_max: int = 5
     retry_backoff: list[int] = Field(default_factory=lambda: [5, 15, 60, 300, 900])
     ttl: int = 86400
@@ -206,6 +211,9 @@ class SKCommsConfig(BaseModel):
             encrypt=skcomms_section.get("defaults", {}).get("encrypt", True),
             sign=skcomms_section.get("defaults", {}).get("sign", True),
             ack=skcomms_section.get("defaults", {}).get("ack", True),
+            ack_verify_signature=skcomms_section.get("defaults", {}).get(
+                "ack_verify_signature", False
+            ),
             retry_max=skcomms_section.get("defaults", {}).get("retry_max", 5),
             retry_backoff=skcomms_section.get("defaults", {}).get(
                 "retry_backoff", [5, 15, 60, 300, 900]
