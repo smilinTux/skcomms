@@ -48,6 +48,42 @@ LARGE_FILE_THRESHOLD = 10 * 1024 * 1024  # 10 MB — threshold to trigger chunki
 TRANSFER_CHUNK_SIZE = 1 * 1024 * 1024  # 1 MB  — size of each chunk
 
 
+def _prune_dir_by_ttl(directory: Path, ttl_hours: float, log: logging.Logger) -> int:
+    """Delete regular files in *directory* older than *ttl_hours* (by mtime).
+
+    Shared TTL sweep used by the archive pruners of the file and syncthing
+    transports. Hidden files (dot-prefixed, e.g. in-flight ``.tmp`` writes)
+    are skipped. Non-recursive: only direct children are considered.
+
+    Args:
+        directory: The directory to sweep. Missing directory prunes nothing.
+        ttl_hours: Age threshold in hours. Values <= 0 prune nothing.
+        log: Logger for per-file warnings and the summary line.
+
+    Returns:
+        int: The number of files deleted.
+    """
+    if ttl_hours <= 0 or not directory.exists():
+        return 0
+
+    cutoff = time.time() - (ttl_hours * 3600.0)
+    deleted = 0
+
+    for entry in directory.iterdir():
+        if entry.name.startswith(".") or not entry.is_file():
+            continue
+        try:
+            if entry.stat().st_mtime < cutoff:
+                entry.unlink()
+                deleted += 1
+        except OSError as exc:
+            log.warning("Failed to prune %s: %s", entry, exc)
+
+    if deleted:
+        log.info("Pruned %d file(s) older than %sh from %s", deleted, ttl_hours, directory)
+    return deleted
+
+
 @dataclass
 class _ChunkRecord:
     """Per-chunk state for a resumable file transfer."""
@@ -530,6 +566,62 @@ class FileTransport(Transport):
             state.file_size,
         )
         return state.transfer_id
+
+    def prune_outbox(self, max_age_hours: float = 48.0) -> int:
+        """Delete stale envelope files from the outbox (self-trim safety valve).
+
+        Removes ``*.skc.json`` files in the flat outbox directory whose
+        modification time is older than *max_age_hours*. Mirrors
+        :meth:`skcomms.transports.syncthing.SyncthingTransport.prune_outbox`
+        for the flat (non per-peer) layout. Nothing else ever deletes sender
+        outbox files, so without this the outbox grows without bound (the
+        140k-file leak that pegged Syncthing on a fleet laptop). Call it from
+        a periodic maintenance task or daemon loop, not on every send.
+
+        Args:
+            max_age_hours: Age threshold in hours. Files older than this (by
+                mtime) are deleted. Defaults to 48.0. Values <= 0 prune nothing.
+
+        Returns:
+            int: The number of envelope files deleted.
+        """
+        if max_age_hours <= 0 or not self._outbox.exists():
+            return 0
+
+        cutoff = time.time() - (max_age_hours * 3600.0)
+        deleted = 0
+
+        for env_file in self._outbox.glob(f"*{ENVELOPE_SUFFIX}"):
+            if env_file.name.startswith("."):
+                continue
+            try:
+                if env_file.stat().st_mtime < cutoff:
+                    env_file.unlink()
+                    deleted += 1
+            except OSError as exc:
+                logger.warning("Failed to prune envelope %s: %s", env_file, exc)
+
+        if deleted:
+            logger.info(
+                "Pruned %d stale outbox envelope(s) older than %sh", deleted, max_age_hours
+            )
+        return deleted
+
+    def prune_archive(self, ttl_hours: float = 168.0) -> int:
+        """Delete archived (already-processed) files older than *ttl_hours*.
+
+        The receive path moves processed inbox files into the archive
+        directory and nothing ever deletes them, so the archive grows
+        without bound. This trims it on a TTL. Default 168h (7 days).
+
+        Args:
+            ttl_hours: Age threshold in hours. Files older than this (by
+                mtime) are deleted. Values <= 0 prune nothing.
+
+        Returns:
+            int: The number of archive files deleted.
+        """
+        return _prune_dir_by_ttl(self._archive_dir, ttl_hours, logger)
 
     def _archive_file(self, path: Path) -> None:
         """Move a processed file to the archive directory."""

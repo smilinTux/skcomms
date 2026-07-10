@@ -48,6 +48,36 @@ class TransportConfig(BaseModel):
     settings: dict = Field(default_factory=dict)
 
 
+class HousekeepingConfig(BaseModel):
+    """Retention / pruning settings for the periodic housekeeping pass.
+
+    Every sender outbox write, receiver archive move, and mailbox outbox
+    record is append-only; without pruning they grow without bound (the
+    140k-file outbox leak that pegged Syncthing and froze a fleet laptop).
+    These settings drive both the daemon's background housekeeping loop
+    (see :mod:`skcomms.housekeeping`) and the ``skcomms housekeep`` CLI verb.
+
+    Attributes:
+        enabled: Whether the daemon runs the background housekeeping loop.
+        interval_s: Seconds between housekeeping passes in the daemon
+            (default 3600, hourly).
+        outbox_max_age_hours: Sender outbox envelopes older than this are
+            deleted (default 48h, matching ``prune_outbox``'s default;
+            Syncthing has long since propagated anything this old).
+        archive_ttl_hours: Receiver-side archive files older than this are
+            deleted (default 168h = 7 days).
+        mailbox_ttl_hours: Mailbox outbox records (the sender's local
+            ``<realm>/<operator>/<agent>/outbox/*.json`` copies) older than
+            this are deleted (default 168h = 7 days).
+    """
+
+    enabled: bool = True
+    interval_s: float = 3600.0
+    outbox_max_age_hours: float = 48.0
+    archive_ttl_hours: float = 168.0
+    mailbox_ttl_hours: float = 168.0
+
+
 class RegistryConfig(BaseModel):
     """Realm peer-registry settings (T11).
 
@@ -95,6 +125,7 @@ class SKCommsConfig(BaseModel):
     retry_backoff: list[int] = Field(default_factory=lambda: [5, 15, 60, 300, 900])
     ttl: int = 86400
     daemon: DaemonConfig = Field(default_factory=DaemonConfig)
+    housekeeping: HousekeepingConfig = Field(default_factory=HousekeepingConfig)
     transports: dict[str, TransportConfig] = Field(default_factory=dict)
 
     @classmethod
@@ -129,6 +160,7 @@ class SKCommsConfig(BaseModel):
 
         identity_data = skcomms_section.get("identity", {})
         daemon_data = skcomms_section.get("daemon", {})
+        housekeeping_data = skcomms_section.get("housekeeping", {})
 
         return cls(
             version=skcomms_section.get("version", "1.0.0"),
@@ -143,6 +175,11 @@ class SKCommsConfig(BaseModel):
             ),
             ttl=skcomms_section.get("defaults", {}).get("ttl", 86400),
             daemon=DaemonConfig(**daemon_data) if daemon_data else DaemonConfig(),
+            housekeeping=(
+                HousekeepingConfig(**housekeeping_data)
+                if housekeeping_data
+                else HousekeepingConfig()
+            ),
             transports=transport_configs,
         )
 

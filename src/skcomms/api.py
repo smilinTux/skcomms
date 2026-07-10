@@ -13,6 +13,7 @@ Run from CLI:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from collections import defaultdict
@@ -58,6 +59,10 @@ _broker: Optional[SignalingBroker] = None
 
 # Global channel-adapter registry (initialized on startup from the adapters: block)
 _adapter_registry = None
+
+# Background housekeeping task (outbox prune, archive TTL, mailbox retention).
+# Started by lifespan, cancelled on shutdown.
+_housekeeping_task: Optional[asyncio.Task] = None
 
 # Global ChatHistory instance (lazily initialized from skchat)
 _chat_history = None
@@ -160,9 +165,38 @@ async def lifespan(app: FastAPI):
         logger.exception("Failed to start channel adapters")
         _adapter_registry = None
 
+    # Background housekeeping: periodically prune sender outboxes, apply the
+    # receiver-archive TTL, and sweep stale mailbox outbox records. Without
+    # this loop nothing ever deletes sender-side envelope files; in production
+    # a 140k-file outbox pegged Syncthing and froze a fleet laptop.
+    global _housekeeping_task
+    from .config import load_config
+    from .housekeeping import housekeeping_loop
+
+    try:
+        hk_cfg = getattr(_skcomms, "_config", None)
+        hk_cfg = hk_cfg.housekeeping if hk_cfg is not None else load_config().housekeeping
+        if hk_cfg.enabled:
+            _housekeeping_task = asyncio.create_task(
+                housekeeping_loop(lambda: _skcomms.router.transports if _skcomms else [], hk_cfg)
+            )
+            logger.info("Housekeeping loop started (interval %ss)", hk_cfg.interval_s)
+        else:
+            logger.info("Housekeeping loop disabled by config")
+    except Exception:
+        logger.exception("Failed to start housekeeping loop")
+        _housekeeping_task = None
+
     yield
 
     logger.info("Shutting down SKComms API server...")
+    if _housekeeping_task is not None:
+        _housekeeping_task.cancel()
+        try:
+            await _housekeeping_task
+        except (asyncio.CancelledError, Exception):
+            pass
+    _housekeeping_task = None
     if _adapter_registry is not None:
         try:
             await _adapter_registry.stop()

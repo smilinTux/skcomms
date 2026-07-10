@@ -130,12 +130,37 @@ come from `~/.skcapstone/cluster.json`; the `agent` component resolves via capau
 paths honor the `SKCOMMS_HOME` override (default `~/.skcomms`). `SK_STANDALONE=1` forces
 standalone mode. Secrets are never inlined — keys come from the agent's CapAuth profile.
 
+### Housekeeping / retention
+
+The file-based rails are append-only at write time: sender outboxes
+(`{id}.skc.json`), receiver `archive/` dirs, and mailbox outbox records all grow
+without bound unless swept (a 140k-file outbox once pegged Syncthing and froze a
+fleet laptop). Retention is configured in the `housekeeping:` block of
+`config.yml` (`skcomms.config.HousekeepingConfig`); defaults:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | run the background housekeeping loop in the daemon |
+| `interval_s` | `3600` | seconds between daemon passes (hourly) |
+| `outbox_max_age_hours` | `48` | sender-outbox envelopes older than this are deleted (`prune_outbox`) |
+| `archive_ttl_hours` | `168` (7 days) | receiver-archive files older than this are deleted (`prune_archive`) |
+| `mailbox_ttl_hours` | `168` (7 days) | mailbox outbox records (`<realm>/<operator>/<agent>/outbox/*.json`) older than this are deleted |
+
+The running API daemon starts the loop automatically from `api.lifespan`
+(`skcomms.housekeeping.housekeeping_loop`). `skcomms housekeep` runs one full
+pass on demand (outbox prune + archive TTL + mailbox retention) and is the verb
+to call from a systemd timer or cron as belt-and-braces on hosts where the
+daemon is not always up. Per-run overrides: `--outbox-max-age-hours`,
+`--archive-ttl-hours`, `--mailbox-ttl-hours`; `--json-out` prints
+machine-readable counts.
+
 ## 7. API / Reference
 
 FastAPI app `skcomms.api:app`. Health `GET /health`; status `GET /api/v1/status`;
 capabilities `GET /api/v1/capabilities`; federation routes per §5. CLI:
 `skcomms init`, `skcomms send <fqid> <msg>`, `skcomms inbox`, `skcomms peers add`,
-`skcomms registry resolve`, `skcomms grant …`, `skcomms serve`. Full command matrix in
+`skcomms registry resolve`, `skcomms grant …`, `skcomms serve`,
+`skcomms housekeep` (one full retention pass, timer-friendly; see §6). Full command matrix in
 [README.md](README.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## 8. Troubleshooting
@@ -148,6 +173,7 @@ capabilities `GET /api/v1/capabilities`; federation routes per §5. CLI:
 | Peer can't reach `:8765` | daemon-proxy binds the tailnet, not loopback-only; verify tailscale up + firewall allows tailscale0 |
 | PQ leg unavailable | `liboqs` / `oqs` importable; otherwise negotiation falls back to the classical suite (expected, logged) |
 | CoT/TAK client can't connect | `cot_service.py` bound to tailnet iface; confirm ATAK/iTAK points at the tailscale IP, not the Funnel host |
+| Outbox / archive growing unbounded, Syncthing pegged | daemon housekeeping loop running? (`housekeeping.enabled`, `api.lifespan` log line "Housekeeping loop started"); run `skcomms housekeep --json-out` for an immediate sweep; see §6 retention table |
 
 ## 9. Maturity-tier + Version reference
 
