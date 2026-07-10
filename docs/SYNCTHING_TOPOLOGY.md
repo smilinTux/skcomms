@@ -245,6 +245,28 @@ peer dirs. It is **not** run automatically on send — call it from a periodic
 maintenance task. The authoritative pruner remains skcapstone housekeeping;
 `prune_outbox` is a conservative library-level safety valve.
 
+### 5.2 At-rest sealing of the message tree (coord `52793cb4`)
+
+Everything `mailbox.send_message` writes into the replicated tree is PGP-sealed
+at rest, fail closed:
+
+- the **peer inbox drop** is encrypted to the RECIPIENT's key. The key is
+  resolved strictly (same-box agent identity dir, then the pinned
+  `<home>/peers/<fqid>.asc` store; the local operator key is accepted only for
+  a same-`operator.realm` fqid). No resolvable recipient key means the send
+  raises; plaintext is never written.
+- the **sender's outbox record** is encrypted to the SENDER's own key, because
+  the Send-Only operator subtree publishes `outbox/` to every peer too. Read
+  it back with `mailbox.read_outbox` (or set `SKCOMMS_MAILBOX_OUTBOX_PLAINTEXT=1`
+  to keep a legacy readable record for debugging).
+- a body that is already ciphertext from an upstream layer (`pqdm1:` ratchet
+  tokens, PGP-armored blobs) is not double-wrapped; the signed envelope is
+  stored as-is since the body is already unreadable.
+
+Syncthing therefore only ever carries signed ciphertext for message bodies;
+a compromised relay box or a stray backup of the tree exposes routing metadata
+(fqids, timestamps) but no content.
+
 ---
 
 ## 6. Worked example — `chef.skworld` ↔ `casey.douno`

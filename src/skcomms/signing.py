@@ -94,6 +94,17 @@ class EnvelopeSigner:
         """The signer's 40-char hex PGP fingerprint."""
         return self._fingerprint
 
+    @property
+    def public_key_armor(self) -> str:
+        """ASCII-armored public key of the loaded signing key.
+
+        Lets callers that already hold the signer encrypt material to
+        themselves (e.g. the mailbox sealing its own outbox record at rest)
+        without a second key-loading path that could resolve a different key.
+        """
+        key = self._key if self._key.is_public else self._key.pubkey
+        return str(key)
+
     def _detached_sig(self, canonical: bytes) -> str:
         """Produce an armored PGP signature over *canonical* bytes."""
         import pgpy
