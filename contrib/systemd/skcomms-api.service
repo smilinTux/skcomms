@@ -1,0 +1,37 @@
+# SKComms S2S API: sovereign realm-aware comms federation surface.
+#
+# Serves the FastAPI app (skcomms.api:app) on the loopback socket 127.0.0.1:9384
+# per SOP.md section 5. The internet-facing surface is a Tailscale Funnel :443
+# path-route mounted onto this loopback port (see the bootstrap script and SOP
+# section 10); the socket itself is NEVER bound to a public interface.
+#
+# Install as a user unit:
+#   mkdir -p ~/.config/systemd/user
+#   cp contrib/systemd/skcomms-api.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now skcomms-api.service
+#
+# Secrets are never inlined here. Per-host overrides (bind host/port, agent name,
+# any secret PATHS the app reads) live in the EnvironmentFile below, which is
+# optional (leading '-'): the unit starts on defaults if the file is absent.
+
+[Unit]
+Description=SKComms S2S API (skcomms.api:app on 127.0.0.1:9384)
+Documentation=https://github.com/smilinTux/skcomms
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Env defaults; override per-host by editing the EnvironmentFile (paths, not values).
+EnvironmentFile=-%h/.config/skcomms/skcomms.env
+Environment=SKCOMMS_API_HOST=127.0.0.1
+Environment=SKCOMMS_API_PORT=9384
+ExecStart=%h/.skenv/bin/uvicorn skcomms.api:app --host ${SKCOMMS_API_HOST} --port ${SKCOMMS_API_PORT}
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

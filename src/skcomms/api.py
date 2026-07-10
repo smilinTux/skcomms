@@ -568,8 +568,14 @@ async def root():
 
 
 @app.get("/health", tags=["health"])
+@app.get("/healthz", tags=["health"])
 async def health():
-    """Liveness probe — alias so clients polling /health get 200 (not 404)."""
+    """Liveness probe. Served at both ``/health`` and ``/healthz``.
+
+    ``/health`` is the historical alias; ``/healthz`` is the path the SKStacks v2
+    descriptor and the Dockerfile HEALTHCHECK probe. Both return 200 so any
+    probe path works (reconciles the /health vs /healthz mismatch).
+    """
     return {"status": "ok", "service": "SKComms API"}
 
 
