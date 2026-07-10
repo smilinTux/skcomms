@@ -24,9 +24,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #   cli       → click + rich (the `skcomms` entrypoint)
 #   skcapstone→ skcapstone framework integration (on PyPI)
 #   crypto    → capauth + pgpy (PGP-signed envelopes)
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md constraints.txt ./
 COPY src/ ./src/
-RUN pip install --no-cache-dir ".[api,cli,skcapstone,crypto]"
+# -c constraints.txt pins every dependency to the exact versions CI validated,
+# so the deployed image runs what was tested instead of re-resolving to whatever
+# is latest at build time. Regenerate with scripts/refresh-constraints.sh.
+RUN pip install --no-cache-dir -c constraints.txt ".[api,cli,skcapstone,crypto]"
 
 # Sovereign data dir (config / keystore / outbox)
 RUN mkdir -p /data && chmod 777 /data
