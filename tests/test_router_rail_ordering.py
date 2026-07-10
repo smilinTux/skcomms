@@ -99,10 +99,9 @@ class FakeTransport(Transport):
 
 @pytest.fixture(autouse=True)
 def isolate_retry_queue(tmp_path, monkeypatch):
-    """Redirect the retry queue to a tmp file so the background worker is inert."""
-    monkeypatch.setattr(
-        router_mod, "RETRY_QUEUE_PATH", tmp_path / "retry_queue.jsonl", raising=True
-    )
+    """Inert: the router JSONL retry queue was removed (durable retry moved to
+    the PersistentOutbox, the single queue of record), so there is no
+    background worker to isolate."""
     yield
 
 

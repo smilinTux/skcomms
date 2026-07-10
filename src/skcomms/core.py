@@ -9,10 +9,7 @@ from __future__ import annotations
 
 import heapq
 import importlib
-import json
 import logging
-import threading
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -84,239 +81,6 @@ class MessagePriorityQueue:
 
     def __len__(self) -> int:
         return len(self._heap)
-
-
-_RETRY_QUEUE_PATH = Path("~/.skcapstone/retry_queue.jsonl")
-_RETRY_MAX_ATTEMPTS = 10
-_RETRY_BASE_BACKOFF = 1  # seconds
-_RETRY_MAX_BACKOFF = 60  # seconds
-
-
-class RetryQueue:
-    """Lightweight JSONL-backed retry queue with fast exponential backoff.
-
-    On transport failure, the failed envelope is appended to
-    ``~/.skcapstone/retry_queue.jsonl`` as a single JSON line.  A
-    background daemon thread polls every second and re-attempts delivery
-    using the backoff schedule 1s → 2s → 4s → … → 60s (max).  After
-    ``_RETRY_MAX_ATTEMPTS`` (10) total attempts the entry is silently
-    dropped with a warning log.
-
-    The JSONL file location (``~/.skcapstone/``) makes the queue visible
-    to ``skcapstone`` tooling for dashboard / coordination use.
-
-    This queue complements (not replaces) the heavier
-    :class:`~skcomms.outbox.PersistentOutbox` — it is optimised for fast
-    transient failures that resolve within a minute.
-
-    Args:
-        router: The SKComms Router used for retry delivery.
-        queue_path: Override the default JSONL path (useful in tests).
-    """
-
-    def __init__(
-        self,
-        router: Optional[object] = None,
-        queue_path: Optional[Path] = None,
-    ) -> None:
-        self._path = (queue_path or _RETRY_QUEUE_PATH).expanduser()
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._router = router
-        self._lock = threading.Lock()
-        self._stop_event: Optional[threading.Event] = None
-        self._thread: Optional[threading.Thread] = None
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    def enqueue(
-        self,
-        envelope_id: str,
-        recipient: str,
-        envelope_json: str,
-        error: str = "",
-    ) -> None:
-        """Append a failed envelope to the retry queue.
-
-        Thread-safe.  The entry is appended as a single JSON line to
-        ``~/.skcapstone/retry_queue.jsonl``.
-
-        Args:
-            envelope_id: The envelope's unique ID.
-            recipient: Target agent/peer name.
-            envelope_json: Full serialised envelope JSON string.
-            error: Error message from the failed delivery attempt.
-        """
-        now = datetime.now(timezone.utc)
-        entry = {
-            "envelope_id": envelope_id,
-            "recipient": recipient,
-            "envelope_json": envelope_json,
-            "attempt": 1,
-            "max_attempts": _RETRY_MAX_ATTEMPTS,
-            "next_retry_at": (now + timedelta(seconds=_RETRY_BASE_BACKOFF)).isoformat(),
-            "last_error": error,
-            "queued_at": now.isoformat(),
-        }
-        with self._lock:
-            with self._path.open("a", encoding="utf-8") as fh:
-                fh.write(json.dumps(entry) + "\n")
-        logger.debug(
-            "RetryQueue: queued %s for retry (error: %s)",
-            envelope_id[:8],
-            error[:80],
-        )
-
-    def start(self) -> None:
-        """Start the background retry worker daemon thread."""
-        if self._thread and self._thread.is_alive():
-            return
-        self._stop_event = threading.Event()
-        self._thread = threading.Thread(
-            target=self._retry_loop,
-            daemon=True,
-            name="skcomms-retry-queue",
-        )
-        self._thread.start()
-        logger.debug("RetryQueue worker started")
-
-    def stop(self) -> None:
-        """Stop the background retry worker thread (best-effort)."""
-        if self._stop_event:
-            self._stop_event.set()
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=5)
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _retry_loop(self) -> None:
-        """Daemon loop: sweep the queue every second."""
-        assert self._stop_event is not None
-        while not self._stop_event.is_set():
-            try:
-                self._sweep()
-            except Exception as exc:
-                logger.warning("RetryQueue sweep error: %s", exc)
-            self._stop_event.wait(timeout=1)
-
-    def _sweep(self) -> None:
-        """Process all entries whose ``next_retry_at`` has elapsed.
-
-        Strategy to avoid a lock-during-I/O race:
-
-        1. **Drain phase** — acquire lock, read the file, clear it to
-           empty (so concurrent ``enqueue()`` calls go to a fresh file),
-           release lock.
-        2. **Process phase** — iterate entries without any lock; attempt
-           delivery for due entries; compute new state for entries that
-           need another retry.
-        3. **Flush phase** — acquire lock, read any lines written during
-           the process phase, prepend our kept lines, write the merged
-           result, release lock.
-        """
-        if not self._path.exists():
-            return
-
-        # Phase 1: drain
-        with self._lock:
-            try:
-                raw = self._path.read_text(encoding="utf-8")
-                self._path.write_text("", encoding="utf-8")
-            except OSError:
-                return
-
-        lines = [ln.strip() for ln in raw.splitlines() if ln.strip()]
-        if not lines:
-            return
-
-        now = datetime.now(timezone.utc)
-        keep: list[str] = []
-
-        for line in lines:
-            try:
-                entry: dict = json.loads(line)
-            except json.JSONDecodeError:
-                logger.warning("RetryQueue: skipping corrupt entry")
-                continue
-
-            next_retry = datetime.fromisoformat(entry["next_retry_at"])
-            if next_retry > now:
-                keep.append(json.dumps(entry))
-                continue
-
-            # Due for retry
-            delivered = self._attempt_delivery(entry)
-            if delivered:
-                logger.info(
-                    "RetryQueue: delivered %s on attempt %d",
-                    entry["envelope_id"][:8],
-                    entry["attempt"],
-                )
-                continue  # drop from queue
-
-            attempt = entry["attempt"] + 1
-            if attempt > entry["max_attempts"]:
-                logger.warning(
-                    "RetryQueue: giving up on %s after %d attempts — last error: %s",
-                    entry["envelope_id"][:8],
-                    entry["attempt"],
-                    entry.get("last_error", "unknown"),
-                )
-                continue  # drop from queue (exhausted)
-
-            backoff = min(
-                _RETRY_BASE_BACKOFF * (2 ** (attempt - 1)),
-                _RETRY_MAX_BACKOFF,
-            )
-            entry["attempt"] = attempt
-            entry["next_retry_at"] = (now + timedelta(seconds=backoff)).isoformat()
-            keep.append(json.dumps(entry))
-
-        # Phase 3: flush — prepend kept entries to any newly appended ones
-        if not keep:
-            return
-        with self._lock:
-            try:
-                new_lines = self._path.read_text(encoding="utf-8")
-                self._path.write_text(
-                    "\n".join(keep) + "\n" + new_lines,
-                    encoding="utf-8",
-                )
-            except OSError as exc:
-                logger.warning("RetryQueue: failed to flush queue: %s", exc)
-
-    def _attempt_delivery(self, entry: dict) -> bool:
-        """Try to deliver a queued entry via the router.
-
-        Args:
-            entry: The mutable queue entry dict (``last_error`` is
-                updated in-place on failure).
-
-        Returns:
-            True if delivery succeeded.
-        """
-        if self._router is None:
-            return False
-        try:
-            from .models import MessageEnvelope
-
-            envelope = MessageEnvelope.from_bytes(entry["envelope_json"].encode("utf-8"))
-            report = self._router.route(envelope)
-            delivered = getattr(report, "delivered", False)
-            if not delivered and report.attempts:
-                entry["last_error"] = report.attempts[-1].error or "delivery failed"
-            return delivered
-        except Exception as exc:
-            entry["last_error"] = str(exc)
-            logger.debug(
-                "RetryQueue: attempt failed for %s: %s",
-                entry["envelope_id"][:8],
-                exc,
-            )
-            return False
 
 
 # ---------------------------------------------------------------------------
@@ -450,7 +214,6 @@ class SKComms:
 
             self._ack_tracker = AckTracker()
         self._outbox = PersistentOutbox(router=self._router)
-        self._retry_queue = RetryQueue(router=self._router)
 
     @classmethod
     def from_config(cls, config_path: Optional[str] = None) -> SKComms:
@@ -487,8 +250,22 @@ class SKComms:
             crypto, keystore = _init_crypto()
 
         instance = cls(config=config, router=router, crypto=crypto, keystore=keystore)
+        # Drain any pre-existing legacy JSONL retry queue (both the old
+        # core.RetryQueue and router schemas) into the PersistentOutbox, which
+        # is now the single queue of record. Best-effort, non-fatal.
+        try:
+            from .outbox_migrate import migrate_retry_queue_jsonl
+
+            drained = migrate_retry_queue_jsonl(outbox=instance._outbox)
+            if drained["migrated"]:
+                logger.info(
+                    "Drained %d legacy retry_queue.jsonl entr%s into the outbox",
+                    drained["migrated"],
+                    "y" if drained["migrated"] == 1 else "ies",
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("legacy retry queue migration failed: %s", exc)
         instance._outbox.start()
-        instance._retry_queue.start()
         # SKFed P4: ensure the store-and-forward rail is registered + selected,
         # and (config-gated) start the relay pull loop. Best-effort, non-fatal.
         instance._init_store_forward()
@@ -882,8 +659,9 @@ class SKComms:
 
         :meth:`Router.route` excludes signed-envelope-only rails (https-s2s),
         so the unsigned wire shape can never reach a gate that hard-requires a
-        SignedEnvelope. On failure the envelope is queued on both the legacy
-        outbox and the fast retry queue (both understand the legacy JSON).
+        SignedEnvelope. On failure the envelope is queued exactly once on the
+        PersistentOutbox (the single queue of record), which understands the
+        legacy JSON.
 
         Args:
             envelope: The fully prepared local envelope.
@@ -897,12 +675,6 @@ class SKComms:
             last_error = report.attempts[-1].error if report.attempts else "all transports failed"
             error_msg = last_error or "all transports failed"
             self._outbox.enqueue(
-                envelope.envelope_id,
-                envelope.recipient,
-                envelope.model_dump_json(),
-                error_msg,
-            )
-            self._retry_queue.enqueue(
                 envelope.envelope_id,
                 envelope.recipient,
                 envelope.model_dump_json(),

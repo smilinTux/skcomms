@@ -42,8 +42,9 @@ class FakeTransport(Transport):
 
 @pytest.fixture(autouse=True)
 def isolate_retry_queue(tmp_path, monkeypatch):
-    monkeypatch.setattr(router_mod, "RETRY_QUEUE_PATH",
-                        tmp_path / "rq.jsonl", raising=True)
+    # The router no longer owns a JSONL retry queue (durable retry moved to the
+    # PersistentOutbox, the single queue of record), so there is nothing to
+    # isolate. Kept as an inert autouse fixture to preserve test structure.
     yield
 
 

@@ -196,6 +196,32 @@ def test_keyless_send_falls_back_to_legacy_and_skips_https_s2s(monkeypatch, tmp_
     assert legacy.payload.content == "unsigned local note"
 
 
+def test_keyless_send_failure_enqueues_once_to_outbox(monkeypatch, tmp_path):
+    """A failed keyless (legacy) send enqueues EXACTLY once, onto the outbox.
+
+    Regression: the legacy local-only path used to double-enqueue the failure
+    (once to the PersistentOutbox and again to the retired core.RetryQueue
+    JSONL). The PersistentOutbox is now the single queue of record, so a single
+    failed send must produce exactly one pending entry.
+    """
+    monkeypatch.setattr(identity_mod, "resolve_self_identity",
+                        lambda *a, **k: {"agent": "solo"})
+    monkeypatch.setattr(EnvelopeCrypto, "from_capauth",
+                        classmethod(lambda cls, *a, **k: None))
+
+    file_rail = CaptureTransport(name="file", priority=5, succeed=False)
+    comm = SKComms(router=Router(transports=[file_rail]), crypto=None)
+    comm._outbox = PersistentOutbox(outbox_dir=tmp_path / "outbox", router=comm._router)
+
+    report = comm.send("lumina", "will fail unsigned")
+
+    assert report.delivered is False
+    # Exactly one enqueue, and it lands on the PersistentOutbox (legacy wire).
+    assert comm._outbox.pending_count == 1
+    entry = comm._outbox.list_pending()[0]
+    assert classify_envelope_json(entry.envelope_json) == "legacy"
+
+
 # --- receive-side compatibility ----------------------------------------------
 
 

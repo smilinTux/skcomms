@@ -8,11 +8,8 @@ Handles failover, broadcast, and retry logic.
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
-import pathlib
-import threading
 import time
 from collections import OrderedDict
 from typing import Optional
@@ -60,7 +57,8 @@ FEDERATION_DEFAULT_CHAIN = [
 SIGNED_ENVELOPE_ONLY_TRANSPORTS = frozenset({"https-s2s"})
 
 # Designated store-and-forward fallback rail. Tried last, after every direct
-# rail has failed, before an envelope is handed to the retry queue. This is the
+# rail has failed, as the final in-band delivery attempt (durable retry beyond
+# that is owned by the caller's federation outbox). This is the
 # SKFed P4 Nostr-relay S&F rail (``skcomms.store_forward.StoreForwardTransport``,
 # name ``"nostr-sf"``): it resolves the recipient fqid→Nostr pubkey, encrypts the
 # signed envelope to that pubkey (untrusted public relay), and publishes it for
@@ -70,12 +68,6 @@ DEFAULT_STORE_FORWARD_TRANSPORT = "nostr-sf"
 
 # Deduplication cache limit
 SEEN_IDS_MAX = 10_000
-
-# Retry queue
-RETRY_QUEUE_PATH = pathlib.Path.home() / ".skcapstone" / "retry_queue.jsonl"
-RETRY_BASE_DELAY = 1.0  # seconds before first retry (doubles each attempt)
-RETRY_MAX_DELAY = 60.0  # cap on per-attempt wait
-RETRY_MAX_ATTEMPTS = 10  # drop envelope after this many retry attempts
 
 
 class Router:
@@ -109,20 +101,13 @@ class Router:
         self._default_mode = default_mode
         # Name of the designated store-and-forward fallback rail. When all
         # direct rails fail this rail is tried last (if available + not in
-        # cooldown) before the envelope is queued for retry.
+        # cooldown) as the final in-band delivery attempt.
         self._store_forward_transport = store_forward_transport
         self._seen_ids: OrderedDict[str, float] = OrderedDict()
         self._seen_ttl = 7 * 24 * 3600  # 7 days
 
         # Failure tracking: {transport_name: (consecutive_fail_count, last_fail_time)}
         self._transport_failures: dict[str, tuple[int, float]] = {}
-
-        # Retry queue
-        self._queue_lock = threading.Lock()
-        self._retry_thread = threading.Thread(
-            target=self._retry_worker, daemon=True, name="skcomms-retry"
-        )
-        self._retry_thread.start()
 
     @property
     def transports(self) -> list[Transport]:
@@ -185,7 +170,7 @@ class Router:
 
         if not candidates:
             # No DIRECT rails — fall through to the store-and-forward fallback
-            # (and the retry queue) rather than giving up immediately.
+            # rather than giving up immediately.
             logger.warning(
                 "No direct transports for envelope %s (mode=%s)",
                 envelope.envelope_id[:8],
@@ -197,9 +182,9 @@ class Router:
             report = self._route_failover(envelope_bytes, envelope, candidates, report)
 
         # Store-and-forward fallback: when every direct rail failed, try the
-        # designated S&F rail (default "nostr") as a last resort before the
-        # envelope is queued for retry. Skipped if it was already a candidate
-        # (and thus already attempted) above.
+        # designated S&F rail (default "nostr") as a last in-band resort.
+        # Skipped if it was already a candidate (and thus already attempted)
+        # above.
         if not report.delivered:
             report = self._try_store_forward(envelope_bytes, envelope, candidates, report)
 
@@ -210,12 +195,14 @@ class Router:
                 report.successful_transport,
             )
         else:
+            # Durable retry is owned by the caller's federation outbox
+            # (skcomms.outbox.PersistentOutbox is the single queue of record),
+            # so route() no longer persists anything of its own here.
             logger.warning(
-                "Failed to deliver %s after %d attempts — queuing for retry",
+                "Failed to deliver %s after %d attempts",
                 envelope.envelope_id[:8],
                 len(report.attempts),
             )
-            self._enqueue_retry(envelope, envelope_bytes)
 
         return report
 
@@ -235,8 +222,9 @@ class Router:
         (a :class:`~skcomms.envelope.SignedEnvelope`) and owns durability/retry
         (the federation outbox is authoritative — see ``outbox.py``). This does
         rail selection (peer-advertised order or the federation default chain)
-        → failover → store-and-forward fallback, and returns the report. Unlike
-        :meth:`route`, it does NOT enqueue to the router's own retry queue.
+        → failover → store-and-forward fallback, and returns the report. Like
+        :meth:`route`, the router itself persists nothing on failure: durable
+        retry belongs entirely to the caller's federation outbox.
 
         Args:
             envelope_bytes: The exact bytes to put on the wire (e.g.
@@ -789,160 +777,6 @@ class Router:
                 latency_ms=elapsed,
                 error=str(exc),
             )
-
-    # ------------------------------------------------------------------
-    # Retry queue
-    # ------------------------------------------------------------------
-
-    def _enqueue_retry(self, envelope: MessageEnvelope, envelope_bytes: bytes) -> None:
-        """Persist a failed envelope to the JSONL retry queue."""
-        entry = {
-            "envelope_id": envelope.envelope_id,
-            "recipient": envelope.recipient,
-            "routing_mode": (envelope.routing.mode or self._default_mode).value,
-            "envelope_b64": base64.b64encode(envelope_bytes).decode(),
-            "attempt": 0,
-            # First retry after RETRY_BASE_DELAY (2^0 = 1s)
-            "next_retry_at": time.time() + RETRY_BASE_DELAY,
-            "queued_at": time.time(),
-        }
-        try:
-            RETRY_QUEUE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with self._queue_lock:
-                with RETRY_QUEUE_PATH.open("a") as fh:
-                    fh.write(json.dumps(entry) + "\n")
-            logger.info(
-                "Queued envelope %s for retry (max %d attempts)",
-                envelope.envelope_id[:8],
-                RETRY_MAX_ATTEMPTS,
-            )
-        except OSError as exc:
-            logger.error("Failed to write retry queue: %s", exc)
-
-    def _retry_worker(self) -> None:
-        """Daemon thread: process the retry queue every second."""
-        while True:
-            try:
-                self._process_retry_queue()
-            except Exception:
-                logger.exception("Retry worker error")
-            time.sleep(1.0)
-
-    def _process_retry_queue(self) -> None:
-        """One sweep: attempt ready entries, rewrite queue with survivors."""
-        if not RETRY_QUEUE_PATH.exists():
-            return
-
-        with self._queue_lock:
-            try:
-                raw = RETRY_QUEUE_PATH.read_text()
-            except OSError:
-                return
-
-            entries: list[dict] = []
-            for line in raw.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entries.append(json.loads(line))
-                except json.JSONDecodeError:
-                    logger.warning("Corrupt retry queue entry — dropping")
-
-            now = time.time()
-            surviving: list[dict] = []
-
-            for entry in entries:
-                # Tolerate legacy entries that stored next_retry_at as an ISO
-                # string instead of an epoch float.
-                nra = entry.get("next_retry_at", 0)
-                if isinstance(nra, str):
-                    try:
-                        from datetime import datetime
-                        nra = datetime.fromisoformat(nra.replace("Z", "+00:00")).timestamp()
-                    except Exception:
-                        nra = 0
-                if nra > now:
-                    surviving.append(entry)
-                    continue
-
-                attempt = entry.get("attempt", 0)
-                if attempt >= RETRY_MAX_ATTEMPTS:
-                    logger.warning(
-                        "Dropping envelope %s after %d retry attempts",
-                        entry.get("envelope_id", "?")[:8],
-                        RETRY_MAX_ATTEMPTS,
-                    )
-                    continue
-
-                try:
-                    envelope_bytes = base64.b64decode(entry["envelope_b64"])
-                except Exception:
-                    logger.warning("Retry queue entry has invalid envelope_b64 — dropping")
-                    continue
-
-                recipient = entry.get("recipient", "")
-                try:
-                    mode = RoutingMode(entry.get("routing_mode", RoutingMode.FAILOVER.value))
-                except ValueError:
-                    mode = RoutingMode.FAILOVER
-
-                if self._retry_send(envelope_bytes, recipient, mode):
-                    logger.info(
-                        "Retry delivered envelope %s (attempt %d)",
-                        entry.get("envelope_id", "?")[:8],
-                        attempt + 1,
-                    )
-                    # Delivered — don't re-add to survivors
-                else:
-                    next_attempt = attempt + 1
-                    delay = min(RETRY_BASE_DELAY * (2**next_attempt), RETRY_MAX_DELAY)
-                    entry["attempt"] = next_attempt
-                    entry["next_retry_at"] = time.time() + delay
-                    surviving.append(entry)
-                    logger.debug(
-                        "Retry failed for %s — next in %.0fs (attempt %d/%d)",
-                        entry.get("envelope_id", "?")[:8],
-                        delay,
-                        next_attempt,
-                        RETRY_MAX_ATTEMPTS,
-                    )
-
-            try:
-                if surviving:
-                    RETRY_QUEUE_PATH.write_text("\n".join(json.dumps(e) for e in surviving) + "\n")
-                else:
-                    RETRY_QUEUE_PATH.write_text("")
-            except OSError as exc:
-                logger.error("Failed to rewrite retry queue: %s", exc)
-
-    def _retry_send(self, envelope_bytes: bytes, recipient: str, mode: RoutingMode) -> bool:
-        """Try to deliver envelope bytes via available transports (failover order)."""
-        available = [
-            t
-            for t in self._transports
-            if t.is_available()
-            and not self._is_in_cooldown(t.name)
-            and t.name != self._store_forward_transport
-        ]
-        if mode == RoutingMode.STEALTH:
-            available = [t for t in available if t.category in self.STEALTH_CATEGORIES]
-        elif mode == RoutingMode.SPEED:
-            available = [t for t in available if t.category in self.SPEED_CATEGORIES]
-        available = sorted(available, key=lambda t: t.priority)
-
-        for transport in available:
-            result = self._try_send(transport, envelope_bytes, recipient)
-            if result.success:
-                return True
-        # Last-resort store-and-forward for retry-queue entries too.
-        sf = next(
-            (t for t in self._transports if t.name == self._store_forward_transport), None
-        )
-        if sf is not None and sf.is_available() and not self._is_in_cooldown(sf.name):
-            if self._try_send(sf, envelope_bytes, recipient).success:
-                return True
-        return False
 
     def _extract_envelope_id(self, data: bytes) -> Optional[str]:
         """Best-effort extraction of envelope_id from raw bytes for dedup."""
