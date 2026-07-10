@@ -216,3 +216,85 @@ Forbidden words ("quantum-proof", "quantum-safe", "unbreakable", "CNSA 2.0", "FI
 (pre-1.0 `0.x`; only the latest published `0.x` line gets security fixes). Experimental,
 self-built reference implementation — **not** independently security-audited; see
 [SECURITY.md](SECURITY.md).
+
+## 10. Cold-machine standup runbook
+
+Standing the daemon up on a fresh host, end to end. The shipped artifacts live in
+`contrib/systemd/` (the `systemd` **user** units) and `scripts/bootstrap.sh` (the
+idempotent installer). Re-running any step is safe.
+
+### One-shot bootstrap
+
+```bash
+git clone https://github.com/smilinTux/skcomms && cd skcomms
+scripts/bootstrap.sh
+```
+
+That single command, in order:
+
+1. **venv**: creates `~/.skenv` if missing (override with `SKCOMMS_VENV`), upgrades pip.
+2. **install**: `pip install -e ".[api,cli,crypto]"`. If a pinned lockfile
+   `constraints.txt` is present at the repo root it installs with `-c constraints.txt`;
+   otherwise it falls back to unpinned resolution.
+3. **scaffold**: `skcomms init` builds the `<realm>/<operator>/<agent>/{outbox,inbox}`
+   tree plus the top-level `.stignore` (idempotent; honors `SKCOMMS_HOME`).
+4. **units**: installs `skcomms-api.service`, `skcomms-housekeep.service`, and
+   `skcomms-housekeep.timer` into `~/.config/systemd/user/`, then
+   `systemctl --user enable --now` on the API service and the housekeeping timer.
+5. **Funnel**: prints (does not run) the Tailscale Funnel `:443` mount commands.
+
+Pass `--no-service` to do the env/install/init steps only and skip the unit install
+(useful in containers or CI where there is no user systemd bus).
+
+### Verify
+
+```bash
+systemctl --user status skcomms-api.service
+curl -fsS http://127.0.0.1:9384/health && echo ' OK'   # /healthz works identically
+systemctl --user list-timers skcomms-housekeep.timer
+```
+
+The API binds loopback only (`127.0.0.1:9384`, per section 5). To make it
+internet-reachable, run the Funnel mounts the bootstrap printed **on the public node**:
+
+```bash
+tailscale funnel --bg --set-path /api/v1/inbox   http://127.0.0.1:9384/api/v1/inbox
+tailscale funnel --bg --set-path /api/v1/prekey  http://127.0.0.1:9384/api/v1/prekey
+tailscale funnel --bg --set-path /.well-known/skfed/directory http://127.0.0.1:9384/.well-known/skfed/directory
+tailscale funnel --bg --set-path /api/v1/skfed/announce      http://127.0.0.1:9384/api/v1/skfed/announce
+```
+
+Funnel `:443` is the sole ingress; no skcomms socket is ever published to a public
+interface directly (section 5).
+
+### Where secrets come from (PATHS only, never values)
+
+Nothing in `bootstrap.sh` or the units contains a secret value.
+
+- **Signing / identity keys** resolve at runtime from the agent's **CapAuth profile**,
+  not from any file this runbook writes (section 6).
+- **Per-host overrides** live in the optional `EnvironmentFile` at
+  `~/.config/skcomms/skcomms.env`, referenced by every unit as `EnvironmentFile=-...`
+  (the leading `-` makes it optional, so the units start on defaults if it is absent).
+  The bootstrap seeds it `0600` with the bind host/port only. Put **paths** to secret
+  material there (e.g. `SKCOMMS_KEYRING_DIR=/run/secrets/skcomms`), never the material
+  itself. Prefer a `tmpfs`/`/run/secrets`-style path populated out of band.
+
+### Retiring the `.41` hourly purge stopgap
+
+`.41` currently runs a host-local hourly cron that purges the sender outbox by hand,
+a stopgap from before retention shipped (the 140k-file outbox that pegged Syncthing,
+section 6). `skcomms-housekeep.timer` supersedes it: it runs the same
+`skcomms housekeep` pass hourly (`OnCalendar=hourly`, `Persistent=true` so a
+powered-off laptop catches up one sweep on boot). Once the timer is live and has run
+at least once, **remove the stopgap on `.41`**:
+
+```bash
+systemctl --user list-timers skcomms-housekeep.timer          # confirm it is armed
+journalctl --user -u skcomms-housekeep.service -n 20 --no-pager   # confirm a pass ran
+crontab -l                                                    # find the hourly purge line
+crontab -e                                                    # delete the skcomms purge line
+```
+
+Do not remove the cron line until the timer shows at least one successful pass in the
+journal, so retention coverage is never dropped.

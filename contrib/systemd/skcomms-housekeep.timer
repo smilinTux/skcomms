@@ -1,0 +1,19 @@
+# SKComms housekeeping timer: runs `skcomms housekeep` hourly.
+#
+# Matches the daemon's default interval (housekeeping.interval_s = 3600, SOP.md
+# section 6). Persistent=true catches up a missed run after the machine was off,
+# so a cold laptop sweeps once on boot rather than waiting a full hour. This timer
+# replaces the .41 host-local hourly purge cron stopgap (see SOP section 10).
+
+[Unit]
+Description=Run SKComms housekeeping hourly
+Documentation=https://github.com/smilinTux/skcomms
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+RandomizedDelaySec=120
+Unit=skcomms-housekeep.service
+
+[Install]
+WantedBy=timers.target

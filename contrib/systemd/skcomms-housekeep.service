@@ -1,0 +1,24 @@
+# SKComms housekeeping: one-shot retention pass (outbox prune + archive TTL +
+# mailbox retention). Driven by skcomms-housekeep.timer; see SOP.md section 6.
+#
+# This is belt-and-braces: the running API daemon (skcomms-api.service) already
+# runs the same pass on its internal loop, but the timer guarantees a sweep even
+# on hosts where the daemon is not always up, and lets us retire the host-local
+# hourly purge stopgap on .41 (see SOP section 10).
+#
+# Install alongside the timer:
+#   cp contrib/systemd/skcomms-housekeep.service ~/.config/systemd/user/
+#   cp contrib/systemd/skcomms-housekeep.timer   ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now skcomms-housekeep.timer
+
+[Unit]
+Description=SKComms housekeeping pass (outbox prune + archive/mailbox TTL)
+Documentation=https://github.com/smilinTux/skcomms
+
+[Service]
+Type=oneshot
+EnvironmentFile=-%h/.config/skcomms/skcomms.env
+ExecStart=%h/.skenv/bin/skcomms housekeep
+StandardOutput=journal
+StandardError=journal
