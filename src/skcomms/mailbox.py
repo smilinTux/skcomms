@@ -246,27 +246,45 @@ def _load_recipient_key(to_fqid: str) -> Optional[str]:
 
     Resolution order:
 
-    1. The recipient agent's own CapAuth identity dir (same-box agents).
+    1. The recipient agent's own CapAuth identity dir, but ONLY when the
+       fqid's ``operator.realm`` matches this box's cluster identity (same-box
+       agents). A bare agent name (no ``@``) addresses a same-box agent by
+       construction and qualifies too. Without this gate, a remote fqid whose
+       AGENT NAME collides with a local agent (``lumina@stranger.otherrealm``
+       on a box with local agent ``lumina``) would silently seal to the LOCAL
+       agent's key: undecryptable by the real recipient, readable by the
+       wrong local party.
     2. The pinned peer key store ``<home>/peers/<fqid>.asc`` (remote peers,
-       TOFU-pinned via ``skcomms peers add``).
-    3. The local operator key, but ONLY when the fqid's ``operator.realm``
-       matches this box's cluster identity (legacy same-operator layouts where
-       agents share the operator keypair). A remote-operator fqid NEVER falls
-       back to the local operator key.
+       TOFU-pinned via ``skcomms peers add``), keyed by FULL fqid so it can
+       never collide across operators.
+    3. The local operator key, gated on the same ``operator.realm`` match
+       (legacy same-operator layouts where agents share the operator keypair).
+       A remote-operator fqid NEVER falls back to the local operator key.
 
     Returns ``None`` when no plausible recipient key exists; the caller then
     refuses to write (never a plaintext or wrong-key fallback).
     """
-    agent = to_fqid.split("@", 1)[0] if "@" in to_fqid else to_fqid
-    candidates = [
-        _agent_identity_dir(agent) / "public.asc",
-        _agent_identity_dir(agent) / "agent.pub",
-        skcomms_home() / "peers" / f"{to_fqid}.asc",
-    ]
     if "@" in to_fqid:
-        suffix = to_fqid.split("@", 1)[1]
-        if suffix == f"{get_operator()}.{get_realm()}":
-            candidates.append(Path.home() / ".capauth" / "identity" / "public.asc")
+        agent, suffix = to_fqid.split("@", 1)
+        same_box = suffix == f"{get_operator()}.{get_realm()}"
+    else:
+        agent = to_fqid
+        same_box = True
+
+    candidates: list[Path] = []
+    if same_box:
+        # Local-agent keys are addressed by bare agent name, so they are only
+        # trustworthy for fqids that actually live on this box.
+        candidates.extend(
+            [
+                _agent_identity_dir(agent) / "public.asc",
+                _agent_identity_dir(agent) / "agent.pub",
+            ]
+        )
+    candidates.append(skcomms_home() / "peers" / f"{to_fqid}.asc")
+    if same_box and "@" in to_fqid:
+        candidates.append(Path.home() / ".capauth" / "identity" / "public.asc")
+
     for path in candidates:
         if path.exists():
             return path.read_text(encoding="utf-8")
@@ -397,6 +415,14 @@ def send_message(
         # Escape hatch for debugging legacy deploys:
         # SKCOMMS_MAILBOX_OUTBOX_PLAINTEXT=1 keeps the old readable record.
         if os.environ.get("SKCOMMS_MAILBOX_OUTBOX_PLAINTEXT") == "1":
+            # Loud on purpose: a forgotten env var silently writes plaintext
+            # into the peer-replicated tree, so every send says so in the logs.
+            logger.warning(
+                "SKCOMMS_MAILBOX_OUTBOX_PLAINTEXT=1 active: writing PLAINTEXT "
+                "outbox record %s into the Syncthing-replicated tree (debug "
+                "escape hatch; unset the env var when done)",
+                env.id,
+            )
             outbox_bytes = data
         else:
             outbox_bytes = _seal_for_recipient(signed, signer.public_key_armor)
@@ -495,6 +521,113 @@ def read_outbox(agent: Optional[str] = None) -> list[tuple[Envelope, Verificatio
     """
     tree = scaffold(agent=agent)
     return _read_sealed_dir(tree["outbox"], _reader_crypto_for(agent))
+
+
+# ---------------------------------------------------------------------------
+# legacy plaintext outbox migration (housekeeping sweep)
+# ---------------------------------------------------------------------------
+
+
+def reseal_outbox_plaintext(home: Optional[Path] = None) -> dict:
+    """Re-seal (or purge) legacy PLAINTEXT outbox records in the local tree.
+
+    Records written before the at-rest outbox seal landed are plaintext
+    SignedEnvelopes sitting in the Syncthing-published operator subtree, and
+    they stay readable until age-based pruning removes them. This sweep closes
+    that window: it walks every agent outbox under THIS box's own
+    ``<realm>/<operator>/`` subtree (never a peer's mirrored subtree, which
+    Syncthing would fight us over) and, for each legacy plaintext record:
+
+      * re-seals it to the sending agent's own key (resolved via the strict
+        :func:`_load_recipient_key`, atomic tmp-then-rename, original mtime
+        preserved so age-based pruning stays honest), or
+      * purges it when no local key resolves (fail closed: a plaintext record
+        we cannot seal does not get to keep sitting in the replicated tree).
+
+    Skipped without touching: already-sealed at-rest wrappers, records whose
+    BODY is already ciphertext from an upstream layer (the idempotent design,
+    see :func:`_is_already_sealed`), and unparseable files (pruning ages those
+    out). When ``SKCOMMS_MAILBOX_OUTBOX_PLAINTEXT=1`` is active the sweep is a
+    no-op (the operator explicitly asked for readable records) and warns.
+
+    Args:
+        home: Override the skcomms home root (defaults to
+            :func:`skcomms.home.skcomms_home`, which honors ``SKCOMMS_HOME``).
+
+    Returns:
+        dict: ``{"resealed": int, "purged": int}`` counts for the sweep.
+    """
+    result = {"resealed": 0, "purged": 0}
+
+    if os.environ.get("SKCOMMS_MAILBOX_OUTBOX_PLAINTEXT") == "1":
+        logger.warning(
+            "SKCOMMS_MAILBOX_OUTBOX_PLAINTEXT=1 active: skipping the legacy "
+            "plaintext outbox re-seal sweep (records stay readable on disk)"
+        )
+        return result
+
+    root = home if home is not None else skcomms_home()
+    op_root = root / get_realm() / get_operator()
+    if not op_root.is_dir():
+        return result
+
+    for agent_dir in sorted(p for p in op_root.iterdir() if p.is_dir()):
+        outbox = agent_dir / "outbox"
+        if not outbox.is_dir():
+            continue
+        for record in sorted(outbox.glob("*.json")):
+            if record.name.startswith("."):
+                continue
+            try:
+                raw = record.read_bytes()
+            except OSError as exc:
+                logger.warning("cannot read outbox record %s: %s", record, exc)
+                continue
+
+            try:
+                obj = json.loads(raw)
+            except Exception:
+                continue  # not JSON; pruning ages it out
+            if isinstance(obj, dict) and obj.get(AT_REST_MARKER):
+                continue  # already sealed at rest
+
+            try:
+                signed = SignedEnvelope.from_bytes(raw)
+            except Exception:
+                continue  # not a mailbox record we understand
+            if _is_already_sealed(signed.envelope.body):
+                continue  # body is ciphertext on its own (idempotent design)
+
+            # Legacy plaintext record. Seal to the sending agent's own key,
+            # or purge when no key resolves (never leave plaintext behind).
+            try:
+                pub = _load_recipient_key(signed.envelope.from_fqid)
+                if pub:
+                    sealed = _seal_for_recipient(signed, pub)
+                    stat = record.stat()
+                    tmp = record.with_name(f".{record.name}.reseal.tmp")
+                    tmp.write_bytes(sealed)
+                    os.utime(tmp, (stat.st_atime, stat.st_mtime))
+                    tmp.replace(record)
+                    result["resealed"] += 1
+                else:
+                    record.unlink()
+                    result["purged"] += 1
+                    logger.warning(
+                        "purged legacy plaintext outbox record %s "
+                        "(no local key to re-seal it to)",
+                        record,
+                    )
+            except Exception as exc:
+                logger.warning("failed to re-seal outbox record %s: %s", record, exc)
+
+    if result["resealed"] or result["purged"]:
+        logger.info(
+            "Re-seal sweep: %d legacy plaintext outbox record(s) sealed, %d purged",
+            result["resealed"],
+            result["purged"],
+        )
+    return result
 
 
 # ---------------------------------------------------------------------------

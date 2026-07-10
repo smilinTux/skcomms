@@ -251,17 +251,28 @@ Everything `mailbox.send_message` writes into the replicated tree is PGP-sealed
 at rest, fail closed:
 
 - the **peer inbox drop** is encrypted to the RECIPIENT's key. The key is
-  resolved strictly (same-box agent identity dir, then the pinned
-  `<home>/peers/<fqid>.asc` store; the local operator key is accepted only for
-  a same-`operator.realm` fqid). No resolvable recipient key means the send
+  resolved strictly: the same-box agent identity dir is consulted ONLY when
+  the fqid's `operator.realm` matches this box's cluster identity (so a
+  remote fqid whose agent name collides with a local agent can never be
+  sealed to the local agent's key), then the pinned `<home>/peers/<fqid>.asc`
+  store (keyed by full fqid); the local operator key is accepted only for a
+  same-`operator.realm` fqid. No resolvable recipient key means the send
   raises; plaintext is never written.
 - the **sender's outbox record** is encrypted to the SENDER's own key, because
   the Send-Only operator subtree publishes `outbox/` to every peer too. Read
   it back with `mailbox.read_outbox` (or set `SKCOMMS_MAILBOX_OUTBOX_PLAINTEXT=1`
-  to keep a legacy readable record for debugging).
+  to keep a legacy readable record for debugging; every send under the
+  escape hatch logs a warning so a forgotten env var is visible).
 - a body that is already ciphertext from an upstream layer (`pqdm1:` ratchet
   tokens, PGP-armored blobs) is not double-wrapped; the signed envelope is
   stored as-is since the body is already unreadable.
+- **legacy plaintext records are migrated**: the housekeeping pass runs
+  `mailbox.reseal_outbox_plaintext`, which sweeps this box's own operator
+  subtree and re-seals pre-existing plaintext outbox records to the agent's
+  own key (purging any it cannot re-seal), so old records do not stay
+  readable until age-based pruning removes them. Copies already replicated
+  to peers before the sweep cannot be recalled; rotate anything sensitive
+  that was sent before the seal landed.
 
 Syncthing therefore only ever carries signed ciphertext for message bodies;
 a compromised relay box or a stray backup of the tree exposes routing metadata
