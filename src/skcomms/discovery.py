@@ -69,7 +69,7 @@ class PeerInfo(BaseModel):
         capabilities: Advertised consumer capabilities this peer can sink, e.g.
             ``"cot"`` / ``"tak"`` for a node running a CoT/TAK consumer. Used to
             gate ephemeral CoT position-beacon fan-out (see
-            ``skcomms.cot_server._cot_peer_fqids``): a peer with no CoT capability
+            ``skcot.server._cot_peer_fqids``): a peer with no CoT capability
             (a human / no-consumer peer) never receives PLI. Empty (default)
             means "advertises nothing" -> excluded from capability-gated fan-out.
         discovered_via: How this peer was found (syncthing, mdns, manual, etc.).
