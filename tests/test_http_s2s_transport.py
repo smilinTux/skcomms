@@ -277,14 +277,23 @@ def test_connection_error_maps_to_retryable_failure(peer_store, monkeypatch):
     assert result.error.startswith("retry:")
 
 
-def test_unknown_peer_is_permanent_failure_without_posting(peer_store, monkeypatch):
+def test_unknown_peer_is_transient_failure_without_posting(peer_store, monkeypatch):
+    """An undiscovered peer (no inbox_url) is a TRANSIENT miss, not permanent.
+
+    No POST is made (nothing to POST to), but the failure is retryable — the
+    peer's inbox_url may appear once discovery / the peer store catches up.
+    Classifying it ``perm:`` armed the router's growing per-recipient backoff and
+    diverted directed traffic off the only direct rail (finding 3).
+    """
     def _boom(req, timeout=None):
         raise AssertionError("urlopen should not be called for an unknown peer")
 
     monkeypatch.setattr(urllib.request, "urlopen", _boom)
     result = HttpS2STransport().send(ENVELOPE, "nobody")
     assert result.success is False
-    assert result.error.startswith("perm:")
+    assert not result.error.startswith("perm:")
+    assert result.error.startswith("retry:")
+    assert "not yet discovered" in result.error
 
 
 # ---------------------------------------------------------------------------

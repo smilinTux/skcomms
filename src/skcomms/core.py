@@ -150,6 +150,26 @@ def resolve_signing_capauth_dir(agent: str) -> Optional[Path]:
     return None
 
 
+def _parse_wire_created_at(value):
+    """Parse an Envelope v1 ``created_at`` ISO-8601 string to an aware datetime.
+
+    Returns ``None`` on an absent/unparseable value so the caller keeps the
+    ``MessageMetadata.created_at`` default (now). A naive timestamp is assumed
+    UTC to match the envelope's ``_utc_now_iso`` producer.
+    """
+    if not value:
+        return None
+    from datetime import datetime, timezone
+
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def envelope_v1_to_message(env) -> MessageEnvelope:
     """Convert a (verified) Envelope v1 into the local transport MessageEnvelope.
 
@@ -199,6 +219,20 @@ def envelope_v1_to_message(env) -> MessageEnvelope:
         except (TypeError, ValueError):
             pass
 
+    # Propagate the wire send time so the receiver's TTL math
+    # (MessageEnvelope.is_expired = now - created_at vs routing.ttl) uses the
+    # real origin time. Without this created_at defaulted to now() and a short
+    # wire TTL (ephemeral CoT beacon) could never fire on the receiver. An
+    # absent/unparseable created_at keeps the MessageMetadata default (now).
+    meta_kwargs: dict = {
+        "thread_id": env.thread_id,
+        "in_reply_to": env.reply_to,
+        "urgency": urgency,
+    }
+    created_at = _parse_wire_created_at(getattr(env, "created_at", None))
+    if created_at is not None:
+        meta_kwargs["created_at"] = created_at
+
     return MessageEnvelope(
         envelope_id=env.id,
         sender=env.from_fqid,
@@ -211,11 +245,7 @@ def envelope_v1_to_message(env) -> MessageEnvelope:
             signature=headers.get(WIRE_HEADER_PAYLOAD_SIGNATURE) or None,
         ),
         routing=RoutingConfig(**routing_kwargs),
-        metadata=MessageMetadata(
-            thread_id=env.thread_id,
-            in_reply_to=env.reply_to,
-            urgency=urgency,
-        ),
+        metadata=MessageMetadata(**meta_kwargs),
     )
 
 

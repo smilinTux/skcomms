@@ -99,6 +99,13 @@ DEFAULT_STORE_FORWARD_TRANSPORT = "nostr-sf"
 # Deduplication cache limit
 SEEN_IDS_MAX = 10_000
 
+# Upper bound on the per-(rail, recipient) perm-backoff map. Entries are only
+# dropped on a subsequent success, so a stream of permanently-undeliverable
+# recipients (e.g. a broadcast fanned to many transient fqids) would otherwise
+# leak forever. Mirrors SEEN_IDS_MAX: TTL-evict dead entries (past the max
+# backoff window they no longer affect selection) then LRU-cap the remainder.
+PERM_BACKOFF_MAX_ENTRIES = 10_000
+
 
 class Router:
     """Transport router with multi-mode delivery and automatic failover.
@@ -161,11 +168,12 @@ class Router:
         self._failure_counters: dict[str, dict] = {}
 
         # Log-once-per-state-change dedup (RC2). Set of (channel, name,
-        # error-signature) tuples currently "active": the first time a given
-        # (rail, failure-mode) pair fails it WARNs and is recorded here;
-        # identical repeats drop to DEBUG. Cleared (with one recovery line) when
-        # the rail next succeeds. ``channel`` is "send" or "recv".
-        self._active_failure_sigs: set[tuple[str, str, str]] = set()
+        # recipient, error-signature) tuples currently "active": the first time a
+        # given (rail, recipient, failure-mode) triple fails it WARNs and is
+        # recorded here; identical repeats drop to DEBUG. Cleared (with one
+        # recovery line) when the rail next succeeds. ``channel`` is "send" or
+        # "recv" (recv uses recipient="").
+        self._active_failure_sigs: set[tuple[str, str, str, str]] = set()
 
         # Growing per-(rail, recipient) backoff for perm:/'*' failures (RC2):
         # {(transport_name, recipient): (consecutive_count, last_fail_monotonic)}.
@@ -771,7 +779,15 @@ class Router:
             return report
 
         sf = next((t for t in self._transports if t.name == sf_name), None)
-        if sf is None or not sf.is_available() or self._is_in_cooldown(sf.name):
+        if (
+            sf is None
+            or not sf.is_available()
+            or self._is_in_cooldown(sf.name)
+            # Honor the startup health-gate like _select_transports: a quarantined
+            # rail (unreachable at startup, awaiting a passing re-probe) must not
+            # be used as the store-and-forward fallback either.
+            or sf.name in self._quarantined
+        ):
             return report
 
         logger.info(
@@ -852,26 +868,39 @@ class Router:
         return sig[:120]
 
     def _note_failure_and_should_warn(
-        self, channel: str, transport_name: str, error: Optional[str]
+        self,
+        channel: str,
+        transport_name: str,
+        error: Optional[str],
+        recipient: str = "",
     ) -> bool:
         """Record a failure and decide whether it is WARN-worthy (vs DEBUG).
 
         Returns ``True`` only on the transition INTO a failing state for this
-        ``(channel, transport, error-signature)`` — i.e. the first time this
-        exact failure mode is seen while not already active. Identical repeats
-        return ``False`` (log at DEBUG). A new/different failure signature for
-        the same rail returns ``True`` again.
+        ``(channel, transport, recipient, error-signature)`` — i.e. the first
+        time this exact failure mode is seen for this recipient while not already
+        active. Identical repeats return ``False`` (log at DEBUG). A new/different
+        failure signature for the same rail — OR the same signature for a NEW
+        recipient — returns ``True`` again.
+
+        The recipient is part of the key because :meth:`_error_signature`
+        normalizes quoted names and numbers away, which otherwise collapses
+        distinct recipients (``'alice'`` vs ``'bob'``) into one signature and
+        silently DEBUG-suppresses the first genuine failure to a new peer on an
+        already-warned rail.
 
         Args:
             channel: ``"send"`` or ``"recv"`` (kept distinct so the two paths
                 dedup independently).
             transport_name: The failing rail.
             error: The failure's error string.
+            recipient: The send recipient (``""`` for the receive path, which is
+                not recipient-scoped).
 
         Returns:
             Whether the caller should log at WARNING (else DEBUG).
         """
-        key = (channel, transport_name, self._error_signature(error))
+        key = (channel, transport_name, recipient, self._error_signature(error))
         if key in self._active_failure_sigs:
             return False
         self._active_failure_sigs.add(key)
@@ -906,6 +935,31 @@ class Router:
         """
         count, _ = self._perm_backoff.get((transport_name, recipient), (0, 0.0))
         self._perm_backoff[(transport_name, recipient)] = (count + 1, time.monotonic())
+        self._prune_perm_backoff()
+
+    def _prune_perm_backoff(self) -> None:
+        """Bound the perm-backoff map (TTL + size), mirroring _prune_seen_ids.
+
+        Entries are normally dropped only on a subsequent success, so
+        never-succeeding recipients would accumulate without bound. First evict
+        entries older than the max backoff window (past it they no longer gate
+        selection anyway), then LRU-cap to :data:`PERM_BACKOFF_MAX_ENTRIES` by
+        dropping the oldest-by-last-failure entries.
+        """
+        now = time.monotonic()
+        expired = [
+            key
+            for key, (_, last) in self._perm_backoff.items()
+            if now - last > PERM_BACKOFF_MAX_SECONDS
+        ]
+        for key in expired:
+            del self._perm_backoff[key]
+        overflow = len(self._perm_backoff) - PERM_BACKOFF_MAX_ENTRIES
+        if overflow > 0:
+            for key in sorted(
+                self._perm_backoff, key=lambda k: self._perm_backoff[k][1]
+            )[:overflow]:
+                del self._perm_backoff[key]
 
     def _in_perm_backoff(self, transport_name: str, recipient: str) -> bool:
         """Whether a rail is inside its growing backoff window for a recipient.
@@ -1094,7 +1148,9 @@ class Router:
                 # same failure repeats (RC2) — a structurally-undeliverable rail
                 # (bad perm: target, '*' on a point-to-point rail) used to WARN
                 # every ~5s and fill the daemon log.
-                warn = self._note_failure_and_should_warn("send", transport.name, result.error)
+                warn = self._note_failure_and_should_warn(
+                    "send", transport.name, result.error, recipient
+                )
                 (logger.warning if warn else logger.debug)(
                     "Transport '%s' send failed: %s",
                     transport.name,

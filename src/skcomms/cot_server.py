@@ -598,6 +598,57 @@ def _cot_peer_fqids() -> list[str]:
         return []
 
 
+def _cot_gate_active() -> bool:
+    """Whether the OPT-IN CoT-capability beacon gate is engaged.
+
+    Preserving PLI delivery by default is the safe behavior: the CoT-capable-only
+    restriction (:func:`_cot_peer_fqids`) is applied ONLY when explicitly opted
+    in, so an upgrade never silently drops beacons to every peer. The gate turns
+    on when any of:
+
+    * ``SKCOMMS_COT_STRICT=1`` -- operator forces strict fan-out, or
+    * ``SKCOMMS_COT_PEERS`` is set -- an explicit CoT-peer allowlist exists, or
+    * at least one peer ADVERTISES a ``cot``/``tak`` capability -- the fabric
+      actually has a CoT consumer to gate toward.
+
+    With none of these true (the common existing deployment) the gate is off and
+    beacons federate to the full federation peer set.
+    """
+    import os
+
+    if os.environ.get("SKCOMMS_COT_STRICT") == "1":
+        return True
+    if (os.environ.get("SKCOMMS_COT_PEERS") or "").strip():
+        return True
+    try:
+        from .discovery import PeerStore
+
+        for p in PeerStore().list_all():
+            caps = {c.lower() for c in (getattr(p, "capabilities", None) or [])}
+            if caps & {"cot", "tak"}:
+                return True
+    except Exception:  # noqa: BLE001
+        return False
+    return False
+
+
+def _default_beacon_peer_fqids() -> list[str]:
+    """Default recipient set for EPHEMERAL beacon fan-out (delivery-preserving).
+
+    By DEFAULT this returns the full federation peer set (same as durable events
+    via :func:`_federation_peer_fqids`), so ``a-*`` PLI beacons keep being
+    delivered after an upgrade -- they simply ride the ephemeral wire (short TTL,
+    no ack, supersede_key) so they never durably accumulate on a receiver.
+
+    The CoT-capability restriction (:func:`_cot_peer_fqids`) is OPT-IN and applies
+    only when :func:`_cot_gate_active` is true (strict env, an advertised
+    cot/tak capability, or ``SKCOMMS_COT_PEERS`` set).
+    """
+    if _cot_gate_active():
+        return _cot_peer_fqids()
+    return _federation_peer_fqids()
+
+
 def _beacon_ttl_seconds(cot: CotEvent) -> int:
     """Short TTL (seconds) for an ephemeral beacon, derived from its stale time.
 
@@ -658,13 +709,15 @@ def federation_ingest(
             this to the actual device identity).
         peers_provider: recipient FQIDs for DURABLE events (default: all
             federation peers from the PeerStore, :func:`_federation_peer_fqids`).
-        cot_peers_provider: recipient FQIDs for EPHEMERAL beacons (default: the
-            CoT-capability gate, :func:`_cot_peer_fqids`). When only
-            ``peers_provider`` is supplied it is reused for beacons too, so an
-            explicit caller-provided peer set still receives beacons.
+        cot_peers_provider: recipient FQIDs for EPHEMERAL beacons (default:
+            :func:`_default_beacon_peer_fqids`, which PRESERVES delivery -- the
+            full federation peer set unless the OPT-IN CoT-capability gate is
+            engaged; see :func:`_cot_gate_active`). When only ``peers_provider``
+            is supplied it is reused for beacons too, so an explicit caller-
+            provided peer set still receives beacons.
     """
     provider = peers_provider or _federation_peer_fqids
-    cot_provider = cot_peers_provider or peers_provider or _cot_peer_fqids
+    cot_provider = cot_peers_provider or peers_provider or _default_beacon_peer_fqids
 
     def hook(cot: CotEvent) -> None:
         body = to_cot(cot)

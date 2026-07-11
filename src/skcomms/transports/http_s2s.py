@@ -191,12 +191,23 @@ class HttpS2STransport(Transport):
 
         inbox_url = self._resolve_inbox_url(recipient)
         if not inbox_url:
+            # TRANSIENT, not structural: the peer simply is not discovered on
+            # this rail yet (its https-s2s inbox_url may appear once discovery /
+            # the peer store catches up). Emitting a ``perm:`` here armed the
+            # router's growing per-recipient backoff, diverting directed traffic
+            # off the only direct rail for up to 1h — and, because a backed-off
+            # rail is excluded from selection, it could never produce the success
+            # that would clear it. Return a retryable error so the router treats
+            # it as an ordinary transient miss (short cooldown, self-clearing).
             return SendResult(
                 success=False,
                 transport_name=self.name,
                 envelope_id=envelope_id,
                 latency_ms=(time.monotonic() - start) * 1000,
-                error=f"perm: no https-s2s inbox_url known for '{recipient}'",
+                error=(
+                    f"retry: no https-s2s inbox_url known for '{recipient}' "
+                    "(peer not yet discovered)"
+                ),
             )
 
         try:
