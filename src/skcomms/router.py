@@ -24,6 +24,7 @@ from .transport import (
     Transport,
     TransportCategory,
     TransportError,
+    TransportStatus,
 )
 
 logger = logging.getLogger("skcomms.router")
@@ -31,6 +32,28 @@ logger = logging.getLogger("skcomms.router")
 # Failure tracking defaults
 FAILURE_THRESHOLD = 3  # consecutive failures before cooldown
 COOLDOWN_SECONDS = 60.0  # seconds to skip a transport after repeated failures
+
+# Rails that address a single, specific peer and therefore cannot serve a
+# ``recipient == "*"`` broadcast (they need a concrete inbox_url / IP). Offering
+# them for a ``*`` heartbeat turned into a peer-store lookup for the literal
+# name ``"*"`` (``Peer name '*' is empty after sanitization``) plus a paired
+# WARNING every ~60s (RC3). For a broadcast we drop them from candidates so the
+# broadcast only ever reaches relay/file rails that can actually fan out.
+POINT_TO_POINT_TRANSPORTS = frozenset({"https-s2s", "tailscale"})
+
+# Growing backoff for structurally-undeliverable (perm: / '*') attempts (RC2).
+# These never arm the transient cooldown (that would starve OTHER, deliverable
+# recipients on a healthy rail), but without any backoff they repeat — and log —
+# every cycle. The window doubles per consecutive failure of the same
+# (rail, recipient) pair, capped, so a rail that keeps perm-failing to one
+# recipient stops being re-attempted for that recipient for a growing interval.
+PERM_BACKOFF_BASE_SECONDS = 60.0
+PERM_BACKOFF_MAX_SECONDS = 3600.0
+
+# Startup health-gate re-probe cadence (RC4). A rail quarantined at startup
+# (enabled but its ``health_check`` reported UNAVAILABLE) is re-probed at most
+# this often during selection; a passing probe releases it back into routing.
+QUARANTINE_REPROBE_SECONDS = 300.0
 
 # Matches an HTTP 4xx status reported in a rail's error string (e.g. the
 # https-s2s rail's ``perm: HTTP 422 ...``) so the observability counters can
@@ -136,6 +159,22 @@ class Router:
         # surface per-rail failure totals that the cooldown state cannot.
         # {transport_name: {"failures": int, "http_4xx": int, "last_error": str}}
         self._failure_counters: dict[str, dict] = {}
+
+        # Log-once-per-state-change dedup (RC2). Set of (channel, name,
+        # error-signature) tuples currently "active": the first time a given
+        # (rail, failure-mode) pair fails it WARNs and is recorded here;
+        # identical repeats drop to DEBUG. Cleared (with one recovery line) when
+        # the rail next succeeds. ``channel`` is "send" or "recv".
+        self._active_failure_sigs: set[tuple[str, str, str]] = set()
+
+        # Growing per-(rail, recipient) backoff for perm:/'*' failures (RC2):
+        # {(transport_name, recipient): (consecutive_count, last_fail_monotonic)}.
+        self._perm_backoff: dict[tuple[str, str], tuple[int, float]] = {}
+
+        # Startup health-gate quarantine (RC4): {transport_name: last_probe_ts}.
+        # A quarantined rail is skipped by _select_transports until a periodic
+        # re-probe of its health_check() passes.
+        self._quarantined: dict[str, float] = {}
 
     @property
     def transports(self) -> list[Transport]:
@@ -502,8 +541,15 @@ class Router:
                         self._seen_ids[env_id] = time.time()
                         self._seen_ids.move_to_end(env_id)
                     all_data.append(data)
+                # A clean poll clears any receive-side failing state and logs a
+                # single recovery line (mirrors the send-side dedup).
+                if self._clear_failure_state("recv", transport.name):
+                    logger.info("Transport '%s' receive recovered", transport.name)
             except Exception as exc:
-                logger.warning(
+                # Log once on transition into the failing state, DEBUG while the
+                # same failure repeats (RC2, receive-side mirror of _try_send).
+                warn = self._note_failure_and_should_warn("recv", transport.name, str(exc))
+                (logger.warning if warn else logger.debug)(
                     "Error receiving from transport '%s': %s", transport.name, exc
                 )
                 self._record_failure(transport.name)
@@ -582,6 +628,11 @@ class Router:
         Returns:
             Ordered list of eligible, available transports.
         """
+        # Re-probe any quarantined rails whose re-probe window has elapsed, so a
+        # rail that has recovered can rejoin selection (RC4).
+        self._maybe_reprobe_quarantine()
+
+        recipient = envelope.recipient
         available = [
             t
             for t in self._transports
@@ -591,7 +642,20 @@ class Router:
             # it is reserved for the _try_store_forward last-resort fallback.
             and t.name != self._store_forward_transport
             and not (exclude_signed_only and t.name in SIGNED_ENVELOPE_ONLY_TRANSPORTS)
+            # Startup health-gate: an enabled-but-unreachable rail stays out of
+            # selection until a periodic re-probe passes (RC4).
+            and t.name not in self._quarantined
+            # Structurally-undeliverable (perm:/'*') rails are backed off per
+            # recipient within a growing window instead of retried every cycle
+            # (RC2).
+            and not self._in_perm_backoff(t.name, recipient)
         ]
+
+        # A '*' broadcast can only be served by relay/file rails that fan out;
+        # point-to-point rails need a concrete peer and would turn '*' into a
+        # bad peer-store lookup, so drop them here (RC3).
+        if recipient == "*":
+            available = [t for t in available if t.name not in POINT_TO_POINT_TRANSPORTS]
 
         if mode == RoutingMode.STEALTH:
             available = [t for t in available if t.category in self.STEALTH_CATEGORIES]
@@ -755,10 +819,154 @@ class Router:
     def _record_success(self, transport_name: str) -> None:
         """Reset the failure counter for a transport after a successful send.
 
+        Also clears any send-side log-dedup state for the rail and, if it was
+        in a failing state, emits a single recovery line so a rail coming back
+        is visible without the per-cycle WARNING storm it replaces (RC2).
+
         Args:
             transport_name: Name of the transport that succeeded.
         """
         self._transport_failures.pop(transport_name, None)
+        if self._clear_failure_state("send", transport_name):
+            logger.info("Transport '%s' send recovered", transport_name)
+
+    @staticmethod
+    def _error_signature(error: Optional[str]) -> str:
+        """Collapse a failure's error string to a stable per-failure-mode key.
+
+        Quoted names (recipients) and numbers (ports, status codes, ids) are
+        normalized away so repeated failures of the SAME mode share one
+        signature (and dedup to a single WARNING), while a genuinely different
+        failure mode gets its own signature (and its own WARNING).
+
+        Args:
+            error: The failure's error string (may be ``None``).
+
+        Returns:
+            A short, stable signature string.
+        """
+        if not error:
+            return "unknown"
+        sig = re.sub(r"'[^']*'", "'*'", str(error))
+        sig = re.sub(r"\d+", "N", sig)
+        return sig[:120]
+
+    def _note_failure_and_should_warn(
+        self, channel: str, transport_name: str, error: Optional[str]
+    ) -> bool:
+        """Record a failure and decide whether it is WARN-worthy (vs DEBUG).
+
+        Returns ``True`` only on the transition INTO a failing state for this
+        ``(channel, transport, error-signature)`` — i.e. the first time this
+        exact failure mode is seen while not already active. Identical repeats
+        return ``False`` (log at DEBUG). A new/different failure signature for
+        the same rail returns ``True`` again.
+
+        Args:
+            channel: ``"send"`` or ``"recv"`` (kept distinct so the two paths
+                dedup independently).
+            transport_name: The failing rail.
+            error: The failure's error string.
+
+        Returns:
+            Whether the caller should log at WARNING (else DEBUG).
+        """
+        key = (channel, transport_name, self._error_signature(error))
+        if key in self._active_failure_sigs:
+            return False
+        self._active_failure_sigs.add(key)
+        return True
+
+    def _clear_failure_state(self, channel: str, transport_name: str) -> bool:
+        """Clear a rail's active failing-log state for a channel.
+
+        Args:
+            channel: ``"send"`` or ``"recv"``.
+            transport_name: The rail whose failing state to clear.
+
+        Returns:
+            ``True`` if the rail HAD an active failing state (so the caller can
+            emit a single recovery line), else ``False``.
+        """
+        before = len(self._active_failure_sigs)
+        self._active_failure_sigs = {
+            k
+            for k in self._active_failure_sigs
+            if not (k[0] == channel and k[1] == transport_name)
+        }
+        return len(self._active_failure_sigs) < before
+
+    def _record_perm_backoff(self, transport_name: str, recipient: str) -> None:
+        """Arm/extend the growing backoff for a perm:/'*' failure (RC2).
+
+        Args:
+            transport_name: The rail that structurally failed.
+            recipient: The recipient it could not deliver to (the backoff is
+                scoped per recipient so OTHER recipients stay unaffected).
+        """
+        count, _ = self._perm_backoff.get((transport_name, recipient), (0, 0.0))
+        self._perm_backoff[(transport_name, recipient)] = (count + 1, time.monotonic())
+
+    def _in_perm_backoff(self, transport_name: str, recipient: str) -> bool:
+        """Whether a rail is inside its growing backoff window for a recipient.
+
+        Args:
+            transport_name: The rail to check.
+            recipient: The recipient (backoff is per-recipient).
+
+        Returns:
+            ``True`` while the doubling backoff window has not yet elapsed.
+        """
+        entry = self._perm_backoff.get((transport_name, recipient))
+        if not entry:
+            return False
+        count, last = entry
+        window = min(
+            PERM_BACKOFF_BASE_SECONDS * (2 ** max(0, count - 1)),
+            PERM_BACKOFF_MAX_SECONDS,
+        )
+        return (time.monotonic() - last) < window
+
+    def quarantine_transport(self, transport_name: str) -> None:
+        """Mark a rail as quarantined (skipped by selection until a re-probe).
+
+        Called by :meth:`skcomms.core.SKComms.from_config` for a rail whose
+        startup ``health_check`` reported UNAVAILABLE (RC4), so an enabled-but-
+        unreachable rail is not retried (and logged) every cycle.
+
+        Args:
+            transport_name: The rail to quarantine.
+        """
+        self._quarantined[transport_name] = time.monotonic()
+        logger.debug("Transport '%s' quarantined (unreachable at startup)", transport_name)
+
+    def _maybe_reprobe_quarantine(self) -> None:
+        """Re-probe quarantined rails whose re-probe window has elapsed (RC4).
+
+        For each quarantined rail past :data:`QUARANTINE_REPROBE_SECONDS` since
+        its last probe, call ``health_check()`` best-effort: an AVAILABLE result
+        releases it back into routing; anything else (or a missing/raising
+        ``health_check``) keeps it quarantined with the probe timestamp bumped.
+        Never raises.
+        """
+        if not self._quarantined:
+            return
+        now = time.monotonic()
+        for transport in list(self._transports):
+            last = self._quarantined.get(transport.name)
+            if last is None or (now - last) < QUARANTINE_REPROBE_SECONDS:
+                continue
+            self._quarantined[transport.name] = now
+            try:
+                health = transport.health_check()
+            except Exception as exc:  # noqa: BLE001 - probe must never break selection
+                logger.debug("Quarantine re-probe failed for '%s': %s", transport.name, exc)
+                continue
+            if getattr(health, "status", None) == TransportStatus.AVAILABLE:
+                self._quarantined.pop(transport.name, None)
+                logger.info(
+                    "Transport '%s' passed re-probe — leaving quarantine", transport.name
+                )
 
     @staticmethod
     def _is_http_4xx(error: Optional[str]) -> bool:
@@ -877,9 +1085,17 @@ class Router:
             result = transport.send(envelope_bytes, recipient)
             if result.success:
                 self._record_success(transport.name)
+                # A rail that just delivered to this recipient is no longer
+                # structurally-undeliverable to it — drop its perm backoff.
+                self._perm_backoff.pop((transport.name, recipient), None)
             else:
                 self._count_failure(transport.name, result.error)
-                logger.warning(
+                # Log once on transition into the failing state, DEBUG while the
+                # same failure repeats (RC2) — a structurally-undeliverable rail
+                # (bad perm: target, '*' on a point-to-point rail) used to WARN
+                # every ~5s and fill the daemon log.
+                warn = self._note_failure_and_should_warn("send", transport.name, result.error)
+                (logger.warning if warn else logger.debug)(
                     "Transport '%s' send failed: %s",
                     transport.name,
                     result.error or "no error detail",
@@ -890,9 +1106,13 @@ class Router:
                 # Counting them would trip the cooldown and then block OTHER,
                 # deliverable recipients on an otherwise-healthy transport (e.g. a
                 # presence heartbeat to '*' every 60s starving real DMs). Only
-                # transient failures (timeout/connection/5xx) arm the cooldown.
+                # transient failures (timeout/connection/5xx) arm the cooldown;
+                # perm:/'*' failures instead arm the growing per-recipient
+                # backoff so they stop being re-attempted every cycle (RC2).
                 if not (result.error or "").startswith("perm:") and recipient != "*":
                     self._record_failure(transport.name)
+                else:
+                    self._record_perm_backoff(transport.name, recipient)
             return result
         except TransportError as exc:
             elapsed = (time.monotonic() - start) * 1000

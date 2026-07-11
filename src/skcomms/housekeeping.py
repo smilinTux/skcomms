@@ -105,6 +105,7 @@ def run_housekeeping_pass(
 
       * ``prune_outbox(max_age_hours)``: stale sender outbox envelopes,
       * ``prune_archive(ttl_hours)``: processed-envelope archive TTL,
+      * ``prune_inbox(ttl_hours)``: receiver inbox TTL backstop (RC5),
 
     then :func:`prune_mailbox_outboxes` sweeps the realm message tree. When a
     :class:`~skcomms.outbox.PersistentOutbox` is supplied, its ``dead/`` and
@@ -124,7 +125,7 @@ def run_housekeeping_pass(
 
     Returns:
         dict: ``{"outbox_pruned": int, "archive_pruned": int,
-        "mailbox_pruned": int, "mailbox_resealed": int,
+        "inbox_pruned": int, "mailbox_pruned": int, "mailbox_resealed": int,
         "mailbox_purged": int}`` totals for the pass, plus
         ``"dead_pruned"`` and ``"outbox_archive_pruned"`` when *outbox*
         was supplied.
@@ -133,6 +134,7 @@ def run_housekeeping_pass(
     results = {
         "outbox_pruned": 0,
         "archive_pruned": 0,
+        "inbox_pruned": 0,
         "mailbox_pruned": 0,
         "mailbox_resealed": 0,
         "mailbox_purged": 0,
@@ -156,6 +158,17 @@ def run_housekeeping_pass(
                 results["archive_pruned"] += prune_archive(ttl_hours=cfg.archive_ttl_hours)
             except Exception:
                 logger.exception("prune_archive failed for transport %s", name)
+
+        # TTL backstop for the receiver inbox (RC5): the primary GC is
+        # delete-on-consume by the live consumer (skcapstone C1); this bounds
+        # inbox pileup for agents whose consumer is offline/absent. Duck-typed
+        # so non-file rails are skipped automatically.
+        prune_inbox = getattr(transport, "prune_inbox", None)
+        if callable(prune_inbox):
+            try:
+                results["inbox_pruned"] += prune_inbox(ttl_hours=cfg.inbox_ttl_hours)
+            except Exception:
+                logger.exception("prune_inbox failed for transport %s", name)
 
     try:
         results["mailbox_pruned"] = prune_mailbox_outboxes(cfg.mailbox_ttl_hours)
@@ -195,11 +208,12 @@ def run_housekeeping_pass(
             logger.exception("outbox-archive retention pruning failed")
 
     logger.info(
-        "Housekeeping pass: %d outbox, %d archive, %d mailbox record(s) pruned, "
-        "%d legacy plaintext record(s) resealed, %d purged, "
+        "Housekeeping pass: %d outbox, %d archive, %d inbox, %d mailbox record(s) "
+        "pruned, %d legacy plaintext record(s) resealed, %d purged, "
         "%d dead-letter, %d outbox-archive record(s) pruned",
         results["outbox_pruned"],
         results["archive_pruned"],
+        results["inbox_pruned"],
         results["mailbox_pruned"],
         results["mailbox_resealed"],
         results["mailbox_purged"],

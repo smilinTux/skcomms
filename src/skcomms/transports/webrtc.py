@@ -202,6 +202,10 @@ class WebRTCTransport(Transport):
         self._signaling_ws = None
         self._signaling_connected = False
         self._signaling_error: Optional[str] = None
+        # Log-once-per-state-change flag for signaling connect failures (RC4):
+        # True while the broker is unreachable, so the reconnect loop WARNs once
+        # on the way in and DEBUGs while it persists, instead of every attempt.
+        self._signaling_failing = False
 
         # Peer connections: fingerprint → PeerConnection
         self._peers: dict[str, PeerConnection] = {}
@@ -486,6 +490,34 @@ class WebRTCTransport(Transport):
         finally:
             self._loop.close()
 
+    def _log_signaling_failure(self, exc: Exception, reconnect_delay: float) -> int:
+        """Log a signaling connect failure once per state change (RC4).
+
+        WARN on the transition INTO the failing state (first failure), DEBUG
+        while the broker stays unreachable. The startup health-gate (B5) is the
+        real fix when the broker is simply absent; this only bounds the noise.
+
+        Args:
+            exc: The connect exception.
+            reconnect_delay: The delay before the next reconnect attempt.
+
+        Returns:
+            The ``logging`` level that was emitted (WARNING or DEBUG).
+        """
+        msg = "Signaling connection error: %s — reconnect in %.0fs"
+        if not self._signaling_failing:
+            self._signaling_failing = True
+            logger.warning(msg, exc, reconnect_delay)
+            return logging.WARNING
+        logger.debug(msg, exc, reconnect_delay)
+        return logging.DEBUG
+
+    def _note_signaling_recovered(self) -> None:
+        """Emit one recovery line iff signaling was previously failing (RC4)."""
+        if self._signaling_failing:
+            self._signaling_failing = False
+            logger.info("WebRTC: signaling connection recovered")
+
     async def _main_loop(self) -> None:
         """Async main: connect to signaling broker with exponential backoff."""
         reconnect_delay = 2.0
@@ -493,14 +525,13 @@ class WebRTCTransport(Transport):
             try:
                 await self._connect_signaling()
                 reconnect_delay = 2.0
+                # A clean connect/attempt clears the failing state (one INFO
+                # line) so the next real failure WARNs again.
+                self._note_signaling_recovered()
             except Exception as exc:
                 self._signaling_connected = False
                 self._signaling_error = str(exc)
-                logger.warning(
-                    "Signaling connection error: %s — reconnect in %.0fs",
-                    exc,
-                    reconnect_delay,
-                )
+                self._log_signaling_failure(exc, reconnect_delay)
                 await asyncio.sleep(reconnect_delay)
                 reconnect_delay = min(reconnect_delay * 2, 60.0)
 

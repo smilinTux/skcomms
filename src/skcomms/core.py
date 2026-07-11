@@ -28,10 +28,30 @@ from .outbox import OutboxFullError, PersistentOutbox
 from .ratelimit import RateLimitConfig, RateLimiter
 from .router import Router
 from .crypto import CryptoError
-from .transport import DeliveryReport, SendResult, Transport
+from .transport import DeliveryReport, SendResult, Transport, TransportStatus
 from . import integration as _integration
 
 logger = logging.getLogger("skcomms.core")
+
+
+def _is_non_chat_beacon(data: bytes) -> bool:
+    """Whether raw inbound bytes are a non-chat beacon (leading ``<``).
+
+    An XML / CoT ``<event>`` frame that shares a file rail is not a chat
+    envelope and will never parse via ``MessageEnvelope.model_validate_json``.
+    Detecting it by its first non-whitespace byte lets the receive loop skip it
+    at DEBUG instead of WARNing on every poll (RC F4).
+
+    Args:
+        data: The raw payload bytes handed up by a transport.
+
+    Returns:
+        ``True`` iff the first non-space byte is ``<``.
+    """
+    try:
+        return data.lstrip()[:1] == b"<"
+    except Exception:  # noqa: BLE001 - never let beacon-detection break receive
+        return False
 
 
 class MessagePriorityQueue:
@@ -101,6 +121,12 @@ WIRE_HEADER_ENCRYPTED = "x-skcomms-encrypted"
 WIRE_HEADER_COMPRESSED = "x-skcomms-compressed"
 WIRE_HEADER_PAYLOAD_SIGNATURE = "x-skcomms-payload-signature"
 WIRE_HEADER_ACK_REQUESTED = "x-skcomms-ack-requested"
+# Per-message TTL (seconds) override carried on the wire so the RECEIVER
+# reconstructs the same short retention as the sender intended. Absent header ->
+# the historical durable default (RoutingConfig.ttl = 86400). Ephemeral CoT
+# position beacons stamp a short value here so a re-beaconed atom never becomes a
+# long-lived durable inbox file on the receiving node.
+WIRE_HEADER_TTL = "x-skcomms-ttl"
 
 #: Envelope v1 content types that map back to the legacy TEXT message type.
 _TEXTUAL_CONTENT_TYPES = frozenset({"text/plain", "text/markdown"})
@@ -162,6 +188,17 @@ def envelope_v1_to_message(env) -> MessageEnvelope:
     ack_header = headers.get(WIRE_HEADER_ACK_REQUESTED)
     ack_requested = True if ack_header is None else ack_header == "1"
 
+    # Optional per-message TTL override (ephemeral CoT beacons stamp a short
+    # value). Absent / unparseable header keeps the RoutingConfig default
+    # (86400s), so a plain federation send is byte-for-byte the legacy path.
+    routing_kwargs: dict = {"ack_requested": ack_requested}
+    ttl_header = headers.get(WIRE_HEADER_TTL)
+    if ttl_header is not None:
+        try:
+            routing_kwargs["ttl"] = int(ttl_header)
+        except (TypeError, ValueError):
+            pass
+
     return MessageEnvelope(
         envelope_id=env.id,
         sender=env.from_fqid,
@@ -173,7 +210,7 @@ def envelope_v1_to_message(env) -> MessageEnvelope:
             compressed=headers.get(WIRE_HEADER_COMPRESSED) == "1",
             signature=headers.get(WIRE_HEADER_PAYLOAD_SIGNATURE) or None,
         ),
-        routing=RoutingConfig(ack_requested=ack_requested),
+        routing=RoutingConfig(**routing_kwargs),
         metadata=MessageMetadata(
             thread_id=env.thread_id,
             in_reply_to=env.reply_to,
@@ -347,6 +384,28 @@ class SKComms:
                 if hasattr(transport, "_set_identity"):
                     transport._set_identity(config.identity.name)
                 router.register_transport(transport)
+                # Startup health-gate (RC4): an enabled-but-unreachable rail
+                # (nostr bad key, tailscale no-IP, webrtc broker down) otherwise
+                # fails — and logs — every cycle. Best-effort probe its health;
+                # if it reports UNAVAILABLE, quarantine it so selection skips it
+                # until a periodic re-probe passes. DEGRADED (e.g. https-s2s with
+                # no peers yet) is NOT quarantined — the rail works, it just has
+                # no targets. Never crash if health_check is missing/raises.
+                try:
+                    health = transport.health_check()
+                    if getattr(health, "status", None) == TransportStatus.UNAVAILABLE:
+                        router.quarantine_transport(transport.name)
+                        logger.info(
+                            "Transport '%s' unreachable at startup — quarantined "
+                            "pending re-probe",
+                            transport.name,
+                        )
+                except Exception as exc:  # noqa: BLE001 - health-gate is advisory
+                    logger.debug(
+                        "startup health_check for '%s' failed (non-fatal): %s",
+                        transport.name,
+                        exc,
+                    )
 
         crypto = None
         keystore = None
@@ -469,6 +528,8 @@ class SKComms:
         mode: Optional[RoutingMode] = None,
         consent_token: Optional[str] = None,
         supersede_key: Optional[str] = None,
+        ttl: Optional[int] = None,
+        ack_requested: Optional[bool] = None,
     ) -> DeliveryReport:
         """Send a canonical signed Envelope v1 to a remote agent (federation).
 
@@ -489,6 +550,14 @@ class SKComms:
                 Ephemeral sends (e.g. CoT position beacons) pass a key so a
                 newer undelivered copy evicts the older one instead of
                 accumulating; ``None`` (default) queues durably as before.
+            ttl: Optional per-message TTL (seconds) stamped onto the Envelope v1
+                wire header so the RECEIVER reconstructs the same short
+                retention. ``None`` (default) leaves the envelope byte-identical
+                to the legacy path (receiver applies its durable default).
+            ack_requested: Optional delivery-ack override stamped on the wire.
+                ``False`` marks a fire-and-forget send (ephemeral CoT beacons);
+                ``None`` (default) leaves the header unset (receiver requests an
+                ack as before).
 
         Returns:
             DeliveryReport for the immediate attempt.
@@ -502,6 +571,15 @@ class SKComms:
         if crypto is None:
             raise RuntimeError("no capauth key available to sign federation envelope")
 
+        # Only stamp wire headers when an override is given, so a plain
+        # federation send hashes byte-for-byte identically to before these
+        # knobs existed (backward-compatible: empty headers == no headers).
+        headers: dict[str, str] = {}
+        if ack_requested is not None:
+            headers[WIRE_HEADER_ACK_REQUESTED] = "1" if ack_requested else "0"
+        if ttl is not None:
+            headers[WIRE_HEADER_TTL] = str(int(ttl))
+
         signed = crypto.envelope_signer().sign(
             Envelope(
                 from_fqid=from_fqid,
@@ -511,6 +589,7 @@ class SKComms:
                 thread_id=thread_id,
                 reply_to=in_reply_to,
                 consent_token=consent_token,
+                headers=headers,
             )
         )
         # SKFed P3: if the recipient is an unknown fqid, try to auto-discover it
@@ -1085,7 +1164,19 @@ class SKComms:
                 self._send_auto_ack(envelope)
                 pq.push(envelope)
             except Exception as exc:
-                logger.warning("Failed to deserialize incoming envelope — skipping: %s", exc)
+                # A payload whose first non-space byte is '<' is a non-chat
+                # beacon (an XML / CoT <event> frame sharing a file rail), not a
+                # malformed chat envelope: skip it quietly at DEBUG instead of
+                # WARNing on every poll (RC F4).
+                if _is_non_chat_beacon(data):
+                    logger.debug(
+                        "Skipping non-chat beacon payload (leading '<'): %d bytes",
+                        len(data),
+                    )
+                else:
+                    logger.warning(
+                        "Failed to deserialize incoming envelope — skipping: %s", exc
+                    )
 
         # Surface any queued (file-rail) sends whose ACK horizon has lapsed.
         try:

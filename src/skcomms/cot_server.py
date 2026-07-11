@@ -542,7 +542,7 @@ class UdpMeshListener:
 
 
 def _federation_peer_fqids() -> list[str]:
-    """Default peer set for CoT fan-out: federation peers with an inbox_url."""
+    """Default peer set for DURABLE CoT fan-out: federation peers with an inbox_url."""
     try:
         from .discovery import PeerStore
 
@@ -551,43 +551,139 @@ def _federation_peer_fqids() -> list[str]:
         return []
 
 
+# Ephemeral CoT beacons that have no derivable stale window fall back to this
+# short TTL (seconds) instead of the 86400s durable default.
+DEFAULT_BEACON_TTL_S = 300
+
+
+def _cot_peer_fqids() -> list[str]:
+    """CoT-capable peer set for EPHEMERAL beacon fan-out (capability gate).
+
+    Ephemeral position beacons (``a-*`` atoms / PLI) are continuously
+    re-beaconed, so blasting them to every federation peer floods the durable
+    inbox of peers that have no CoT/TAK consumer to drain them (a human peer
+    like ``chef@chef.skworld`` never consumes PLI). This gate restricts beacon
+    fan-out to peers that ADVERTISE a CoT consumer. A peer qualifies when either:
+
+    * its :class:`~skcomms.discovery.PeerInfo` ``capabilities`` list contains
+      ``"cot"`` or ``"tak"`` (case-insensitive), or
+    * its fqid appears in the ``SKCOMMS_COT_PEERS`` env allowlist
+      (comma-separated fqids) -- an operator override for peers whose YAML
+      isn't tagged.
+
+    Fail-closed: with no advertised capability and no allowlist the result is
+    empty, so beacons federate NOWHERE until a CoT consumer is explicitly opted
+    in. Durable CoT events (``b-*``) are unaffected -- they keep the full
+    :func:`_federation_peer_fqids` set.
+    """
+    import os
+
+    allow = {
+        p.strip()
+        for p in (os.environ.get("SKCOMMS_COT_PEERS") or "").split(",")
+        if p.strip()
+    }
+    try:
+        from .discovery import PeerStore
+
+        out: list[str] = []
+        for p in PeerStore().list_all():
+            if not (p.fqid and p.inbox_url()):
+                continue
+            caps = {c.lower() for c in (getattr(p, "capabilities", None) or [])}
+            if caps & {"cot", "tak"} or p.fqid in allow:
+                out.append(p.fqid)
+        return out
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _beacon_ttl_seconds(cot: CotEvent) -> int:
+    """Short TTL (seconds) for an ephemeral beacon, derived from its stale time.
+
+    A CoT atom carries a ``stale`` timestamp: the instant after which the
+    position is no longer valid. We honor it as the wire TTL (clamped to at
+    least 1s) so the beacon can never outlive its own validity on a receiver.
+    An absent / unparseable / already-past stale falls back to
+    :data:`DEFAULT_BEACON_TTL_S`.
+    """
+    from datetime import datetime, timezone
+
+    stale = getattr(cot, "stale", None)
+    if not stale:
+        return DEFAULT_BEACON_TTL_S
+    try:
+        dt = datetime.fromisoformat(stale.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        remaining = int((dt - datetime.now(timezone.utc)).total_seconds())
+    except (ValueError, AttributeError):
+        return DEFAULT_BEACON_TTL_S
+    if remaining <= 0:
+        return DEFAULT_BEACON_TTL_S
+    # Never longer than the fallback: a stale far in the future (misconfigured
+    # client) must not resurrect the durable-accumulation problem.
+    return min(remaining, DEFAULT_BEACON_TTL_S)
+
+
 def federation_ingest(
     skcomms,
     *,
     from_fqid: str,
     peers_provider: Optional[Callable[[], list[str]]] = None,
+    cot_peers_provider: Optional[Callable[[], list[str]]] = None,
 ):
     """Build a CB2 ingest hook that federates inbound CoT to peer nodes.
 
     CoT is broadcast-by-default, so each inbound :class:`CotEvent` is wrapped in
     the canonical signed Envelope (``application/cot+xml``) and **fanned out**
-    via ``skcomms.send_federated`` to every federation peer — where that node's
-    own CoT server :meth:`CotStreamServer.inject`s it to its TAK operators.
+    via ``skcomms.send_federated`` to peer nodes — where that node's own CoT
+    server :meth:`CotStreamServer.inject`s it to its TAK operators.
+
+    Ephemeral position beacons (``a-*`` atoms / PLI) and durable events
+    (``b-*``: GeoChat, markers) are routed DIFFERENTLY to stop the presence-
+    beacon durable-inbox flood:
+
+    * **Durable events** go to the full federation peer set (``peers_provider``)
+      with default durable routing — reliable delivery, unchanged.
+    * **Ephemeral beacons** go ONLY to CoT-capable peers
+      (``cot_peers_provider``) and are sent short-TTL + ``ack_requested=False``
+      + a per-(peer, entity) ``supersede_key``, so a re-beaconed atom never
+      durably accumulates on the sender OR receiver, and a human/no-consumer
+      peer never receives PLI at all.
 
     Args:
         skcomms: an SKComms (must expose ``send_federated``).
         from_fqid: this node/agent's FQID (the CoT's signed origin; CB3 refines
             this to the actual device identity).
-        peers_provider: returns the recipient FQIDs (default: all federation
-            peers from the PeerStore).
+        peers_provider: recipient FQIDs for DURABLE events (default: all
+            federation peers from the PeerStore, :func:`_federation_peer_fqids`).
+        cot_peers_provider: recipient FQIDs for EPHEMERAL beacons (default: the
+            CoT-capability gate, :func:`_cot_peer_fqids`). When only
+            ``peers_provider`` is supplied it is reused for beacons too, so an
+            explicit caller-provided peer set still receives beacons.
     """
     provider = peers_provider or _federation_peer_fqids
+    cot_provider = cot_peers_provider or peers_provider or _cot_peer_fqids
 
     def hook(cot: CotEvent) -> None:
         body = to_cot(cot)
-        # Ephemeral position beacons (CoT atoms, ``a-*``) are re-beaconed
-        # continuously, so an undelivered one has no value once superseded. Tag
-        # them with a per-(peer, entity) supersede_key so the outbox retains
-        # only the latest undelivered beacon per entity instead of accumulating
-        # stale ones. Durable events (GeoChat/markers, ``b-*``) get no key and
-        # are queued reliably as before.
         ephemeral = is_ephemeral_beacon(cot)
-        for peer_fqid in provider():
+        if ephemeral:
+            recipients = cot_provider()
+            ttl: Optional[int] = _beacon_ttl_seconds(cot)
+            ack_requested: Optional[bool] = False
+        else:
+            recipients = provider()
+            ttl = None
+            ack_requested = None
+        for peer_fqid in recipients:
             supersede_key = f"cot-beacon:{peer_fqid}:{cot.uid}" if ephemeral else None
             try:
                 skcomms.send_federated(
                     peer_fqid, body, content_type="application/cot+xml",
                     supersede_key=supersede_key,
+                    ttl=ttl, ack_requested=ack_requested,
                 )
             except Exception as exc:  # noqa: BLE001
                 logger.warning("CoT federate to %s failed: %s", peer_fqid, exc)

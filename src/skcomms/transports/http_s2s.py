@@ -383,6 +383,13 @@ class HttpS2STransport(Transport):
         Returns:
             The inbox URL string, or None if not found.
         """
+        # A '*' broadcast (or an empty recipient) has no single peer inbox: never
+        # drive a peer-store lookup for it (that sanitizes '*' to empty and
+        # raises "Peer name '*' is empty after sanitization", logged as a
+        # per-heartbeat WARNING — RC3). Fail closed here, before any store call.
+        if recipient in ("*", ""):
+            return None
+
         url = self._peer_urls.get(recipient)
         if url:
             return url
@@ -452,6 +459,13 @@ class HttpS2STransport(Transport):
         Returns:
             inbox_url from the peer store, or None.
         """
+        # Belt-and-suspenders with _resolve_inbox_url: a '*'/'' recipient never
+        # reaches the peer-store sanitizer (RC3), so the WARNING below only ever
+        # fires for a genuine lookup error on a real recipient.
+        if recipient in ("*", ""):
+            logger.debug("skipping https-s2s inbox lookup for broadcast/empty recipient")
+            return None
+
         try:
             # Use the fqid-aware resolver (S5): handles recipient given as a
             # full fqid ("lumina@chef.skworld") OR a bare name ("lumina"),

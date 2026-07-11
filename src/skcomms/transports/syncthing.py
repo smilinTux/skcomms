@@ -669,6 +669,42 @@ class SyncthingTransport(Transport):
 
         return _prune_dir_by_ttl(self._archive_dir, ttl_hours, logger)
 
+    def prune_inbox(self, ttl_hours: float = 168.0) -> int:
+        """Delete inbox envelope files older than *ttl_hours* (TTL backstop).
+
+        Inbox envelopes are write-once/read-maybe/delete-never: nothing on the
+        delivery path removes them, so ~270k un-GC'd ``comms/inbox`` files
+        pinned Syncthing on a fleet laptop (RC5). Delete-on-consume by the live
+        consumer is the primary guarantee; this is the conservative TTL backstop
+        for agents with no live consumer, and the shared primitive skcapstone's
+        housekeeping (F6) calls where available.
+
+        Unlike the flat :class:`~skcomms.transports.file.FileTransport` inbox,
+        the Syncthing inbox is per-peer (``inbox/<peer>/``), so every peer
+        subdirectory is swept (reusing the same ``_prune_dir_by_ttl`` helper).
+        The TTL MUST comfortably exceed the consumer's consume latency
+        (default 168h = 7 days). Hidden in-flight ``.tmp`` files are skipped.
+        Call it from a periodic maintenance task, never on every receive.
+
+        Args:
+            ttl_hours: Age threshold in hours. Files older than this (by
+                mtime) are deleted. Values <= 0 prune nothing.
+
+        Returns:
+            int: The number of inbox envelope files deleted across all peers.
+        """
+        if ttl_hours <= 0 or not self._inbox.exists():
+            return 0
+
+        from .file import _prune_dir_by_ttl
+
+        deleted = 0
+        for peer_dir in self._inbox.iterdir():
+            if not peer_dir.is_dir():
+                continue
+            deleted += _prune_dir_by_ttl(peer_dir, ttl_hours, logger)
+        return deleted
+
     def _ensure_dirs(self) -> None:
         """Create the comms directory structure if it doesn't exist."""
         self._outbox.mkdir(parents=True, exist_ok=True)

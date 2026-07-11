@@ -66,6 +66,11 @@ class HousekeepingConfig(BaseModel):
             Syncthing has long since propagated anything this old).
         archive_ttl_hours: Receiver-side archive files older than this are
             deleted (default 168h = 7 days).
+        inbox_ttl_hours: Receiver-side INBOX envelope files older than this are
+            deleted (default 168h = 7 days). TTL backstop only: delete-on-consume
+            by the live consumer is the primary GC (skcapstone C1); this bounds
+            inbox pileup for agents whose consumer is offline/absent. MUST exceed
+            the consume/poll latency so a not-yet-read envelope is never reaped.
         mailbox_ttl_hours: Mailbox outbox records (the sender's local
             ``<realm>/<operator>/<agent>/outbox/*.json`` copies) older than
             this are deleted (default 168h = 7 days).
@@ -87,6 +92,7 @@ class HousekeepingConfig(BaseModel):
     interval_s: float = 3600.0
     outbox_max_age_hours: float = 48.0
     archive_ttl_hours: float = 168.0
+    inbox_ttl_hours: float = 168.0
     mailbox_ttl_hours: float = 168.0
     dead_letter_ttl_hours: float = 720.0
     dead_letter_max_count: int = 5000

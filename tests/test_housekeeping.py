@@ -264,6 +264,7 @@ class TestRunHousekeepingPass:
         assert results == {
             "outbox_pruned": 4,
             "archive_pruned": 2,
+            "inbox_pruned": 0,
             "mailbox_pruned": 0,
             "mailbox_resealed": 0,
             "mailbox_purged": 0,
