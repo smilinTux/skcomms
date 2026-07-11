@@ -782,6 +782,32 @@ class FileTransport(Transport):
         """
         return _prune_dir_by_ttl(self._archive_dir, ttl_hours, logger)
 
+    def prune_inbox(self, ttl_hours: float = 168.0) -> int:
+        """Delete inbox envelope files older than *ttl_hours* (TTL backstop).
+
+        Inbox envelopes are write-once/read-maybe/delete-never: nothing on the
+        delivery path removes them, so on a fleet laptop ~270k un-GC'd
+        ``comms/inbox`` files pinned Syncthing (RC5). Delete-on-consume by the
+        live consumer is the primary guarantee; this is the conservative TTL
+        backstop for agents whose consumer is offline or absent, and the shared
+        primitive skcapstone's housekeeping (F6) calls where available.
+
+        The TTL MUST comfortably exceed the consumer's poll/consume latency
+        (default 168h = 7 days) so a not-yet-read envelope is never reaped out
+        from under a slow consumer. Hidden files (dot-prefixed in-flight
+        ``.tmp`` writes) are skipped; the flat inbox is swept non-recursively.
+        Call it from a periodic maintenance task or the housekeeping pass, never
+        on every receive.
+
+        Args:
+            ttl_hours: Age threshold in hours. Files older than this (by
+                mtime) are deleted. Values <= 0 prune nothing.
+
+        Returns:
+            int: The number of inbox envelope files deleted.
+        """
+        return _prune_dir_by_ttl(self._inbox, ttl_hours, logger)
+
     def _archive_file(self, path: Path) -> None:
         """Move a processed file to the archive directory."""
         self._archive_dir.mkdir(parents=True, exist_ok=True)

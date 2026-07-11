@@ -66,6 +66,12 @@ class PeerInfo(BaseModel):
         transports: List of transport configs for reaching this peer.
         rails: Ordered rail preference (transport names, most-preferred first)
             the router honors ahead of global priority (SKFed S3/S5).
+        capabilities: Advertised consumer capabilities this peer can sink, e.g.
+            ``"cot"`` / ``"tak"`` for a node running a CoT/TAK consumer. Used to
+            gate ephemeral CoT position-beacon fan-out (see
+            ``skcomms.cot_server._cot_peer_fqids``): a peer with no CoT capability
+            (a human / no-consumer peer) never receives PLI. Empty (default)
+            means "advertises nothing" -> excluded from capability-gated fan-out.
         discovered_via: How this peer was found (syncthing, mdns, manual, etc.).
         last_seen: When the peer was last observed active.
     """
@@ -77,6 +83,7 @@ class PeerInfo(BaseModel):
     nostr_pubkey: Optional[str] = None
     transports: list[PeerTransport] = Field(default_factory=list)
     rails: list[str] = Field(default_factory=list)
+    capabilities: list[str] = Field(default_factory=list)
     discovered_via: str = "manual"
     last_seen: Optional[datetime] = None
 
@@ -103,6 +110,9 @@ class PeerInfo(BaseModel):
         fqid = self.fqid or other.fqid
         pubkey = self.pubkey or other.pubkey
         rails = self.rails or other.rails
+        # Union of advertised capabilities (order-preserving), keeping the
+        # richest set across a re-discovery/merge.
+        capabilities = list(dict.fromkeys([*self.capabilities, *other.capabilities]))
         last_seen = max(
             filter(None, [self.last_seen, other.last_seen]),
             default=None,
@@ -127,6 +137,7 @@ class PeerInfo(BaseModel):
             nostr_pubkey=nostr_pubkey,
             transports=list(existing_transports.values()),
             rails=rails,
+            capabilities=capabilities,
             discovered_via=self.discovered_via,
             last_seen=last_seen,
         )

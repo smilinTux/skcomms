@@ -191,12 +191,23 @@ class HttpS2STransport(Transport):
 
         inbox_url = self._resolve_inbox_url(recipient)
         if not inbox_url:
+            # TRANSIENT, not structural: the peer simply is not discovered on
+            # this rail yet (its https-s2s inbox_url may appear once discovery /
+            # the peer store catches up). Emitting a ``perm:`` here armed the
+            # router's growing per-recipient backoff, diverting directed traffic
+            # off the only direct rail for up to 1h — and, because a backed-off
+            # rail is excluded from selection, it could never produce the success
+            # that would clear it. Return a retryable error so the router treats
+            # it as an ordinary transient miss (short cooldown, self-clearing).
             return SendResult(
                 success=False,
                 transport_name=self.name,
                 envelope_id=envelope_id,
                 latency_ms=(time.monotonic() - start) * 1000,
-                error=f"perm: no https-s2s inbox_url known for '{recipient}'",
+                error=(
+                    f"retry: no https-s2s inbox_url known for '{recipient}' "
+                    "(peer not yet discovered)"
+                ),
             )
 
         try:
@@ -383,6 +394,13 @@ class HttpS2STransport(Transport):
         Returns:
             The inbox URL string, or None if not found.
         """
+        # A '*' broadcast (or an empty recipient) has no single peer inbox: never
+        # drive a peer-store lookup for it (that sanitizes '*' to empty and
+        # raises "Peer name '*' is empty after sanitization", logged as a
+        # per-heartbeat WARNING — RC3). Fail closed here, before any store call.
+        if recipient in ("*", ""):
+            return None
+
         url = self._peer_urls.get(recipient)
         if url:
             return url
@@ -452,6 +470,13 @@ class HttpS2STransport(Transport):
         Returns:
             inbox_url from the peer store, or None.
         """
+        # Belt-and-suspenders with _resolve_inbox_url: a '*'/'' recipient never
+        # reaches the peer-store sanitizer (RC3), so the WARNING below only ever
+        # fires for a genuine lookup error on a real recipient.
+        if recipient in ("*", ""):
+            logger.debug("skipping https-s2s inbox lookup for broadcast/empty recipient")
+            return None
+
         try:
             # Use the fqid-aware resolver (S5): handles recipient given as a
             # full fqid ("lumina@chef.skworld") OR a bare name ("lumina"),

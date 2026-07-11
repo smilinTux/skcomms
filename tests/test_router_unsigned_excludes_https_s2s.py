@@ -73,13 +73,13 @@ def isolate_retry_queue(tmp_path, monkeypatch):
     yield
 
 
-def make_envelope(preferred: list[str] | None = None) -> MessageEnvelope:
+def make_envelope(preferred: list[str] | None = None, recipient: str = "*") -> MessageEnvelope:
     routing = RoutingConfig(mode=RoutingMode.FAILOVER)
     if preferred is not None:
         routing.preferred_transports = preferred
     return MessageEnvelope(
         sender="lumina",
-        recipient="*",
+        recipient=recipient,
         payload=MessagePayload(content="heartbeat", content_type=MessageType.HEARTBEAT),
         routing=routing,
     )
@@ -95,7 +95,9 @@ def test_unsigned_route_never_offers_https_s2s_as_a_candidate():
         FakeTransport("file", priority=3, send_log=log, succeed=True),
     ]
     r = Router(transports=transports)
-    env = make_envelope()
+    # DM recipient isolates the signed-only exclusion from the separate '*'
+    # broadcast rule (which also drops point-to-point rails like tailscale).
+    env = make_envelope(recipient="jarvis")
 
     report = r.route(env)
 
@@ -140,7 +142,9 @@ def test_select_transports_default_still_includes_https_s2s():
     log: list[str] = []
     transports = [FakeTransport("https-s2s", priority=1, send_log=log)]
     r = Router(transports=transports)
-    env = make_envelope()
+    # DM recipient: the '*' broadcast rule (B3) independently drops https-s2s,
+    # so use a normal recipient to check the exclude_signed_only flag alone.
+    env = make_envelope(recipient="jarvis")
 
     names = [t.name for t in r._select_transports(RoutingMode.FAILOVER, env)]
     assert names == ["https-s2s"]
