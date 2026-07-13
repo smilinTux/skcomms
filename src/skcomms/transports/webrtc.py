@@ -50,6 +50,10 @@ DEFAULT_SIGNALING_URL = os.environ.get("SKCOMMS_SIGNALING_URL", "wss://localhost
 CHANNEL_NAME = "skcomms"
 ICE_GATHER_TIMEOUT = 30.0  # seconds to wait for ICE gathering
 RECV_TIMEOUT = 1.0  # seconds for signaling recv poll
+# A signaling session that stays up shorter than this is treated as a failed
+# connect (e.g. broker closes immediately with 4401 Unauthorized), so the
+# reconnect loop backs off instead of spinning at ~1000 attempts/second.
+_SIGNALING_MIN_HEALTHY_UPTIME = 3.0  # seconds
 SEND_TIMEOUT = 5.0  # seconds for send future.result()
 CONNECT_SETTLE = 0.3  # seconds to wait after starting the loop thread
 
@@ -522,8 +526,29 @@ class WebRTCTransport(Transport):
         """Async main: connect to signaling broker with exponential backoff."""
         reconnect_delay = 2.0
         while self._running:
+            connected_at = time.monotonic()
             try:
                 await self._connect_signaling()
+                # A session that closes almost immediately is NOT a healthy
+                # connect: the broker accepted the socket then closed it right
+                # away (e.g. 4401 "Unauthorized: invalid or missing CapAuth
+                # token"). _connect_signaling swallows that close as a normal
+                # return, so without this guard the loop reconnects instantly and
+                # spins ~1000x/s (observed: 255k daemon.log lines in 200s, a wedged
+                # real-time rail + "skcomms disconnected" flapping). Treat a
+                # sub-threshold session as a failure and back off like one.
+                if time.monotonic() - connected_at < _SIGNALING_MIN_HEALTHY_UPTIME:
+                    self._signaling_connected = False
+                    self._log_signaling_failure(
+                        RuntimeError(
+                            "signaling closed immediately (likely 4401 auth / "
+                            "missing CapAuth token)"
+                        ),
+                        reconnect_delay,
+                    )
+                    await asyncio.sleep(reconnect_delay)
+                    reconnect_delay = min(reconnect_delay * 2, 60.0)
+                    continue
                 reconnect_delay = 2.0
                 # A clean connect/attempt clears the failing state (one INFO
                 # line) so the next real failure WARNs again.
