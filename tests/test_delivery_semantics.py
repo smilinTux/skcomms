@@ -153,6 +153,22 @@ def test_queued_only_send_holds_durable_outbox_entry(queued_comm):
     assert comm._ack_tracker.pending_count == 1
 
 
+def test_queued_only_broadcast_is_not_held(queued_comm):
+    """A "*" broadcast is fire-and-forget: queued-only delivery must NOT hold a
+    durable outbox entry (no peer can ever ACK it, so holding piles ~1/min
+    presence pings up to the outbox cap and then re-floods on drain).
+    """
+    comm, _t = queued_comm
+
+    report = comm.send("*", "presence ping")
+
+    assert report.delivered is True
+    assert report.queued_only is True
+    # The broadcast left NO durable hold and is NOT awaiting an ACK.
+    assert comm._outbox.list_pending() == []
+    assert comm._ack_tracker.pending_count == 0
+
+
 def test_ack_removes_the_held_outbox_entry(queued_comm):
     comm, t = queued_comm
 

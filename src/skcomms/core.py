@@ -863,27 +863,38 @@ class SKComms:
             mode=mode or self._config.default_mode,
         )
 
+        # A "*" broadcast (presence/heartbeat fan-out) is FIRE-AND-FORGET: no
+        # single peer can ever ACK it, so it must NEVER be held in the durable
+        # outbox for ACK-retry. Holding it accumulated ~1/min presence pings to
+        # the outbox cap, and then the queue-drain re-flooded every subscriber
+        # (incl. Chef's skchat app) with stale broadcasts — surfacing as
+        # "Lumina answered old questions again". Broadcasts deliver best-effort
+        # once; on failure they are simply dropped.
+        is_broadcast = recipient == "*"
+
         if not report.delivered:
             last_error = report.attempts[-1].error if report.attempts else "all transports failed"
             error_msg = last_error or "all transports failed"
-            try:
-                # The federation outbox understands the signed wire shape and
-                # owns durable retry for it (classify_envelope_json -> "signed").
-                self._outbox.enqueue_signed(signed, error=error_msg)
-            except OutboxFullError as exc:
-                # Explicit backpressure (coord 74d7b799): the durable queue is
-                # at its bound. Surface it to the local caller (the API maps
-                # this to HTTP 429) instead of silently dropping retryability.
-                self._alert_outbox_full(envelope.envelope_id, recipient, exc)
-                raise
-            except Exception as exc:  # noqa: BLE001
-                logger.warning(
-                    "outbox enqueue failed for %s: %s", envelope.envelope_id[:8], exc
-                )
+            if not is_broadcast:
+                try:
+                    # The federation outbox understands the signed wire shape and
+                    # owns durable retry for it (classify_envelope_json -> "signed").
+                    self._outbox.enqueue_signed(signed, error=error_msg)
+                except OutboxFullError as exc:
+                    # Explicit backpressure (coord 74d7b799): the durable queue is
+                    # at its bound. Surface it to the local caller (the API maps
+                    # this to HTTP 429) instead of silently dropping retryability.
+                    self._alert_outbox_full(envelope.envelope_id, recipient, exc)
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "outbox enqueue failed for %s: %s", envelope.envelope_id[:8], exc
+                    )
             logger.warning(
-                "Delivery failed for %s -> %s: queued for retry",
+                "Delivery failed for %s -> %s: %s",
                 envelope.envelope_id[:8],
                 recipient,
+                "dropped (broadcast, fire-and-forget)" if is_broadcast else "queued for retry",
             )
             _integration.alert(
                 "delivery_failed",
@@ -894,12 +905,15 @@ class SKComms:
                 },
                 level="warn",
             )
-        elif report.queued_only:
+        elif report.queued_only and not is_broadcast:
             # Delivered ONLY to a file/syncthing queue: not confirmed receipt.
-            # Hold a durable outbox entry until an ACK confirms.
+            # Hold a durable outbox entry until an ACK confirms. (Skipped for
+            # broadcasts: they have no ACKer and would pile up forever.)
             self._hold_queued_delivery(envelope, report, signed=signed)
 
-        if report.delivered and self._ack_tracker:
+        # Do not track an ACK for a broadcast: no peer will ever send one, and a
+        # tracked-but-never-ACKed entry is exactly the leak this guard prevents.
+        if report.delivered and self._ack_tracker and not is_broadcast:
             self._ack_tracker.track(envelope)
 
         return report
@@ -921,25 +935,31 @@ class SKComms:
         """
         report = self._router.route(envelope)
 
+        # Broadcasts ("*") are fire-and-forget — never durably held for an ACK
+        # that can never come (see route_send). Same guard on the legacy path.
+        is_broadcast = envelope.recipient == "*"
+
         if not report.delivered:
             last_error = report.attempts[-1].error if report.attempts else "all transports failed"
             error_msg = last_error or "all transports failed"
-            try:
-                self._outbox.enqueue(
-                    envelope.envelope_id,
-                    envelope.recipient,
-                    envelope.model_dump_json(),
-                    error_msg,
-                )
-            except OutboxFullError as exc:
-                # Explicit backpressure (coord 74d7b799): surface it rather
-                # than pretending the message is safely queued for retry.
-                self._alert_outbox_full(envelope.envelope_id, envelope.recipient, exc)
-                raise
+            if not is_broadcast:
+                try:
+                    self._outbox.enqueue(
+                        envelope.envelope_id,
+                        envelope.recipient,
+                        envelope.model_dump_json(),
+                        error_msg,
+                    )
+                except OutboxFullError as exc:
+                    # Explicit backpressure (coord 74d7b799): surface it rather
+                    # than pretending the message is safely queued for retry.
+                    self._alert_outbox_full(envelope.envelope_id, envelope.recipient, exc)
+                    raise
             logger.warning(
-                "Delivery failed for %s -> %s: queued for retry",
+                "Delivery failed for %s -> %s: %s",
                 envelope.envelope_id[:8],
                 envelope.recipient,
+                "dropped (broadcast, fire-and-forget)" if is_broadcast else "queued for retry",
             )
             _integration.alert(
                 "delivery_failed",
@@ -950,12 +970,14 @@ class SKComms:
                 },
                 level="warn",
             )
-        elif report.queued_only:
+        elif report.queued_only and not is_broadcast:
             # Delivered ONLY to a file/syncthing queue: not confirmed receipt.
-            # Hold a durable outbox entry until an ACK confirms.
+            # Hold a durable outbox entry until an ACK confirms. (Skipped for
+            # broadcasts: no ACKer, would pile up to the outbox cap.)
             self._hold_queued_delivery(envelope, report)
 
-        if report.delivered and self._ack_tracker:
+        # Broadcasts never get a returning ACK — don't track one (see route_send).
+        if report.delivered and self._ack_tracker and not is_broadcast:
             self._ack_tracker.track(envelope)
 
         return report
