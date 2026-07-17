@@ -1264,7 +1264,12 @@ class SKComms:
             logger.warning("ACK-timeout sweep failed: %s", exc)
 
         envelopes = pq.drain()
-        logger.info("Received %d message(s)", len(envelopes))
+        if envelopes:
+            logger.info("Received %d message(s)", len(envelopes))
+        else:
+            # Empty poll every ~5s is routine; keep it out of INFO logs
+            # (card 36450c88 F1/F2).
+            logger.debug("Received 0 message(s)")
         return envelopes
 
     def _apply_outbound_crypto(self, envelope: MessageEnvelope) -> MessageEnvelope:
