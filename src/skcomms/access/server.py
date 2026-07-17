@@ -27,9 +27,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import socket
 from dataclasses import dataclass
-from typing import Any, Optional
+from pathlib import Path
+from typing import Any, Optional, Union
 
 from .. import federation as fed
 from ..discovery import PeerStore
@@ -40,6 +42,45 @@ from .config import AccessConfig
 from .registry import AccessRegistry, DEFAULT_REGISTRY, RegisteredTool, Scope
 
 logger = logging.getLogger("skcomms.access.server")
+
+
+def _access_nonce_db_path() -> Path:
+    """Resolve the sk-access durable replay-cache path.
+
+    ``SKCOMMS_ACCESS_NONCE_DB`` (explicit file path) wins; otherwise the store
+    lives at ``skcomms_home()/state/access_nonce_cache.db``. It is a SEPARATE
+    file from the federation inbox cache (``nonce_cache.db``) so the two
+    surfaces keep independent replay history, but it shares the same per-node
+    ``state/`` subtree, which :func:`skcomms.home.ensure_state_ignored` keeps
+    out of Syncthing (a replay cache must never sync between nodes).
+    """
+    override = (os.environ.get("SKCOMMS_ACCESS_NONCE_DB") or "").strip()
+    if override:
+        return Path(override).expanduser()
+    from ..home import ensure_state_ignored, skcomms_home
+
+    home = skcomms_home()
+    ensure_state_ignored(home)
+    return home / "state" / "access_nonce_cache.db"
+
+
+def _default_nonce_cache() -> Union["fed.NonceCache", "fed.DurableNonceCache"]:
+    """Build the sk-access replay guard: durable by default (coord f465b407).
+
+    Mirrors :func:`skcomms.api._get_nonce_cache` semantics for the sk-access
+    surface: a SQLite-backed :class:`~skcomms.federation.DurableNonceCache`
+    so a daemon restart does not reopen a replay window on signed tool calls.
+    ``SKCOMMS_NONCE_CACHE=memory`` opts back into the legacy in-memory cache
+    (explicit, single-process/ephemeral use only).
+
+    Fail-closed: if the durable store cannot be opened this raises, so the
+    server refuses to start rather than silently accepting replays with no
+    persistence (systemd Restart=always keeps retrying).
+    """
+    mode = (os.environ.get("SKCOMMS_NONCE_CACHE") or "").strip().lower()
+    if mode == "memory":
+        return fed.NonceCache()
+    return fed.DurableNonceCache(_access_nonce_db_path())
 
 
 # ---------------------------------------------------------------------------
@@ -104,6 +145,9 @@ class AccessServer:
         verifier: An :class:`~skcomms.signing.EnvelopeVerifier`. If omitted, one
             is created and seeded TOFU-style from the :class:`PeerStore`.
         peer_store: Peer store for TOFU key resolution (default: a fresh one).
+        nonce_cache: Replay guard override (tests / embedding). Default is the
+            durable per-node store from :func:`_default_nonce_cache`, so a
+            daemon restart does not reopen a replay window (coord f465b407).
     """
 
     def __init__(
@@ -113,15 +157,18 @@ class AccessServer:
         verifier: Optional[EnvelopeVerifier] = None,
         peer_store: Optional[PeerStore] = None,
         audit: Optional[AccessAuditLog] = None,
+        nonce_cache: Optional[
+            Union[fed.NonceCache, fed.DurableNonceCache]
+        ] = None,
     ) -> None:
         self.config = config or AccessConfig.load()
         self.registry = registry or DEFAULT_REGISTRY
         self._peer_store = peer_store if peer_store is not None else PeerStore()
         self.verifier = verifier or self._build_verifier()
-        # KNOWN GAP (follow-up coord f465b407): in-memory cache means a
-        # daemon restart reopens a replay window on the sk-access surface.
-        # Migrate to the durable per-node store (see api._get_nonce_cache).
-        self.nonce_cache = fed.NonceCache()
+        # Durable by default; fail-closed if the store cannot be opened.
+        self.nonce_cache = (
+            nonce_cache if nonce_cache is not None else _default_nonce_cache()
+        )
         self.audit = audit or AccessAuditLog(node=self.config.node_name)
         self._register_builtins()
 
