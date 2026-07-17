@@ -186,11 +186,12 @@ _PRIVATE_KEY_ROLES = ("capauth-private-key", "agent-capauth-private-key")
 
 
 def private_key_paths(agent: Optional[str] = None) -> list[Path]:
-    """The two candidate CapAuth private-key paths for *agent*.
+    """The candidate CapAuth private-key paths for *agent*.
 
     Order matters and mirrors :func:`skcomms.core.resolve_signing_capauth_dir`:
-    the per-agent layout wins when its key exists, the operator layout at
-    ``~/.capauth`` is the fallback.
+    the per-agent layout wins when its key exists, then the consolidated
+    operator layout at ``~/.skcapstone/capauth``, then the legacy operator
+    layout at ``~/.capauth`` as the final fallback.
     """
     name = _resolve_agent(agent)
     return [
@@ -201,6 +202,7 @@ def private_key_paths(agent: Optional[str] = None) -> list[Path]:
         / "capauth"
         / "identity"
         / "private.asc",
+        Path.home() / ".skcapstone" / "capauth" / "identity" / "private.asc",
         Path.home() / ".capauth" / "identity" / "private.asc",
     ]
 

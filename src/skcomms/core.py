@@ -135,18 +135,26 @@ _TEXTUAL_CONTENT_TYPES = frozenset({"text/plain", "text/markdown"})
 def resolve_signing_capauth_dir(agent: str) -> Optional[Path]:
     """The capauth dir holding *agent*'s signing key, or None for the default.
 
-    Returns the per-agent layout (``~/.skcapstone/agents/<agent>/capauth``)
-    only when it actually HOLDS a private key. An existing but empty
-    per-agent dir must not shadow a valid operator key at ``~/.capauth``:
-    the identity gate (:func:`skcomms.trustbackup.identity_check`) counts
-    either key as present, so crypto resolution has to match it or that
-    configuration would pass the gate green with dead crypto. ``None``
-    means "use the ``~/.capauth`` default" in
-    :meth:`skcomms.crypto.EnvelopeCrypto.from_capauth`.
+    Resolution order (mirrors :func:`skcomms.trustbackup.private_key_paths`):
+
+    1. the per-agent layout ``~/.skcapstone/agents/<agent>/capauth`` when it
+       actually HOLDS a private key;
+    2. the consolidated operator layout ``~/.skcapstone/capauth`` when it holds
+       a private key;
+    3. ``None``, meaning "use the legacy ``~/.capauth`` default" in
+       :meth:`skcomms.crypto.EnvelopeCrypto.from_capauth`.
+
+    An existing but empty per-agent dir must not shadow a valid operator key:
+    the identity gate (:func:`skcomms.trustbackup.identity_check`) counts any
+    of these as present, so crypto resolution has to match it or a node would
+    pass the gate green with dead crypto.
     """
     cap_dir = Path.home() / ".skcapstone" / "agents" / str(agent) / "capauth"
     if (cap_dir / "identity" / "private.asc").is_file():
         return cap_dir
+    op_dir = Path.home() / ".skcapstone" / "capauth"
+    if (op_dir / "identity" / "private.asc").is_file():
+        return op_dir
     return None
 
 
@@ -440,7 +448,7 @@ class SKComms:
         crypto = None
         keystore = None
         if config.encrypt or config.sign:
-            crypto, keystore = _init_crypto()
+            crypto, keystore = _init_crypto(config.identity.name)
 
         instance = cls(config=config, router=router, crypto=crypto, keystore=keystore)
         # Drain any pre-existing legacy JSONL retry queue (both the old
@@ -470,6 +478,25 @@ class SKComms:
             crypto_status,
         )
         return instance
+
+    def stop(self) -> None:
+        """Stop background workers started by :meth:`from_config`.
+
+        ``from_config`` starts a persistent outbox retry worker thread
+        (``skcomms-outbox-retry``). A short-lived engine built only to read
+        router state (a health probe, a doctor check) must call this or it
+        leaks one daemon thread per construction. Idempotent and best-effort.
+
+        The config-gated store-and-forward pull loop (``skcomms-sf-pull``) is
+        a daemon thread with no stop seam; it exits with the process and is
+        only started when a Nostr relay secret is configured.
+        """
+        outbox = getattr(self, "_outbox", None)
+        if outbox is not None:
+            try:
+                outbox.stop()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("SKComms.stop: outbox stop failed: %s", exc)
 
     @property
     def identity(self) -> str:
@@ -1376,8 +1403,17 @@ class SKComms:
 SKComm = SKComms
 
 
-def _init_crypto():
+def _init_crypto(agent: Optional[str] = None):
     """Initialize CapAuth-based encryption from the local profile.
+
+    Resolves *agent*'s signing key via :func:`resolve_signing_capauth_dir`
+    (per-agent, then consolidated operator, then the legacy ``~/.capauth``
+    default) so the engine signs with the correct key instead of only ever
+    checking ``~/.capauth``.
+
+    Args:
+        agent: Active agent name; when None the legacy ``~/.capauth`` default
+            is used.
 
     Returns:
         tuple: (EnvelopeCrypto or None, KeyStore or None).
@@ -1385,7 +1421,8 @@ def _init_crypto():
     try:
         from .crypto import EnvelopeCrypto, KeyStore
 
-        crypto = EnvelopeCrypto.from_capauth()
+        cap_dir = resolve_signing_capauth_dir(str(agent)) if agent else None
+        crypto = EnvelopeCrypto.from_capauth(cap_dir)
         keystore = KeyStore()
         return crypto, keystore
     except ImportError:
