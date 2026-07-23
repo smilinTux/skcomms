@@ -111,14 +111,31 @@ class _DeliveryOutcome(NamedTuple):
 def default_outbox_dir() -> Path:
     """Resolve the default persistent-outbox root.
 
-    Honors the ``SKCOMMS_OUTBOX_DIR`` environment override (used by tests and
-    by operators who relocate the queue), falling back to
-    :data:`DEFAULT_OUTBOX_DIR`.
+    Delegates to :func:`skcomms.paths.retry_outbox_dir` so this helper and a
+    default-constructed :class:`PersistentOutbox` (which also resolves through
+    it) can NEVER name different directories. Before this delegation the helper
+    returned the fixed node path :data:`DEFAULT_OUTBOX_DIR`
+    (``~/.skcapstone/skcomms/outbox``) while ``PersistentOutbox()`` resolved
+    per-agent: with ``SKAGENT`` set, a caller that located "the outbox" via this
+    helper read a different tree than the daemon actually drained, so anything
+    it enqueued (or drained) missed the live queue (coord f07cf2de).
+
+    Precedence (matching :func:`skcomms.paths.retry_outbox_dir`):
+
+    1. ``SKCOMMS_OUTBOX_DIR`` env override (ops/tests pin the queue verbatim).
+    2. Per-agent ``agents/<agent>/comms/outbox-retry`` when ``SKAGENT`` /
+       ``SKCAPSTONE_AGENT`` resolves an agent (the daemon's real location).
+    3. The node-shared ``skcomms_home()/outbox`` for agentless callers
+       (``~/.skcapstone/skcomms/outbox`` with ``SKCOMMS_HOME`` unset, or
+       ``$SKCOMMS_HOME/outbox`` under a custom home). Never the legacy bare
+       ``~/.skcomms/outbox`` — that pre-scaffold default is dead.
 
     Returns:
         Path: The expanded outbox root directory.
     """
-    return Path(os.environ.get("SKCOMMS_OUTBOX_DIR", DEFAULT_OUTBOX_DIR)).expanduser()
+    from . import paths
+
+    return paths.retry_outbox_dir()
 
 
 def classify_envelope_json(envelope_json: str) -> str:
