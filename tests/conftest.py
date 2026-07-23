@@ -27,6 +27,9 @@ def _isolate_skcomms_home(tmp_path, monkeypatch):
     still win: their own ``monkeypatch.setenv`` runs after this fixture.
     """
     monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "skcomms-home"))
+    # Nonce caches are node-local (outside the synced home) by default; keep
+    # tests off the operator's real ~/.local/state/skcomms as well.
+    monkeypatch.setenv("SKCOMMS_NONCE_CACHE_DIR", str(tmp_path / "skcomms-local-state"))
     monkeypatch.delenv("SKCOMMS_NONCE_CACHE", raising=False)
     monkeypatch.delenv("SKCOMMS_NONCE_DB", raising=False)
     monkeypatch.delenv("SKCOMMS_ACCESS_NONCE_DB", raising=False)

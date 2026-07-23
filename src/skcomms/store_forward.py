@@ -674,8 +674,9 @@ def start_pull_loop(
                     logger.error(
                         "store-forward pull loop NOT started (fail-closed): "
                         "durable nonce replay cache unavailable: %s. Fix the "
-                        "replay store (SKCOMMS_NONCE_DB or "
-                        "skcomms_home()/state/) and restart.",
+                        "replay store (SKCOMMS_NONCE_DB, "
+                        "SKCOMMS_NONCE_CACHE_DIR, or the node-local "
+                        "~/.local/state/skcomms/) and restart.",
                         exc,
                     )
                     return None

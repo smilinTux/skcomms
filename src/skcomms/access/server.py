@@ -45,23 +45,27 @@ logger = logging.getLogger("skcomms.access.server")
 
 
 def _access_nonce_db_path() -> Path:
-    """Resolve the sk-access durable replay-cache path.
+    """Resolve the sk-access durable replay-cache path (NODE-LOCAL, never synced).
 
-    ``SKCOMMS_ACCESS_NONCE_DB`` (explicit file path) wins; otherwise the store
-    lives at ``skcomms_home()/state/access_nonce_cache.db``. It is a SEPARATE
-    file from the federation inbox cache (``nonce_cache.db``) so the two
-    surfaces keep independent replay history, but it shares the same per-node
-    ``state/`` subtree, which :func:`skcomms.home.ensure_state_ignored` keeps
-    out of Syncthing (a replay cache must never sync between nodes).
+    Precedence: ``SKCOMMS_ACCESS_NONCE_DB`` (explicit file path) wins, then
+    the ``SKCOMMS_NONCE_CACHE_DIR`` directory override, then the XDG state
+    default (``$XDG_STATE_HOME/skcomms/`` or ``~/.local/state/skcomms/``):
+    see :func:`skcomms.home.resolve_nonce_db`. It is a SEPARATE file from
+    the federation inbox cache (``nonce_cache.db``) so the two surfaces keep
+    independent replay history.
+
+    The store used to live at ``skcomms_home()/state/access_nonce_cache.db``,
+    inside the Syncthing-shared tree; a replay cache must never sync between
+    nodes, so it now defaults outside any synced dir. A healthy legacy DB is
+    migrated once; otherwise a fresh cache starts (safe: replay exposure is
+    bounded by the envelope freshness window).
     """
     override = (os.environ.get("SKCOMMS_ACCESS_NONCE_DB") or "").strip()
     if override:
         return Path(override).expanduser()
-    from ..home import ensure_state_ignored, skcomms_home
+    from ..home import resolve_nonce_db
 
-    home = skcomms_home()
-    ensure_state_ignored(home)
-    return home / "state" / "access_nonce_cache.db"
+    return resolve_nonce_db("access_nonce_cache.db")
 
 
 def _default_nonce_cache() -> Union["fed.NonceCache", "fed.DurableNonceCache"]:

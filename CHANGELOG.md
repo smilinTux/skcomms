@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+### Fixed
+- **Nonce replay caches are now NODE-LOCAL, outside the Syncthing tree.**
+  `nonce_cache.db` (federation inbox) and `access_nonce_cache.db` (sk-access)
+  used to default under `skcomms_home()/state/`; on live fleets that home is
+  inside a Syncthing-shared tree rooted ABOVE the home, where the home's own
+  `.stignore` has no effect, so two nodes synced one live WAL SQLite (conflict
+  copies observed, corruption risk, defeated durable-replay guarantee). Both
+  caches now resolve to `SKCOMMS_NONCE_CACHE_DIR` >
+  `$XDG_STATE_HOME/skcomms/` > `~/.local/state/skcomms/`. Exact-file overrides
+  `SKCOMMS_NONCE_DB` / `SKCOMMS_ACCESS_NONCE_DB` still win. A healthy legacy DB
+  is migrated once (SQLite backup API); a corrupt one is skipped with a warning
+  and the cache starts fresh (safe: replay exposure bounded by the ~5 min
+  envelope freshness window). The legacy `.stignore` healing stays so any
+  leftover `state/` DB stops syncing until ops delete it.
+
 ### Added
 - **Durable nonce replay cache** (coord 11e295a3): `federation.DurableNonceCache`,
   a SQLite-backed drop-in for the in-memory `NonceCache`. The S2S inbox replay

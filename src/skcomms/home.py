@@ -68,6 +68,106 @@ def skcomms_home() -> Path:
     return Path.home() / ".skcapstone" / "skcomms"
 
 
+def nonce_cache_dir() -> Path:
+    """Resolve the NODE-LOCAL directory holding replay-guard nonce caches.
+
+    Nonce caches are ephemeral per-node replay guards. They must never be
+    shared or synced between nodes: two independent writers on one live WAL
+    SQLite through file sync risk corruption and conflict copies, which
+    defeats the durable-replay guarantee. On live fleets ``skcomms_home()``
+    sits inside a Syncthing-shared tree (and the Syncthing folder may be
+    rooted ABOVE the home, e.g. ``~/.skcapstone``, where the home's own
+    ``.stignore`` has no effect), so the caches default OUTSIDE it:
+
+    1. ``SKCOMMS_NONCE_CACHE_DIR`` env override (ops pin), else
+    2. ``$XDG_STATE_HOME/skcomms/`` when ``XDG_STATE_HOME`` is set, else
+    3. ``~/.local/state/skcomms/``.
+
+    Returns:
+        Path: The (un-created) node-local nonce-cache directory.
+    """
+    override = (os.environ.get("SKCOMMS_NONCE_CACHE_DIR") or "").strip()
+    if override:
+        return Path(override).expanduser()
+    xdg = (os.environ.get("XDG_STATE_HOME") or "").strip()
+    base = Path(xdg).expanduser() if xdg else Path.home() / ".local" / "state"
+    return base / "skcomms"
+
+
+def _migrate_legacy_nonce_db(old: Path, new: Path) -> None:
+    """Best-effort ONE-TIME copy of a legacy synced nonce DB to the local path.
+
+    Runs only when *new* does not exist and *old* does. Uses the SQLite
+    backup API (WAL-safe, reads a consistent snapshot). If the legacy file
+    cannot be read (e.g. corrupted by a Syncthing conflict, the very failure
+    mode that motivated the move), the partial copy is removed and the cache
+    starts FRESH instead of failing closed: that is safe because the replay
+    guard is layered under the envelope freshness check, so a fresh cache
+    only exposes envelopes captured within the freshness window
+    (``DEFAULT_MAX_AGE_S``, 300s) around the cutover.
+    """
+    import sqlite3
+
+    if new.exists() or not old.exists():
+        return
+    if old.resolve() == new.resolve():  # ops pinned the dir back onto the old path
+        return
+    try:
+        src = sqlite3.connect(str(old))
+        try:
+            dst = sqlite3.connect(str(new))
+            try:
+                src.backup(dst)
+                dst.commit()
+            finally:
+                dst.close()
+        finally:
+            src.close()
+        logger.info("migrated legacy nonce cache %s -> %s", old, new)
+    except Exception as exc:
+        try:
+            new.unlink(missing_ok=True)
+        except OSError:  # pragma: no cover - cleanup is best-effort
+            pass
+        logger.warning(
+            "legacy nonce cache %s not migrated (%s); starting fresh at %s "
+            "(safe: replay exposure bounded by the envelope freshness window)",
+            old,
+            exc,
+            new,
+        )
+
+
+def resolve_nonce_db(name: str) -> Path:
+    """Resolve the node-local path for the replay-guard DB *name*.
+
+    The directory comes from :func:`nonce_cache_dir` (never inside the
+    synced ``skcomms_home()`` tree by default). On first resolution a
+    healthy legacy DB at ``skcomms_home()/state/<name>`` is migrated once
+    (see :func:`_migrate_legacy_nonce_db`); the legacy file itself is left
+    in place for ops cleanup but is never written again. As a best-effort
+    courtesy to live fleets, the legacy home's ``.stignore`` is also healed
+    so any leftover ``state/`` DB stops syncing between nodes; since the
+    active cache no longer lives there, a failure to do so is non-fatal.
+
+    Args:
+        name: DB file name, e.g. ``nonce_cache.db``.
+
+    Returns:
+        Path: The node-local DB path (parent directory created).
+    """
+    local = nonce_cache_dir()
+    local.mkdir(parents=True, exist_ok=True)
+    new = local / name
+    try:
+        legacy_home = skcomms_home()
+        ensure_state_ignored(legacy_home)
+        _migrate_legacy_nonce_db(legacy_home / "state" / name, new)
+    except Exception as exc:  # pragma: no cover - legacy healing is optional
+        logger.warning("legacy nonce-cache healing skipped: %s", exc)
+    return new
+
+
 def ensure_state_ignored(home: Optional[Path] = None) -> Path:
     """Idempotently ensure ``state/`` is Syncthing-ignored in ``<home>/.stignore``.
 
