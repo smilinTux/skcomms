@@ -33,6 +33,23 @@ a matching key is accepted (TRUST_MATCH), and a *changed* key for a known fqid i
 a CONFLICT — rejected and logged, the existing pin left untouched. The relay is
 a discovery hint, not an authority.
 
+Signed directory replication
+----------------------------
+TOFU pins only the *pubkey*; it does not authenticate the rest of a record. A
+compromised relay / sync peer could keep the pinned pubkey but tamper the
+``inbox_url`` (or ``rails`` / ``node``) of an already-pinned fqid, redirecting a
+peer's federation traffic to an attacker-controlled endpoint. To close that,
+each record is **CapAuth-signed by its origin**: :func:`sign_record` covers the
+canonical record bytes (everything except the signature fields) with the agent's
+CapAuth key - the SAME proven signer/verifier the envelope and realm-directory
+paths use (:meth:`skcomms.signing.EnvelopeSigner.sign_bytes`), no new crypto. On
+ingest, :func:`record_to_peer` verifies that signature against the record's
+(TOFU-pinned) pubkey and **rejects fail-closed** when a present signature does
+not verify. A record with **no** signature is legacy-unsigned: accepted for
+backward-compat unless strict mode (:data:`STRICT_SIGNED_ENV`) is set, which
+requires every record to be signed. A *present* signature is ALWAYS enforced
+regardless of the flag.
+
 Relay I/O sits behind injectable ``publish``/``query`` seams (mirroring
 skchat's ``spaces/federation/nostr_io.py``), so the whole module is testable with
 fakes — no network.
@@ -54,6 +71,104 @@ from .identity import resolve_self_identity
 from .tofu import TofuStatus, verify_fingerprint
 
 logger = logging.getLogger("skcomms.nostr_discovery")
+
+# Truthy env spellings (matches the rest of the repo, e.g. anon_transport).
+_TRUTHY = {"1", "true", "yes", "on"}
+
+# Record fields that carry the CapAuth signature. They are EXCLUDED from the
+# bytes the signature covers (they are *about* the signature), mirroring
+# skcomms.skfed_directory.SignedDirectory.signing_bytes.
+_SIG_FIELD = "sig"  # armored PGP detached signature over record_signing_bytes()
+_SIG_FP_FIELD = "sig_fp"  # signer's 40-char hex fingerprint (lookup hint)
+
+#: When truthy, a directory record with NO CapAuth signature is REJECTED
+#: (strict signed replication). Default off for backward-compat with legacy
+#: unsigned publishers. A record that IS signed is ALWAYS verified fail-closed,
+#: regardless of this flag.
+STRICT_SIGNED_ENV = "SKCOMMS_SKFED_STRICT_SIGNED"
+
+
+def _require_signed() -> bool:
+    """Whether unsigned directory records must be rejected (strict mode)."""
+    return os.environ.get(STRICT_SIGNED_ENV, "").strip().lower() in _TRUTHY
+
+
+def record_signing_bytes(record: dict) -> bytes:
+    """Return the canonical bytes a CapAuth signature covers for *record*.
+
+    The record minus the signature fields (``sig`` / ``sig_fp``), serialized
+    deterministically (sorted keys, compact separators, no ASCII escaping) so
+    the bytes are identical across nodes and JSON relay round-trips. Mirrors
+    :meth:`skcomms.skfed_directory.SignedDirectory.signing_bytes`.
+    """
+    payload = {k: v for k, v in record.items() if k not in (_SIG_FIELD, _SIG_FP_FIELD)}
+    return json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+
+
+def sign_record(record: dict, signer) -> dict:
+    """Return a copy of *record* CapAuth-signed over its canonical bytes.
+
+    Reuses the SAME proven CapAuth signer the envelope + realm-directory paths
+    use (:meth:`skcomms.signing.EnvelopeSigner.sign_bytes`) - no new crypto. The
+    returned dict carries ``sig`` (armored PGP detached signature) and ``sig_fp``
+    (the signer's fingerprint). Idempotent: any existing signature fields are
+    dropped and recomputed from the current payload.
+
+    Args:
+        record: The directory record to sign (must be the final payload).
+        signer: A :class:`skcomms.signing.EnvelopeSigner`.
+
+    Returns:
+        A new record dict with ``sig`` + ``sig_fp`` populated.
+    """
+    signed = {k: v for k, v in record.items() if k not in (_SIG_FIELD, _SIG_FP_FIELD)}
+    signed[_SIG_FP_FIELD] = signer.fingerprint
+    signed[_SIG_FIELD] = signer.sign_bytes(record_signing_bytes(signed))
+    return signed
+
+
+def verify_record_signature(record: dict) -> Optional[bool]:
+    """Verify a directory record's CapAuth signature against its embedded pubkey.
+
+    The signature binds ``inbox_url`` / ``rails`` / ``node`` (and every other
+    field) to the CapAuth key the record advertises - the same key TOFU pins for
+    the fqid. So once a fqid is pinned, only the holder of that private key can
+    publish a record that verifies; a relay/sync-peer that keeps the pinned
+    pubkey but tampers the ``inbox_url`` produces a signature that no longer
+    verifies.
+
+    Returns:
+        ``True``  - a present signature validly covers the record.
+        ``False`` - a signature is present but does NOT verify (tampered or
+            wrong key). The caller MUST reject the record.
+        ``None``  - the record carries no signature (legacy-unsigned); the
+            caller applies its compat policy (see :func:`_require_signed`).
+    """
+    sig = record.get(_SIG_FIELD)
+    if not sig:
+        return None
+    fqid = record.get("fqid")
+    pubkey = record.get("pubkey")
+    if not pubkey:
+        # A signature with no key to check it against is unverifiable → reject.
+        logger.warning("directory record for %s carries a signature but no pubkey", fqid)
+        return False
+    try:
+        from .signing import EnvelopeVerifier
+
+        verifier = EnvelopeVerifier()
+        verifier.add_key(fqid or "", pubkey)
+        return verifier.verify_bytes(
+            record_signing_bytes(record),
+            sig,
+            identity=fqid,
+            fingerprint=record.get(_SIG_FP_FIELD) or None,
+        )
+    except Exception as exc:  # noqa: BLE001 - fail closed on any verify error
+        logger.warning("directory record signature check errored for %s: %s", fqid, exc)
+        return False
 
 
 def _default_store() -> PeerStore:
@@ -238,6 +353,27 @@ def record_to_peer(record: dict) -> Optional[PeerInfo]:
     """
     fqid = record.get("fqid")
     if not fqid:
+        return None
+
+    # Signed-directory replication gate (fail-closed). A present CapAuth
+    # signature that does NOT verify means the record was tampered with in
+    # transit or by a compromised sync peer / relay - reject it. An absent
+    # signature is legacy-unsigned: accepted unless strict mode requires one.
+    sig_ok = verify_record_signature(record)
+    if sig_ok is False:
+        logger.warning(
+            "directory record for %s REJECTED: CapAuth signature invalid "
+            "(tampered in transit or wrong key)",
+            fqid,
+        )
+        return None
+    if sig_ok is None and _require_signed():
+        logger.warning(
+            "directory record for %s REJECTED: unsigned and strict signing "
+            "(%s) is enabled",
+            fqid,
+            STRICT_SIGNED_ENV,
+        )
         return None
 
     inbox_url = record.get("inbox_url")
@@ -464,8 +600,9 @@ def build_self_record(
     inbox_url: Optional[str] = None,
     rails: Optional[list[str]] = None,
     node: Optional[str] = None,
+    signer=None,
 ) -> Optional[dict]:
-    """Build this node's directory record for the running agent.
+    """Build (and CapAuth-sign) this node's directory record for the running agent.
 
     Args:
         agent: Agent short name (defaults to the resolved self identity).
@@ -473,10 +610,16 @@ def build_self_record(
             ``SKFED_INBOX_URL`` env.
         rails: Advertised rail preference (default ``["https-s2s","syncthing","nostr"]``).
         node: Home-node hostname (default the local hostname).
+        signer: Override the :class:`skcomms.signing.EnvelopeSigner` used to sign
+            the record. When ``None`` the agent's CapAuth key is loaded via
+            :func:`skcomms.mailbox._load_signer` (best-effort).
 
     Returns:
-        A directory record dict, or ``None`` if no fqid can be resolved (nothing
-        to announce).
+        A directory record dict - CapAuth-signed (``sig`` / ``sig_fp``) when the
+        agent's private key and public key are both available - or ``None`` if no
+        fqid can be resolved (nothing to announce). Signing is best-effort: when
+        no private key is available the record is published unsigned (legacy
+        compat); consumers still accept it unless strict mode is enabled.
     """
     ident = resolve_self_identity(agent)
     fqid = ident.get("fqid")
@@ -484,8 +627,9 @@ def build_self_record(
         logger.debug("no fqid resolved — skipping directory announce")
         return None
 
+    resolved_agent = ident.get("agent") or agent or ""
     inbox_url = inbox_url or os.environ.get("SKFED_INBOX_URL")
-    pubkey = _self_capauth_pubkey(ident.get("agent") or agent or "")
+    pubkey = _self_capauth_pubkey(resolved_agent)
     record = {
         "fqid": fqid,
         "node": node or _node_name(),
@@ -496,6 +640,19 @@ def build_self_record(
         record["inbox_url"] = inbox_url
     if pubkey:
         record["pubkey"] = pubkey
+
+    # Sign the record so replicated copies are tamper-evident. We only sign when
+    # the matching pubkey is advertised (else a consumer has no key to verify
+    # against). Best-effort: a missing/locked private key leaves it unsigned.
+    if pubkey:
+        try:
+            if signer is None:
+                from .mailbox import _load_signer
+
+                signer = _load_signer(resolved_agent)
+            record = sign_record(record, signer)
+        except Exception as exc:  # noqa: BLE001 - unsigned is a valid fallback
+            logger.debug("could not CapAuth-sign directory record for %s: %s", fqid, exc)
     return record
 
 
@@ -507,6 +664,7 @@ def announce_self(
     relays: Optional[list[str]] = None,
     secret: Optional[bytes] = None,
     directory: Optional[NostrDirectory] = None,
+    signer=None,
 ) -> bool:
     """Best-effort startup hook: publish this node's directory record.
 
@@ -523,7 +681,9 @@ def announce_self(
         True if the record was published to at least one relay.
     """
     try:
-        record = build_self_record(agent=agent, inbox_url=inbox_url, rails=rails)
+        record = build_self_record(
+            agent=agent, inbox_url=inbox_url, rails=rails, signer=signer
+        )
         if record is None:
             return False
         dir_client = directory or NostrDirectory(relays=relays, secret=secret)
