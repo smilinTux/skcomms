@@ -257,6 +257,47 @@ def test_file_transport_depth_cap_disabled(tmp_path):
     assert len(list((tmp_path / "out").glob("*.skc.json"))) == 8
 
 
+def test_file_transport_broadcast_is_not_persisted(tmp_path):
+    """A ``recipient == "*"`` broadcast (presence/heartbeat fan-out) is
+    fire-and-forget: the file rail has no single recipient inbox to sync it to,
+    so persisting it to the flat outbox just churns undeliverable files up to
+    the depth cap (~1/min presence pings; the ``unknown-<ts>.skc.json`` leak).
+    The send must succeed best-effort WITHOUT writing a durable outbox file and
+    WITHOUT marking the delivery as queued (nothing to hold/ACK).
+    """
+    from skcomms.transports.file import FileTransport
+
+    t = FileTransport(outbox_path=tmp_path / "out", inbox_path=tmp_path / "in")
+
+    hb = json.dumps(
+        {"envelope": {"to_fqid": "*", "content_type": "heartbeat"}}
+    ).encode()
+    result = t.send(hb, "*")
+
+    assert result.success is True
+    # Best-effort, not a durable queue hand-off: nothing to ACK-hold.
+    assert result.queued is False
+    # No file was written to the durable outbox.
+    assert list((tmp_path / "out").glob("*.skc.json")) == []
+
+
+def test_file_transport_directed_still_persists_durably(tmp_path):
+    """A directed (non-broadcast) message must still be written durably to the
+    outbox and reported as queued so the sender holds it pending an ACK. Only
+    the ``*`` broadcast path is send-and-drop.
+    """
+    from skcomms.transports.file import FileTransport
+
+    t = FileTransport(outbox_path=tmp_path / "out", inbox_path=tmp_path / "in")
+
+    result = t.send(json.dumps({"envelope_id": "e-directed"}).encode(), "jarvis")
+
+    assert result.success is True
+    assert result.queued is True
+    names = [f.name for f in (tmp_path / "out").glob("*.skc.json")]
+    assert names == ["e-directed.skc.json"]
+
+
 def test_file_transport_depth_cap_via_configure(tmp_path):
     from skcomms.transports.file import FileTransport
 
