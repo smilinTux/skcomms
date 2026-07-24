@@ -337,6 +337,15 @@ def daemon(config: Optional[str], interval: int, all_agents: bool):
         "~/.skcapstone/skcomms/outbox when no agent is resolvable)."
     ),
 )
+@click.option(
+    "--all-agents",
+    is_flag=True,
+    help=(
+        "Housekeep EVERY provisioned agent home on this node (multi-agent "
+        "Syncthing hub), not just the active agent. Discovers agents/<name>/ "
+        "and runs one pass per agent, each scoped to its own outbox/queue."
+    ),
+)
 @click.option("--json-out", is_flag=True, help="Output as JSON.")
 def housekeep(
     config: Optional[str],
@@ -346,6 +355,7 @@ def housekeep(
     dead_ttl_hours: Optional[float],
     dead_max_count: Optional[int],
     outbox_dir: Optional[str],
+    all_agents: bool,
     json_out: bool,
 ):
     """Run one full housekeeping pass and exit.
@@ -357,43 +367,106 @@ def housekeep(
     verb is designed to be called from a systemd timer or cron as
     belt-and-braces.
 
+    With ``--all-agents`` it iterates every agent home provisioned under the
+    agents base dir (``~/.skcapstone/agents/<name>``) and runs the pass once
+    per agent, each scoped to that agent's own transports and persistent
+    outbox, then reports a per-agent summary. This is the one-pass mode for a
+    hub hosting several agents behind a single Syncthing node. Default (single
+    agent) behavior is unchanged.
+
     \b
     Examples:
         skcomms housekeep                          # config-driven retention
         skcomms housekeep --outbox-max-age-hours 24
         skcomms housekeep --dead-ttl-hours 168     # tighter dead-letter TTL
+        skcomms housekeep --all-agents             # sweep every agent home
         skcomms housekeep --json-out               # machine-readable counts
     """
+    import os
+
+    from . import paths as _paths
     from .config import load_config
     from .core import _load_transport
     from .housekeeping import run_housekeeping_pass
     from .outbox import PersistentOutbox
 
-    cfg = load_config(config)
-    hk = cfg.housekeeping
-    if outbox_max_age_hours is not None:
-        hk.outbox_max_age_hours = outbox_max_age_hours
-    if archive_ttl_hours is not None:
-        hk.archive_ttl_hours = archive_ttl_hours
-    if mailbox_ttl_hours is not None:
-        hk.mailbox_ttl_hours = mailbox_ttl_hours
-    if dead_ttl_hours is not None:
-        hk.dead_letter_ttl_hours = dead_ttl_hours
-    if dead_max_count is not None:
-        hk.dead_letter_max_count = dead_max_count
+    # A single explicit --outbox-dir cannot be scoped across N agents, so it
+    # is nonsensical (and unsafe: it would point every agent's retention at one
+    # queue) combined with --all-agents. Fail loudly rather than silently
+    # sweeping the wrong tree.
+    if all_agents and outbox_dir is not None:
+        raise click.UsageError("--outbox-dir cannot be combined with --all-agents")
 
-    # Build the enabled transports directly (no full SKComms engine: a
-    # housekeeping pass needs no crypto, outbox writer, or retry threads).
-    transports = []
-    for name, tconf in cfg.transports.items():
-        if not tconf.enabled:
-            continue
-        transport = _load_transport(name, tconf.priority, tconf.settings)
-        if transport is not None:
-            transports.append(transport)
+    overrides = {
+        "outbox_max_age_hours": outbox_max_age_hours,
+        "archive_ttl_hours": archive_ttl_hours,
+        "mailbox_ttl_hours": mailbox_ttl_hours,
+        "dead_letter_ttl_hours": dead_ttl_hours,
+        "dead_letter_max_count": dead_max_count,
+    }
 
-    outbox = PersistentOutbox(outbox_dir=outbox_dir)
-    results = run_housekeeping_pass(transports, hk, outbox)
+    def _one_pass(pass_outbox_dir: Optional[str]) -> dict:
+        """Run a single housekeeping pass in the current agent context.
+
+        Loads a fresh config (so per-agent transport paths track the active
+        ``SKAGENT``), applies the CLI TTL overrides, builds the enabled
+        transports directly (no full SKComms engine: a housekeeping pass needs
+        no crypto, outbox writer, or retry threads), and sweeps.
+        """
+        cfg = load_config(config)
+        hk = cfg.housekeeping
+        for attr, value in overrides.items():
+            if value is not None:
+                setattr(hk, attr, value)
+
+        transports = []
+        for name, tconf in cfg.transports.items():
+            if not tconf.enabled:
+                continue
+            transport = _load_transport(name, tconf.priority, tconf.settings)
+            if transport is not None:
+                transports.append(transport)
+
+        outbox = PersistentOutbox(outbox_dir=pass_outbox_dir)
+        return run_housekeeping_pass(transports, hk, outbox)
+
+    if all_agents:
+        agents = _paths.discover_agents()
+        per_agent: dict[str, dict] = {}
+        saved = os.environ.get("SKAGENT")
+        try:
+            for agent in agents:
+                # Scope every per-agent path resolver (config transports,
+                # persistent outbox) to this agent for the duration of its pass.
+                os.environ["SKAGENT"] = agent
+                per_agent[agent] = _one_pass(None)
+        finally:
+            if saved is None:
+                os.environ.pop("SKAGENT", None)
+            else:
+                os.environ["SKAGENT"] = saved
+
+        if json_out:
+            click.echo(json.dumps({"agents": per_agent, "count": len(per_agent)}, indent=2))
+            return
+
+        _print("\n  [bold]Housekeeping pass complete (all agents)[/]")
+        if not per_agent:
+            _print("    [yellow]No agent homes found under the agents base dir.[/]\n")
+            return
+        for agent, results in per_agent.items():
+            _print(
+                f"    [cyan]{agent}[/]: "
+                f"{results['outbox_pruned']} outbox, "
+                f"{results['archive_pruned']} archive, "
+                f"{results['mailbox_pruned']} mailbox, "
+                f"{results.get('dead_pruned', 0)} dead-letter, "
+                f"{results.get('outbox_archive_pruned', 0)} outbox-archive pruned"
+            )
+        _print(f"\n  Swept {len(per_agent)} agent home(s).\n")
+        return
+
+    results = _one_pass(outbox_dir)
 
     if json_out:
         click.echo(json.dumps(results, indent=2))

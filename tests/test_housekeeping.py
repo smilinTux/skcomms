@@ -514,6 +514,172 @@ class TestHousekeepCLI:
 
 
 # ---------------------------------------------------------------------------
+# CLI: skcomms housekeep --all-agents (multi-agent Syncthing hub)
+# ---------------------------------------------------------------------------
+
+
+class TestHousekeepAllAgentsCLI:
+    def _write_config(self, tmp_path: Path) -> Path:
+        # No explicit transport paths: with SKAGENT set per agent, load_config
+        # rewrites the file transport to each agent's own comms tree.
+        cfg = tmp_path / "config.yml"
+        cfg.write_text(
+            "skcomms:\n"
+            "  transports:\n"
+            "    file:\n"
+            "      enabled: true\n"
+            "      priority: 1\n"
+        )
+        return cfg
+
+    def test_all_agents_visits_every_agent_home(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from skcomms import paths
+        from skcomms.cli import main as cli_main
+
+        monkeypatch.delenv("SKAGENT", raising=False)
+        monkeypatch.delenv("SKCAPSTONE_AGENT", raising=False)
+        monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
+        monkeypatch.delenv("SKCOMMS_OUTBOX_DIR", raising=False)
+
+        # Two provisioned agent homes, each with a stale outbox envelope in its
+        # own agents/<name>/comms/outbox tree (the paths load_config derives
+        # from SKAGENT). agents_root() == $SKCOMMS_HOME/agents here.
+        for agent in ("lumina", "opus"):
+            outbox = paths.agents_root() / agent / "comms" / "outbox"
+            outbox.mkdir(parents=True)
+            stale = outbox / f"stale-{agent}{ENVELOPE_SUFFIX}"
+            stale.write_bytes(_envelope_bytes(f"stale-{agent}"))
+            _backdate(stale, hours=100)
+
+        cfg = self._write_config(tmp_path)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli_main, ["housekeep", "-c", str(cfg), "--all-agents", "--json-out"]
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["count"] == 2
+        assert set(payload["agents"]) == {"lumina", "opus"}
+        # Each agent's stale envelope was pruned within its OWN tree.
+        for agent in ("lumina", "opus"):
+            assert payload["agents"][agent]["outbox_pruned"] == 1
+            outbox = paths.agents_root() / agent / "comms" / "outbox"
+            assert not (outbox / f"stale-{agent}{ENVELOPE_SUFFIX}").exists()
+
+    def test_all_agents_restores_skagent_env(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from skcomms import paths
+        from skcomms.cli import main as cli_main
+
+        monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
+        monkeypatch.delenv("SKCOMMS_OUTBOX_DIR", raising=False)
+        # An operator with an active agent runs --all-agents; the env selector
+        # must be back to its original value after the sweep.
+        monkeypatch.setenv("SKAGENT", "jarvis")
+
+        for agent in ("lumina", "opus"):
+            (paths.agents_root() / agent / "comms" / "outbox").mkdir(parents=True)
+
+        cfg = self._write_config(tmp_path)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli_main, ["housekeep", "-c", str(cfg), "--all-agents", "--json-out"]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert os.environ.get("SKAGENT") == "jarvis"
+
+    def test_all_agents_empty_base_dir(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from skcomms.cli import main as cli_main
+
+        monkeypatch.delenv("SKAGENT", raising=False)
+        monkeypatch.delenv("SKCAPSTONE_AGENT", raising=False)
+        monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
+        monkeypatch.delenv("SKCOMMS_OUTBOX_DIR", raising=False)
+
+        cfg = self._write_config(tmp_path)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli_main, ["housekeep", "-c", str(cfg), "--all-agents", "--json-out"]
+        )
+
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload == {"agents": {}, "count": 0}
+
+    def test_all_agents_rejects_explicit_outbox_dir(self, tmp_path, monkeypatch):
+        from click.testing import CliRunner
+
+        from skcomms.cli import main as cli_main
+
+        monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
+        cfg = self._write_config(tmp_path)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli_main,
+            [
+                "housekeep",
+                "-c",
+                str(cfg),
+                "--all-agents",
+                "--outbox-dir",
+                str(tmp_path / "pinned"),
+            ],
+        )
+
+        assert result.exit_code != 0
+        assert "cannot be combined" in result.output
+
+    def test_single_agent_mode_unchanged_by_default(self, tmp_path, monkeypatch):
+        """Default (no --all-agents) still runs exactly one pass for one agent."""
+        from click.testing import CliRunner
+
+        from skcomms.cli import main as cli_main
+
+        monkeypatch.delenv("SKAGENT", raising=False)
+        monkeypatch.delenv("SKCAPSTONE_AGENT", raising=False)
+        monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
+        monkeypatch.setenv("SKCOMMS_OUTBOX_DIR", str(tmp_path / "pobox"))
+
+        outbox = tmp_path / "outbox"
+        outbox.mkdir()
+        stale = outbox / f"stale{ENVELOPE_SUFFIX}"
+        stale.write_bytes(_envelope_bytes("stale"))
+        _backdate(stale, hours=100)
+
+        cfg = tmp_path / "config.yml"
+        cfg.write_text(
+            "skcomms:\n"
+            "  transports:\n"
+            "    file:\n"
+            "      enabled: true\n"
+            "      settings:\n"
+            f"        outbox_path: {outbox}\n"
+            f"        inbox_path: {tmp_path / 'inbox'}\n"
+        )
+
+        runner = CliRunner()
+        result = runner.invoke(cli_main, ["housekeep", "-c", str(cfg), "--json-out"])
+
+        assert result.exit_code == 0, result.output
+        counts = json.loads(result.output)
+        # Flat single-agent shape (no "agents"/"count" wrapper).
+        assert "agents" not in counts
+        assert counts["outbox_pruned"] == 1
+        assert not stale.exists()
+
+
+# ---------------------------------------------------------------------------
 # Config defaults
 # ---------------------------------------------------------------------------
 

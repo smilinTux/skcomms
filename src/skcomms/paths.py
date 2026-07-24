@@ -111,6 +111,37 @@ def agents_root() -> Path:
     return Path.home() / ".skcapstone" / "agents"
 
 
+def discover_agents() -> list[str]:
+    """List the short names of every agent home provisioned under :func:`agents_root`.
+
+    Returns the sorted names of every non-hidden directory in the agents base
+    dir, i.e. every agent home present on this node (the same layout the
+    per-agent resolvers above scope into). Path-unsafe names are skipped
+    fail-closed rather than aborting the scan, so one malformed directory can
+    not hide the rest. Returns an empty list when the base dir is absent.
+
+    This is the discovery helper the ``skcomms housekeep --all-agents`` sweep
+    uses to iterate a multi-agent Syncthing hub in one pass, and mirrors the
+    ``agents/<name>/`` convention already relied on by ``resolve_agent`` and
+    the household roster.
+
+    Returns:
+        Sorted list of validated agent short names (may be empty).
+    """
+    base = agents_root()
+    if not base.is_dir():
+        return []
+    names: list[str] = []
+    for child in sorted(base.iterdir(), key=lambda p: p.name):
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        try:
+            names.append(safe_component(child.name))
+        except ValueError:
+            logger.warning("discover_agents: skipping path-unsafe agent dir %r", child.name)
+    return names
+
+
 def agent_dir(agent: Optional[str] = None) -> Path:
     """The storage root for one agent: ``agents_root()/<agent>``.
 
