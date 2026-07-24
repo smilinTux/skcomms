@@ -534,3 +534,41 @@ def test_custom_home_does_not_adopt_fixed_legacy_outbox(monkeypatch, tmp_path):
     assert (ob.pending_dir / "in-home.json").exists()
     assert (fixed_pending / "fixed.json").exists()
     assert not (ob.pending_dir / "fixed.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# discover_agents: enumerate provisioned agent homes (housekeep --all-agents)
+# ---------------------------------------------------------------------------
+
+
+class TestDiscoverAgents:
+    def test_lists_agent_homes_sorted(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
+
+        from skcomms import paths
+
+        for name in ("opus", "lumina", "jarvis"):
+            (paths.agents_root() / name / "comms").mkdir(parents=True)
+
+        assert paths.discover_agents() == ["jarvis", "lumina", "opus"]
+
+    def test_skips_hidden_and_files(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
+
+        from skcomms import paths
+
+        base = paths.agents_root()
+        base.mkdir(parents=True)
+        (base / "opus").mkdir()
+        (base / ".hidden").mkdir()
+        (base / "stray.json").write_text("{}", encoding="utf-8")
+
+        assert paths.discover_agents() == ["opus"]
+
+    def test_missing_base_dir_is_empty(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
+
+        from skcomms import paths
+
+        # agents_root() does not exist yet.
+        assert paths.discover_agents() == []
