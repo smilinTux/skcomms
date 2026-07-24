@@ -351,17 +351,26 @@ def import_peer_bundle(
             )
 
     if not transports:
-        # Default transports
-        # FOLLOW-UP (reader/writer divergence, out of coord 119b49f1's scope):
-        # these node-shared defaults (comms_root, inbox_path) still bypass the
-        # skcomms.paths resolver. A per-agent daemon polling
-        # agents/<agent>/comms/inbox would not see envelopes dropped at the
-        # node-shared ~/.skcapstone/skcomms/inbox here. Tracked as coord task
-        # 48289e82, NOT changed here to keep coord 119b49f1 scoped to the fed
-        # inbox / transfers / queue / retry-outbox stores.
+        # Default transports (coord 48289e82): a bundle that advertises no
+        # transports falls back to this node's local file/syncthing routes.
+        # Derive them through skcomms.paths, the SAME resolver config.load_config
+        # and the S2S inbox writer use, instead of hardcoding node-shared
+        # ~/.skcapstone paths. When an agent is scoped (SKAGENT / SKCAPSTONE_AGENT)
+        # the routes point at that agent's OWN agents/<agent>/comms tree, so its
+        # daemon polls exactly where envelopes land rather than a node-shared
+        # inbox it never reads (the reader/writer divergence the FOLLOW-UP note
+        # here used to describe). Agentless callers keep the legacy node-shared
+        # locations.
+        from . import paths as _paths
+
+        agent = _paths.resolve_agent()
+        comms_root = str(_paths.agent_comms_dir(agent)) if agent else "~/.skcapstone/comms"
         transports = [
-            PeerTransport(transport="syncthing", settings={"comms_root": "~/.skcapstone/comms"}),
-            PeerTransport(transport="file", settings={"inbox_path": "~/.skcapstone/skcomms/inbox"}),
+            PeerTransport(transport="syncthing", settings={"comms_root": comms_root}),
+            PeerTransport(
+                transport="file",
+                settings={"inbox_path": str(_paths.file_transport_inbox(agent))},
+            ),
         ]
 
     peer = PeerInfo(
