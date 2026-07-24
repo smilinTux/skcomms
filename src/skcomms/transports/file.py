@@ -352,6 +352,29 @@ class FileTransport(Transport):
         start = time.monotonic()
         envelope_id = self._extract_id(envelope_bytes)
 
+        # A ``*`` broadcast (presence/heartbeat fan-out) is FIRE-AND-FORGET: the
+        # flat file rail has no single recipient inbox to sync it to, so a
+        # durable write here is never delivered anywhere. It just churns
+        # ``unknown-<ts>.skc.json`` files up to the outbox depth cap (~1/min
+        # presence pings across every agent) and bloats Syncthing. Presence is
+        # already published separately to ``sync/heartbeats/<node>.json`` by the
+        # HeartbeatPublisher, so this copy is pure redundant garbage. Report a
+        # best-effort success with queued=False (nothing durable to ACK-hold)
+        # and skip the write entirely.
+        if recipient == "*":
+            elapsed = (time.monotonic() - start) * 1000
+            logger.debug(
+                "Dropped broadcast %s on file rail (fire-and-forget, not persisted)",
+                envelope_id[:8],
+            )
+            return SendResult(
+                success=True,
+                transport_name=self.name,
+                envelope_id=envelope_id,
+                latency_ms=elapsed,
+                queued=False,
+            )
+
         try:
             self._outbox.mkdir(parents=True, exist_ok=True)
 
