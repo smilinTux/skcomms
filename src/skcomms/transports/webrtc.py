@@ -487,10 +487,26 @@ class WebRTCTransport(Transport):
     # ──────────────────────────────────────────────────────────────────────
 
     def _run_loop(self) -> None:
-        """Background thread: own and drive the asyncio event loop."""
+        """Background thread: own and drive the asyncio event loop.
+
+        ``stop()`` shuts the loop down with ``call_soon_threadsafe(loop.stop)``.
+        When that fires while ``_main_loop`` is mid-await (the common case: it is
+        almost always sleeping in reconnect backoff or blocked on ``ws.recv``),
+        ``run_until_complete`` raises ``RuntimeError: Event loop stopped before
+        Future completed``. That is an expected, deliberate shutdown, not a
+        crash, so it is swallowed here — otherwise it escapes the thread target
+        and Python dumps an "Exception in thread skcomms-webrtc" traceback on
+        every ordinary stop(). Any *other* exception is a genuine loop crash and
+        is logged (not silently dropped). The loop is always closed regardless.
+        """
         asyncio.set_event_loop(self._loop)
         try:
             self._loop.run_until_complete(self._main_loop())
+        except RuntimeError as exc:
+            # Deliberate shutdown via loop.stop() interrupting an in-flight await.
+            logger.debug("WebRTC: background loop stopped: %s", exc)
+        except Exception:
+            logger.exception("WebRTC: background event loop crashed")
         finally:
             self._loop.close()
 
