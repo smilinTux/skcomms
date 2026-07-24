@@ -884,6 +884,114 @@ def peers_show(peer_fqid: str, json_out: bool):
     _print(f"  Added:       [dim]{entry['added_at']}[/]\n")
 
 
+@main.group("rail")
+def rail_group():
+    """Syncthing sneakernet rail — provision shares + verify share-health (2c103c2d).
+
+    The file/syncthing failover rail replicates the realm message tree between
+    machines with Syncthing, driven by ``peers.json``. ``provision`` stands the
+    Send-Only-self / Receive-Only-per-peer folders up on a fresh/cold box (from
+    the existing Syncthing config, idempotently); ``health`` verifies the comms
+    folder is actually shared, connected, syncing, and conflict-free so a
+    silently-disconnected rail no longer looks like "queued forever".
+    """
+
+
+@rail_group.command("provision")
+@click.option("--dry-run", is_flag=True, help="Show the plan without writing to Syncthing.")
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+def rail_provision(dry_run: bool, json_out: bool):
+    """Idempotently create/share the Syncthing rail folders from peers.json.
+
+    Reads the running Syncthing config (via its REST API — credentials from
+    ``SKCOMMS_SYNCTHING_URL`` + ``SKCOMMS_SYNCTHING_APIKEY`` or the local
+    ``config.xml``), then adds any missing peer devices and creates/extends the
+    self Send-Only folder + per-peer Receive-Only folders. Re-running is a
+    no-op once the rail is in place.
+    """
+    from .syncthing_rail import SyncthingRest, SyncthingRestError, provision_rail
+
+    try:
+        rest = SyncthingRest.from_local()
+        result = provision_rail(rest, apply=not dry_run)
+    except SyncthingRestError as exc:
+        if json_out:
+            click.echo(json.dumps({"error": str(exc)}, indent=2))
+        else:
+            _print(f"\n  [red]Syncthing REST error:[/] {exc}\n")
+        raise SystemExit(1)
+
+    if json_out:
+        click.echo(json.dumps(result.as_dict(), indent=2))
+        return
+
+    verb = "Would provision" if dry_run else "Provisioned"
+    if result.unchanged:
+        _print("\n  [green]Rail already provisioned[/] — no changes needed.\n")
+    else:
+        _print(f"\n  [green]{verb}[/] the Syncthing rail:")
+        for d in result.added_devices:
+            _print(f"    [cyan]+device[/]  [dim]{d[:20]}...[/]")
+        for f in result.added_folders:
+            _print(f"    [cyan]+folder[/]  [dim]{f}[/]")
+        for s in result.shared:
+            _print(f"    [cyan]share[/]    [dim]{s}[/]")
+        _print("")
+    for mm in result.type_mismatches:
+        _print(f"  [yellow]! type mismatch (not auto-fixed):[/] {mm}")
+    if result.type_mismatches:
+        _print("")
+
+
+@rail_group.command("health")
+@click.option(
+    "--stale-hours",
+    default=None,
+    type=float,
+    help="Outbox unsynced-age alarm threshold in hours (default 6).",
+)
+@click.option("--json-out", is_flag=True, help="Output as JSON.")
+def rail_health(stale_hours: Optional[float], json_out: bool):
+    """Report OK/WARN/FAIL for the Syncthing rail's share-health.
+
+    Verifies the comms folder is present + shared with the expected peer
+    devices, those devices are connected, sync is up to date, no
+    ``*.sync-conflict-*`` files exist, and no outbox envelope is unsynced past
+    the stale threshold. Exit code 0 on OK/WARN, 1 on FAIL.
+    """
+    from .syncthing_rail import (
+        DEFAULT_STALE_OUTBOX_HOURS,
+        RailStatus,
+        SyncthingRest,
+        SyncthingRestError,
+        check_share_health,
+    )
+
+    try:
+        rest = SyncthingRest.from_local()
+    except SyncthingRestError as exc:
+        logger.debug("no Syncthing REST client (%s); filesystem checks only", exc)
+        rest = None
+
+    report = check_share_health(
+        rest=rest,
+        stale_outbox_hours=stale_hours if stale_hours is not None else DEFAULT_STALE_OUTBOX_HOURS,
+    )
+
+    if json_out:
+        click.echo(json.dumps(report.as_dict(), indent=2))
+    else:
+        color = {"OK": "green", "WARN": "yellow", "FAIL": "red"}[report.status.value]
+        _print(f"\n  Syncthing rail: [{color}]{report.summary()}[/]\n")
+        icons = {"OK": "[green]OK  [/]", "WARN": "[yellow]WARN[/]", "FAIL": "[red]FAIL[/]"}
+        for c in report.checks:
+            _print(f"    {icons[c.status.value]}  [bold]{c.name}[/] — {c.detail}")
+        _print("")
+
+    if report.status == RailStatus.FAIL:
+        raise SystemExit(1)
+
+
 @main.group("registry")
 def registry_group():
     """Realm peer registry — inspect the multi-backend peer resolver (T11).
