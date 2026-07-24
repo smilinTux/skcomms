@@ -6,9 +6,11 @@ could be replayed against the sk-access surface. These tests prove the fix,
 mirroring tests/test_nonce_durable.py for the federation inbox:
 
 * AccessServer is durable BY DEFAULT: its replay guard is a
-  :class:`skcomms.federation.DurableNonceCache` under
-  ``skcomms_home()/state/access_nonce_cache.db`` (its own file, separate
-  from the inbox cache, so the two surfaces do not share replay history).
+  :class:`skcomms.federation.DurableNonceCache` at the NODE-LOCAL
+  ``access_nonce_cache.db`` (``SKCOMMS_NONCE_CACHE_DIR`` >
+  ``$XDG_STATE_HOME/skcomms`` > ``~/.local/state/skcomms``; never inside the
+  Syncthing-shared skcomms home). Its own file, separate from the inbox
+  cache, so the two surfaces do not share replay history.
 * ``SKCOMMS_NONCE_CACHE=memory`` is the explicit opt-out;
   ``SKCOMMS_ACCESS_NONCE_DB`` overrides the path; an injected cache wins.
 * Fail closed: if the durable store cannot be opened, AccessServer
@@ -87,38 +89,51 @@ def _signed_token(keys, *, tool="health"):
 
 @pytest.fixture()
 def home(monkeypatch, tmp_path):
-    """Isolated skcomms home; no env overrides leak in."""
+    """Isolated skcomms home + node-local cache dir; no env overrides leak in."""
     h = tmp_path / "skcomms-home"
     monkeypatch.setenv("SKCOMMS_HOME", str(h))
+    monkeypatch.setenv("SKCOMMS_NONCE_CACHE_DIR", str(tmp_path / "local-state"))
     monkeypatch.delenv("SKCOMMS_NONCE_CACHE", raising=False)
     monkeypatch.delenv("SKCOMMS_ACCESS_NONCE_DB", raising=False)
     return h
+
+
+@pytest.fixture()
+def local_state(home, tmp_path):
+    """The node-local nonce-cache dir paired with the ``home`` fixture."""
+    return tmp_path / "local-state"
 
 
 # --- default wiring ----------------------------------------------------------
 
 
 class TestDefaultWiring:
-    def test_default_is_durable_under_home_state(self, home):
+    def test_default_is_durable_and_node_local(self, home, local_state):
         srv = _server()
         assert isinstance(srv.nonce_cache, DurableNonceCache)
-        assert srv.nonce_cache.path == home / "state" / "access_nonce_cache.db"
+        assert srv.nonce_cache.path == local_state / "access_nonce_cache.db"
         assert srv.nonce_cache.path.exists()
+        # NEVER inside the Syncthing-shared skcomms home tree.
+        assert home.resolve() not in srv.nonce_cache.path.resolve().parents
+        assert not (home / "state" / "access_nonce_cache.db").exists()
 
     def test_own_db_file_separate_from_inbox_cache(self, home):
         srv = _server()
         assert srv.nonce_cache.path.name != "nonce_cache.db"
 
     def test_state_dir_is_syncthing_ignored(self, home):
+        """Legacy healing: the synced home's .stignore still gains state/ so
+        any LEFTOVER legacy DB stops syncing until ops remove it."""
         _server()
         stignore = home / ".stignore"
         assert stignore.exists()
         assert "state/" in stignore.read_text()
 
-    def test_memory_opt_out_is_explicit(self, home, monkeypatch):
+    def test_memory_opt_out_is_explicit(self, home, local_state, monkeypatch):
         monkeypatch.setenv("SKCOMMS_NONCE_CACHE", "memory")
         srv = _server()
         assert isinstance(srv.nonce_cache, NonceCache)
+        assert not (local_state / "access_nonce_cache.db").exists()
         assert not (home / "state" / "access_nonce_cache.db").exists()
 
     def test_env_path_override(self, home, monkeypatch):
@@ -128,11 +143,28 @@ class TestDefaultWiring:
         assert isinstance(srv.nonce_cache, DurableNonceCache)
         assert srv.nonce_cache.path == override
 
-    def test_injected_cache_wins(self, home):
+    def test_dir_env_override_honored(self, home, monkeypatch, tmp_path):
+        pinned = tmp_path / "ops-pinned"
+        monkeypatch.setenv("SKCOMMS_NONCE_CACHE_DIR", str(pinned))
+        srv = _server()
+        assert srv.nonce_cache.path == pinned / "access_nonce_cache.db"
+
+    def test_injected_cache_wins(self, home, local_state):
         mem = NonceCache()
         srv = _server(nonce_cache=mem)
         assert srv.nonce_cache is mem
+        assert not (local_state / "access_nonce_cache.db").exists()
         assert not (home / "state" / "access_nonce_cache.db").exists()
+
+    def test_legacy_synced_db_migrated_once(self, home, local_state):
+        """Replay history from the old synced location carries over."""
+        legacy = DurableNonceCache(home / "state" / "access_nonce_cache.db")
+        assert legacy.check_and_add("lumina@chef.skworld", "n-legacy") is True
+        legacy.close()
+
+        srv = _server()
+        assert srv.nonce_cache.path == local_state / "access_nonce_cache.db"
+        assert srv.nonce_cache.check_and_add("lumina@chef.skworld", "n-legacy") is False
 
     def test_unopenable_store_fails_closed(self, home, monkeypatch):
         """No silent downgrade to in-memory when the durable store is broken."""

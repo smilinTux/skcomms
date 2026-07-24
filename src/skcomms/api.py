@@ -986,30 +986,31 @@ _MAX_INBOX_BYTES = 256 * 1024
 
 
 def _nonce_db_path() -> Path:
-    """Resolve the durable nonce-cache SQLite path.
+    """Resolve the durable nonce-cache SQLite path (NODE-LOCAL, never synced).
 
-    ``SKCOMMS_NONCE_DB`` (explicit file path) wins; otherwise the store lives
-    at ``skcomms_home()/state/nonce_cache.db``. The ``state/`` subtree is
-    per-node (Syncthing-ignored via .stignore): the replay cache must never
-    be shared between nodes through file sync (see SOP.md).
+    Precedence: ``SKCOMMS_NONCE_DB`` (explicit file path) wins, then the
+    ``SKCOMMS_NONCE_CACHE_DIR`` directory override, then the XDG state
+    default (``$XDG_STATE_HOME/skcomms/`` or ``~/.local/state/skcomms/``):
+    see :func:`skcomms.home.resolve_nonce_db`.
 
-    Because the default path sits inside the Syncthing-shared skcomms home,
-    this also heals a pre-existing ``.stignore`` that lacks the ``state/``
-    line (live fleets scaffolded before the durable cache existed). Without
-    that, a live WAL SQLite would sync between nodes: corruption risk plus
-    mixed per-node replay history. A failure to write ``.stignore`` raises,
-    and :func:`_get_nonce_cache` then fails closed.
+    The store used to live at ``skcomms_home()/state/nonce_cache.db``; on
+    live fleets that home is inside a Syncthing-shared tree, and when the
+    Syncthing folder is rooted ABOVE the home the home's own ``.stignore``
+    ``state/`` line has no effect, so two nodes synced one live WAL SQLite
+    (conflict copies observed on .158/.41). A replay guard is strictly
+    per-node state and now defaults outside any synced tree. A healthy
+    legacy DB is migrated once; otherwise a fresh cache starts, which is
+    safe because the replay window is bounded by the envelope freshness
+    check (see SOP.md).
     """
     import os as _os
 
     override = (_os.environ.get("SKCOMMS_NONCE_DB") or "").strip()
     if override:
         return Path(override).expanduser()
-    from .home import ensure_state_ignored, skcomms_home
+    from .home import resolve_nonce_db
 
-    home = skcomms_home()
-    ensure_state_ignored(home)
-    return home / "state" / "nonce_cache.db"
+    return resolve_nonce_db("nonce_cache.db")
 
 
 def _get_nonce_cache():

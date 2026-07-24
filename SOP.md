@@ -157,9 +157,19 @@ daemon after ANY exit and never rate-limits itself into a permanent `failed` sta
 the S2S rail always comes back without operator action. What each guard does across
 that restart:
 
-- **Nonce replay cache: durable.** `federation.DurableNonceCache` persists every
-  accepted `(from_fqid, nonce)` in SQLite at `skcomms_home()/state/nonce_cache.db`
-  (override the file with `SKCOMMS_NONCE_DB`). A restart therefore does NOT open a
+- **Nonce replay cache: durable AND node-local.** `federation.DurableNonceCache`
+  persists every accepted `(from_fqid, nonce)` in SQLite at the NODE-LOCAL
+  `~/.local/state/skcomms/nonce_cache.db` (`$XDG_STATE_HOME/skcomms/` when set;
+  directory override `SKCOMMS_NONCE_CACHE_DIR`, exact-file override
+  `SKCOMMS_NONCE_DB`; sk-access uses `access_nonce_cache.db` in the same dir with
+  `SKCOMMS_ACCESS_NONCE_DB` as its file override). The caches deliberately live
+  OUTSIDE `skcomms_home()`: that home sits in a Syncthing-shared tree, and when the
+  Syncthing folder is rooted above the home its `.stignore` `state/` line has no
+  effect, so two nodes ended up syncing one live WAL SQLite (conflict copies on
+  .158/.41). On first start after the move a healthy legacy DB at
+  `skcomms_home()/state/` is migrated once (SQLite backup API); a corrupt legacy
+  file is skipped with a warning and the cache starts fresh, which is safe because
+  the freshness window bounds replay exposure to ~5 minutes. A restart does NOT open a
   replay window on the Funnel-exposed inbox: an envelope accepted before the bounce is
   still rejected with 409 after it. Entries expire with the nonce TTL (freshness window
   + skew + margin, ~7 min), so the file stays bounded. Fail-closed: if the store cannot
@@ -179,13 +189,14 @@ that restart:
 - **Shared between nodes (via Syncthing / config):** the message tree
   (`<realm>/<operator>/<agent>/{inbox,outbox}`), peer records, TOFU pins, and
   `cluster.json` identity. This is the sovereignty layer; both nodes converge on it.
-- **Strictly per-node (NEVER synced):** `state/` (the nonce replay cache), `logs/`,
-  PID/lock files, and the rate limiter. The generated `.stignore` excludes `state/`,
-  and deploys initialized before this line shipped are healed automatically: both the
-  scaffold and the api's nonce-store path resolution append the `state/` ignore block
-  to a pre-existing `.stignore` that lacks it (idempotent; operator edits preserved),
-  so no hand-edit is needed on existing nodes. Syncing a live SQLite DB corrupts it,
-  and replay history is a property of the receiving socket, not of the identity.
+- **Strictly per-node (NEVER synced):** the nonce replay caches (now at
+  `~/.local/state/skcomms/`, outside the synced tree entirely), `logs/`, PID/lock
+  files, and the rate limiter. The generated `.stignore` still excludes `state/`
+  (both the scaffold and the nonce-path resolution keep appending the block to a
+  pre-existing `.stignore` that lacks it) so any LEFTOVER legacy `state/` DB stops
+  syncing until ops remove it, but the active caches no longer live there. Syncing
+  a live SQLite DB corrupts it, and replay history is a property of the receiving
+  socket, not of the identity.
 - **Consequence:** each node rejects replays it has itself accepted, across its own
   restarts. Two nodes serving the SAME public inbox URL concurrently would each accept
   one copy of the same envelope (per-node caches). Today's ingress tier (single
