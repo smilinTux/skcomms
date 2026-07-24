@@ -3,6 +3,18 @@
 ## [Unreleased]
 
 ### Fixed
+- **Broadcast heartbeats no longer persisted to the durable outbox.**
+  `FileTransport.send()` wrote EVERY envelope, including `to_fqid="*"` broadcast
+  presence heartbeats, to the flat durable outbox
+  (`~/.skcapstone/agents/<agent>/comms/outbox/<id>.skc.json`), capped at 1000 and
+  oldest-evicted. A `*` broadcast has no single recipient inbox on the file rail,
+  so ~1 ping/min/agent piled up undeliverable and churned; across agents ~3000
+  files, which bloated Syncthing (2.4GB index, high CPU, 2.1GB RSS on the
+  operator laptop). Now a `recipient == "*"` send is fire-and-forget
+  (`success=True`, `queued=False`, no disk write) since presence is already
+  published to `sync/heartbeats/<node>.json`; directed messages still persist
+  durably. Was the last un-fixed broadcast writer (the PersistentOutbox hold and
+  the SyncthingTransport `*` rejection were already fixed).
 - **Nonce replay caches are now NODE-LOCAL, outside the Syncthing tree.**
   `nonce_cache.db` (federation inbox) and `access_nonce_cache.db` (sk-access)
   used to default under `skcomms_home()/state/`; on live fleets that home is
