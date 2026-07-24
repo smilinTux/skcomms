@@ -41,7 +41,7 @@ compromised relay / sync peer could keep the pinned pubkey but tamper the
 peer's federation traffic to an attacker-controlled endpoint. To close that,
 each record is **CapAuth-signed by its origin**: :func:`sign_record` covers the
 canonical record bytes (everything except the signature fields) with the agent's
-CapAuth key — the SAME proven signer/verifier the envelope and realm-directory
+CapAuth key - the SAME proven signer/verifier the envelope and realm-directory
 paths use (:meth:`skcomms.signing.EnvelopeSigner.sign_bytes`), no new crypto. On
 ingest, :func:`record_to_peer` verifies that signature against the record's
 (TOFU-pinned) pubkey and **rejects fail-closed** when a present signature does
@@ -111,7 +111,7 @@ def sign_record(record: dict, signer) -> dict:
     """Return a copy of *record* CapAuth-signed over its canonical bytes.
 
     Reuses the SAME proven CapAuth signer the envelope + realm-directory paths
-    use (:meth:`skcomms.signing.EnvelopeSigner.sign_bytes`) — no new crypto. The
+    use (:meth:`skcomms.signing.EnvelopeSigner.sign_bytes`) - no new crypto. The
     returned dict carries ``sig`` (armored PGP detached signature) and ``sig_fp``
     (the signer's fingerprint). Idempotent: any existing signature fields are
     dropped and recomputed from the current payload.
@@ -133,17 +133,17 @@ def verify_record_signature(record: dict) -> Optional[bool]:
     """Verify a directory record's CapAuth signature against its embedded pubkey.
 
     The signature binds ``inbox_url`` / ``rails`` / ``node`` (and every other
-    field) to the CapAuth key the record advertises — the same key TOFU pins for
+    field) to the CapAuth key the record advertises - the same key TOFU pins for
     the fqid. So once a fqid is pinned, only the holder of that private key can
     publish a record that verifies; a relay/sync-peer that keeps the pinned
     pubkey but tampers the ``inbox_url`` produces a signature that no longer
     verifies.
 
     Returns:
-        ``True``  — a present signature validly covers the record.
-        ``False`` — a signature is present but does NOT verify (tampered or
+        ``True``  - a present signature validly covers the record.
+        ``False`` - a signature is present but does NOT verify (tampered or
             wrong key). The caller MUST reject the record.
-        ``None``  — the record carries no signature (legacy-unsigned); the
+        ``None``  - the record carries no signature (legacy-unsigned); the
             caller applies its compat policy (see :func:`_require_signed`).
     """
     sig = record.get(_SIG_FIELD)
@@ -357,7 +357,7 @@ def record_to_peer(record: dict) -> Optional[PeerInfo]:
 
     # Signed-directory replication gate (fail-closed). A present CapAuth
     # signature that does NOT verify means the record was tampered with in
-    # transit or by a compromised sync peer / relay — reject it. An absent
+    # transit or by a compromised sync peer / relay - reject it. An absent
     # signature is legacy-unsigned: accepted unless strict mode requires one.
     sig_ok = verify_record_signature(record)
     if sig_ok is False:
@@ -615,8 +615,8 @@ def build_self_record(
             :func:`skcomms.mailbox._load_signer` (best-effort).
 
     Returns:
-        A directory record dict — CapAuth-signed (``sig`` / ``sig_fp``) when the
-        agent's private key and public key are both available — or ``None`` if no
+        A directory record dict - CapAuth-signed (``sig`` / ``sig_fp``) when the
+        agent's private key and public key are both available - or ``None`` if no
         fqid can be resolved (nothing to announce). Signing is best-effort: when
         no private key is available the record is published unsigned (legacy
         compat); consumers still accept it unless strict mode is enabled.

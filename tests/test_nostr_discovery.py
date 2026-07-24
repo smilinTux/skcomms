@@ -426,7 +426,7 @@ def _boom_client():
 
 
 # ---------------------------------------------------------------------------
-# Signed directory replication (card 541a338c) — CapAuth-signed, tamper-evident
+# Signed directory replication (card 541a338c) - CapAuth-signed, tamper-evident
 # ---------------------------------------------------------------------------
 
 
@@ -480,7 +480,7 @@ class TestSignedReplication:
         assert record_to_peer(tampered) is None  # fail-closed reject
 
     def test_tampered_record_rejected_end_to_end(self, home, keypair_a):
-        """Tamper the published event content — resolve must yield nothing."""
+        """Tamper the published event content - resolve must yield nothing."""
         from skcomms.nostr_discovery import build_directory_event
 
         priv, pub = keypair_a
