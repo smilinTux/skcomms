@@ -3,6 +3,26 @@
 ## [Unreleased]
 
 ### Fixed
+- **https-s2s 422 wire-format mismatch fixed at the source (sign-at-send).**
+  `SKComms.send` now wraps every outbound message into the canonical signed
+  **Envelope v1** wire format (Envelope v1 header map + detached CapAuth
+  signature) at send time - the ONE format the federation receive gate parses
+  (`POST /api/v1/inbox` hard-requires it and 422s anything else). As defense in
+  depth the `http_s2s` transport classifies the payload and REFUSES a non-signed
+  body locally as a permanent (`perm:`) failure WITHOUT making the HTTP round
+  trip, so a legacy-envelope leak can never re-create a 422 round-trip storm on
+  the S2S rail. Previously a legacy-shaped envelope reached the peer and was
+  bounced 422 on the wire, burning retries.
+- **`default_outbox_dir()` aligned with the per-agent daemon home
+  (orphaned-outbox misroute).** The helper returned the fixed node path
+  `~/.skcapstone/skcomms/outbox` while a default-constructed `PersistentOutbox()`
+  resolved per-agent through `paths.retry_outbox_dir()`. With `SKAGENT` set, a
+  caller that located "the outbox" via the helper read a DIFFERENT tree than the
+  daemon actually drained, so anything it enqueued (or drained) missed the live
+  queue and spooled into a home nothing services. `default_outbox_dir()` now
+  delegates to `paths.retry_outbox_dir()` so the two can never name different
+  directories (coord f07cf2de). Recover a pre-fix backlog with
+  `scripts/drain_orphan_outbox.py`.
 - **Broadcast heartbeats no longer persisted to the durable outbox.**
   `FileTransport.send()` wrote EVERY envelope, including `to_fqid="*"` broadcast
   presence heartbeats, to the flat durable outbox
@@ -29,7 +49,42 @@
   envelope freshness window). The legacy `.stignore` healing stays so any
   leftover `state/` DB stops syncing until ops delete it.
 
+### Security
+- **Nonce replay caches are no longer shared across nodes via Syncthing.** Both
+  replay-guard SQLite stores (`nonce_cache.db` for the federation inbox,
+  `access_nonce_cache.db` for sk-access) now resolve to the node-local
+  `~/.local/state/skcomms/` (see the Fixed entry above), fully OUTSIDE the
+  Syncthing-shared `skcomms_home()` tree. Sharing one live WAL SQLite between
+  two nodes risked database corruption (conflict copies were observed on
+  .158/.41) and could defeat the durable-replay guarantee. The replay guard is a
+  property of the receiving socket, not of the shared identity, so it belongs
+  per-node. Residual replay exposure across a corrupt-DB fresh-start is bounded
+  by the ~5 min envelope freshness window.
+
 ### Added
+- **Daemon-integrated outbox pruning + archive retention** (`skcomms.housekeeping`):
+  the API daemon now runs a periodic housekeeping pass from `api.lifespan`
+  (`housekeeping_loop`, default every 3600s) that sweeps the append-only
+  file rails - sender outboxes (`{id}.skc.json`, 48h default), receiver
+  `archive/` dirs (168h), mailbox outbox records (168h), and the persistent
+  outbox's `dead/` + `archive/` (30-day TTL + 5000-entry cap). Retention is
+  configured in the `housekeeping:` block (`config.HousekeepingConfig`).
+  A left-unswept 140k-file outbox once pegged Syncthing and froze a fleet
+  laptop; this bounds AGE the same way the send-time depth caps bound COUNT.
+- **`skcomms housekeep` CLI verb** (`cli.py`): runs one full housekeeping pass
+  on demand (outbox prune + archive TTL + mailbox retention + dead-letter and
+  outbox-archive retention) and exits, suitable for a systemd timer or cron as
+  belt-and-braces on hosts where the daemon is not always up. Per-run overrides
+  `--outbox-max-age-hours` / `--archive-ttl-hours` / `--mailbox-ttl-hours` /
+  `--dead-ttl-hours` / `--dead-max-count`; `--json-out` prints machine-readable
+  counts.
+- **`scripts/drain_orphan_outbox.py`** (coord f07cf2de): a safe recovery tool
+  for a stranded outbox (historically the bare pre-scaffold `~/.skcomms/outbox`
+  that nothing drains). READ-ONLY by default and it NEVER deletes: every action
+  is a filesystem *move*, so no message is lost. Live envelopes (age <= TTL) are
+  moved into the ACTIVE outbox the daemon drains; TTL-expired or corrupt ones are
+  moved to an archive dir (kept for inspection). Idempotent (`skip-exists` on a
+  name collision); dry-run prints exactly what `--apply` would do.
 - **Durable nonce replay cache** (coord 11e295a3): `federation.DurableNonceCache`,
   a SQLite-backed drop-in for the in-memory `NonceCache`. The S2S inbox replay
   guard now survives daemon restarts (no replay window on the Funnel-exposed

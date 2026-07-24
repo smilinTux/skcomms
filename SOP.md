@@ -146,6 +146,29 @@ it is scoped tight:
   likewise need none by default. Add an origin ONLY for a specific first-party web client
   you intend to let script the API from a browser, and only for the host that serves it.
 
+### Federation wire format (sign-at-send)
+
+The federation S2S rail speaks exactly ONE wire format: the canonical **signed
+Envelope v1** (Envelope v1 header map + detached CapAuth signature).
+`POST /api/v1/inbox` hard-requires it and returns **422** for anything else.
+
+- **Sign at send.** `SKComms.send` builds the local `MessageEnvelope` (routing,
+  ACK, payload metadata as before) and then wraps it into the signed Envelope v1
+  at send time (`core.py`, the `_sign_message_envelope` seam): payload content
+  becomes the body, local-model metadata rides in the `x-skcomms-*` header map,
+  and the Envelope v1 `id` is the legacy `envelope_id` so ACK correlation is
+  preserved. This is the fix for the historical 422s where a legacy-shaped
+  envelope reached a peer and was bounced on the wire, burning retries.
+- **Refuse non-signed locally (no round trip).** The `http_s2s` transport
+  (`Content-Type: application/skcomms-signed-envelope+json`) classifies the
+  outbound payload and, if it is not `signed`, fails it as a permanent (`perm:`)
+  error WITHOUT making the HTTP call (`transports/http_s2s.py`). A legacy-envelope
+  leak therefore can never re-create a 422 round-trip storm on this rail; the
+  dead-letter `Last error` shows the local refusal, not a network 422.
+- **Diagnosing a residual 422:** if a peer still 422s a genuinely-signed payload,
+  the mismatch is at the *peer's* gate (version skew on the Envelope v1 schema),
+  not this node. Confirm both ends run a build with the sign-at-send seam.
+
 ### Crash recovery and the second-node story
 
 "If you need one, get two" applied at the daemon level: what survives a crash, what a
@@ -273,6 +296,8 @@ capabilities `GET /api/v1/capabilities`; federation routes per §5. CLI:
 | CoT/TAK client can't connect | `cot_service.py` bound to tailnet iface; confirm ATAK/iTAK points at the tailscale IP, not the Funnel host |
 | Outbox / archive growing unbounded, Syncthing pegged | daemon housekeeping loop running? (`housekeeping.enabled`, `api.lifespan` log line "Housekeeping loop started"); run `skcomms housekeep --json-out` for an immediate sweep; see §6 retention table |
 | `dead_letter_growth` alert fired / `skcomms_dead_letter_depth` climbing | run the dead-letter triage runbook below |
+| Sends "succeed" but the peer never receives; a stranded outbox is filling | envelopes spooled into a home nothing drains (pre-fix `default_outbox_dir()` misroute, or the bare `~/.skcomms/outbox`); run the orphaned-outbox drain runbook below |
+| Peer 422s a genuinely-signed payload | peer-side Envelope v1 schema skew, not this node; confirm both ends run a build with the sign-at-send seam (§5 Federation wire format) |
 
 ### Dead-letter triage runbook
 
@@ -310,6 +335,34 @@ Retention (section 6) bounds `dead/` and the outbox `archive/` automatically
 (30-day TTL + 5000-entry cap by default), so an unattended outage cannot grow
 them forever; anything you want to keep longer than the TTL must be triaged
 before it ages out.
+
+### Orphaned-outbox drain runbook
+
+A send path can spool signed+encrypted envelopes into a home that NOTHING
+drains. Historically this was the bare pre-scaffold `~/.skcomms/outbox`, or the
+`default_outbox_dir()` misroute (coord f07cf2de): the helper named the fixed node
+path while the live daemon drained a per-agent tree, so with `SKAGENT` set a
+caller enqueued into the wrong directory. The alignment fix stops NEW misroutes;
+`scripts/drain_orphan_outbox.py` recovers a backlog that already stranded.
+
+The tool is READ-ONLY by default and NEVER deletes - every action is a filesystem
+*move*, so no message is lost:
+
+1. **Preview (dry run, default).** `python scripts/drain_orphan_outbox.py`
+   prints the resolved SOURCE / ACTIVE-OUTBOX / ARCHIVE paths and exactly what
+   `--apply` would do. Point at a specific stranded dir with
+   `--source ~/.skcomms/outbox`. Confirm the paths before applying.
+2. **Pin the agent.** `SKAGENT` selects the active per-agent outbox exactly as
+   the daemon resolves it. Set it explicitly (`SKAGENT=lumina`) so the live drain
+   lands where the daemon actually reads.
+3. **Apply.** `SKAGENT=lumina python scripts/drain_orphan_outbox.py --apply`.
+   Per envelope: still live (age <= TTL, default 24h) -> MOVE to the active
+   outbox for real delivery; TTL-expired or unparseable -> MOVE to the archive
+   dir (kept, not deleted). Fully explicit form for a one-off recovery:
+   `--source ... --dest-outbox ~/.skcapstone/skcomms/outbox --archive-dir ...`.
+4. **Re-run safely.** Idempotent: a name already present at the destination is
+   left in place and reported `skip-exists`; re-running never double-moves.
+   Exit status is 0 on a clean pass, 1 if any envelope could not be moved.
 
 ## 9. Maturity-tier + Version reference
 
