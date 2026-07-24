@@ -47,6 +47,39 @@ def _gen_pubkey() -> str:
     return str(key.pubkey)
 
 
+def _gen_keypair() -> tuple[str, str]:
+    """Generate an armored (private, public) signing keypair for signed-record tests."""
+    import pgpy
+    from pgpy.constants import (
+        CompressionAlgorithm,
+        HashAlgorithm,
+        KeyFlags,
+        PubKeyAlgorithm,
+        SymmetricKeyAlgorithm,
+    )
+
+    key = pgpy.PGPKey.new(PubKeyAlgorithm.RSAEncryptOrSign, 1024)
+    uid = pgpy.PGPUID.new("skfed-signed-test")
+    key.add_uid(
+        uid,
+        usage={KeyFlags.Sign},
+        hashes=[HashAlgorithm.SHA256],
+        ciphers=[SymmetricKeyAlgorithm.AES256],
+        compression=[CompressionAlgorithm.ZLIB],
+    )
+    return str(key), str(key.pubkey)
+
+
+@pytest.fixture(scope="module")
+def keypair_a() -> tuple[str, str]:
+    return _gen_keypair()
+
+
+@pytest.fixture(scope="module")
+def keypair_b() -> tuple[str, str]:
+    return _gen_keypair()
+
+
 @pytest.fixture(scope="module")
 def pubkey_a() -> str:
     return _gen_pubkey()
@@ -390,3 +423,158 @@ class _Boom:
 
 def _boom_client():
     return _Boom()
+
+
+# ---------------------------------------------------------------------------
+# Signed directory replication (card 541a338c) — CapAuth-signed, tamper-evident
+# ---------------------------------------------------------------------------
+
+
+def _signed_record(priv: str, pub: str, fqid="lumina@chef.skworld", node="noroc2027", ts=1_750_000_000):
+    """Build a CapAuth-signed directory record for *fqid* using armored *priv*/*pub*."""
+    from skcomms.nostr_discovery import sign_record
+    from skcomms.signing import EnvelopeSigner
+
+    rec = {
+        "fqid": fqid,
+        "node": node,
+        "inbox_url": f"https://{node}/api/v1/inbox",
+        "pubkey": pub,
+        "rails": ["https-s2s", "syncthing", "nostr"],
+        "ts": ts,
+    }
+    return sign_record(rec, EnvelopeSigner(priv))
+
+
+class TestSignedReplication:
+    def test_signed_record_roundtrips_and_verifies(self, home, keypair_a):
+        """A signed record verifies, survives a relay round-trip, and upserts."""
+        from skcomms.nostr_discovery import verify_record_signature
+
+        priv, pub = keypair_a
+        rec = _signed_record(priv, pub)
+        assert rec.get("sig")
+        assert rec.get("sig_fp")
+        assert verify_record_signature(rec) is True
+
+        relay = FakeRelay()
+        client = _client(relay)
+        assert client.publish_directory(rec)
+        peer = client.resolve_peer("lumina@chef.skworld")
+        assert peer is not None
+        assert peer.inbox_url() == "https://noroc2027/api/v1/inbox"
+        assert peer.pubkey == pub
+
+    def test_tampered_signed_record_rejected(self, home, keypair_a):
+        """A signed record whose inbox_url is tampered (relay/sync-peer) is rejected."""
+        from skcomms.nostr_discovery import record_to_peer, verify_record_signature
+
+        priv, pub = keypair_a
+        rec = _signed_record(priv, pub)
+        # A compromised relay keeps the pinned pubkey + signature but swaps the
+        # inbox_url to an attacker endpoint.
+        tampered = dict(rec)
+        tampered["inbox_url"] = "https://evil.example/api/v1/inbox"
+
+        assert verify_record_signature(tampered) is False
+        assert record_to_peer(tampered) is None  # fail-closed reject
+
+    def test_tampered_record_rejected_end_to_end(self, home, keypair_a):
+        """Tamper the published event content — resolve must yield nothing."""
+        from skcomms.nostr_discovery import build_directory_event
+
+        priv, pub = keypair_a
+        rec = _signed_record(priv, pub)
+        ev = build_directory_event(rec)
+        # Rewrite the event's JSON content to point inbox_url at an attacker.
+        import json as _json
+
+        content = _json.loads(ev["content"])
+        content["inbox_url"] = "https://evil.example/api/v1/inbox"
+        ev["content"] = _json.dumps(content, separators=(",", ":"), sort_keys=True)
+
+        relay = FakeRelay()
+        relay.events.append(ev)
+        client = _client(relay)
+        assert client.resolve_peer("lumina@chef.skworld") is None
+
+    def test_wrong_key_signature_rejected(self, home, keypair_a, keypair_b):
+        """A record signed by key B but advertising key A's pubkey is rejected."""
+        from skcomms.nostr_discovery import (
+            record_signing_bytes,
+            record_to_peer,
+            verify_record_signature,
+            _SIG_FIELD,
+            _SIG_FP_FIELD,
+        )
+        from skcomms.signing import EnvelopeSigner
+
+        priv_a, pub_a = keypair_a
+        priv_b, _pub_b = keypair_b
+
+        rec = {
+            "fqid": "lumina@chef.skworld",
+            "node": "noroc2027",
+            "inbox_url": "https://noroc2027/api/v1/inbox",
+            "pubkey": pub_a,  # advertises A's key ...
+            "rails": ["https-s2s"],
+            "ts": 1_750_000_000,
+        }
+        signer_b = EnvelopeSigner(priv_b)  # ... but signs with B's private key
+        rec[_SIG_FP_FIELD] = signer_b.fingerprint
+        rec[_SIG_FIELD] = signer_b.sign_bytes(record_signing_bytes(rec))
+
+        assert verify_record_signature(rec) is False
+        assert record_to_peer(rec) is None
+
+    def test_missing_pubkey_with_sig_rejected(self, home, keypair_a):
+        """A signature with no pubkey to check against is unverifiable → reject."""
+        from skcomms.nostr_discovery import record_to_peer, verify_record_signature
+
+        priv, pub = keypair_a
+        rec = _signed_record(priv, pub)
+        rec.pop("pubkey", None)
+        assert verify_record_signature(rec) is False
+        assert record_to_peer(rec) is None
+
+    def test_unsigned_accepted_by_default(self, home, pubkey_a):
+        """Legacy-unsigned records still resolve when strict mode is off (default)."""
+        from skcomms.nostr_discovery import verify_record_signature
+
+        rec = _record("lumina@chef.skworld", "noroc2027", pubkey_a)
+        assert verify_record_signature(rec) is None  # no signature present
+        relay = FakeRelay()
+        client = _client(relay)
+        client.publish_directory(rec)
+        assert client.resolve_peer("lumina@chef.skworld") is not None
+
+    def test_unsigned_rejected_in_strict_mode(self, home, monkeypatch, keypair_a):
+        """Strict mode rejects unsigned records but still accepts signed ones."""
+        from skcomms.nostr_discovery import STRICT_SIGNED_ENV, record_to_peer
+
+        monkeypatch.setenv(STRICT_SIGNED_ENV, "1")
+
+        unsigned = _record("ghost@chef.skworld", "noroc2027", _gen_pubkey())
+        assert record_to_peer(unsigned) is None  # unsigned → rejected under strict
+
+        priv, pub = keypair_a
+        signed = _signed_record(priv, pub)
+        assert record_to_peer(signed) is not None  # signed still accepted
+
+    def test_build_self_record_is_signed(self, home, monkeypatch, keypair_a):
+        """build_self_record CapAuth-signs the record it publishes."""
+        import skcomms.nostr_discovery as nd
+        from skcomms.signing import EnvelopeSigner
+
+        priv, pub = keypair_a
+        monkeypatch.setattr(
+            nd, "resolve_self_identity",
+            lambda *a, **k: {"fqid": "lumina@chef.skworld", "agent": "lumina"},
+        )
+        monkeypatch.setattr(nd, "_self_capauth_pubkey", lambda agent: pub)
+
+        rec = nd.build_self_record(inbox_url="https://noroc2027/api/v1/inbox",
+                                   signer=EnvelopeSigner(priv))
+        assert rec is not None
+        assert rec.get("sig")
+        assert nd.verify_record_signature(rec) is True
