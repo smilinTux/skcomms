@@ -3204,6 +3204,31 @@ def pair_accept(source):
     res = accept_pairing(source)
     click.echo(f"paired with {res['fqid']} (fingerprint {res['fingerprint']})")
 
+
+@pair_group.command("public-url")
+@click.option("--base", default=None,
+              help="Funnel base URL (default: $SKCOMMS_FUNNEL_URL or a read-only tailscale funnel probe).")
+@click.option("--mint-token", is_flag=True, help="Mint a fresh bearer token and include it in the URL.")
+def pair_public_url(base, mint_token):
+    """Mint the public Funnel pairing URL a peer POSTs their bundle to.
+
+    Prints nothing and exits non-zero when no Funnel base is configured (public
+    pairing is off by default). The URL is where an off-tailnet peer bootstraps
+    a P2P pairing; the returned bundle still goes through the normal
+    key-exchange verification.
+    """
+    from .public_pairing import configured_token, mint_pairing_token, mint_pairing_url
+    token = mint_pairing_token() if mint_token else configured_token()
+    url = mint_pairing_url(base, token=token)
+    if not url:
+        raise click.ClickException(
+            "public pairing is off: set SKCOMMS_FUNNEL_URL (or expose a tailscale funnel) first"
+        )
+    click.echo(url)
+    if mint_token:
+        click.echo(f"token: {token}  (set SKCOMMS_FUNNEL_PAIR_TOKEN={token} on this node to require it)")
+
+
 @main.command(name="pqc-report")
 @click.option("--format", "output_format", default="text",
               type=click.Choice(["text", "json"]))
