@@ -1353,6 +1353,80 @@ async def post_inbox(request: Request):
 
 
 # ---------------------------------------------------------------------------
+# Public P2P pairing over Tailscale Funnel (card 2ab5aa6c): PUBLIC, opt-in
+# ---------------------------------------------------------------------------
+#
+# Off-tailnet peers cannot reach the tailnet-only mesh, so this route lets a
+# peer POST their peer bundle to the node's Funnel-exposed pairing endpoint and
+# bootstrap a P2P pairing. It is the inbound half of ``skcomms.public_pairing``:
+# the request is routed straight into the EXISTING key exchange
+# (``import_peer_bundle``), which does all the crypto (armor validation +
+# fingerprint derivation). The public Funnel is only the bootstrap channel.
+#
+# Disabled by default: with no ``SKCOMMS_FUNNEL_URL`` configured the route 404s,
+# exactly as if it did not exist. When a ``SKCOMMS_FUNNEL_PAIR_TOKEN`` is set,
+# an inbound request must present a matching token or it is rejected 401.
+
+_MAX_PAIR_BYTES = 256 * 1024
+
+
+@app.post("/api/v1/pair/public", tags=["pairing"])
+async def post_public_pairing(request: Request):
+    """Accept an off-tailnet peer's public pairing request over the Funnel.
+
+    Reads a ``{"bundle": {...}, "token": "..."}`` body, routes it into the
+    existing key exchange, and returns this node's own bundle for mutual
+    bootstrap. 404 when public pairing is not configured (feature off).
+
+    Raises:
+        HTTPException: 404 (feature off), 401 (bad/missing token), 422
+            (missing/malformed bundle), 413 (too large).
+    """
+    from .key_exchange import KeyExchangeError
+    from .public_pairing import (
+        PublicPairingError,
+        PublicPairingRequest,
+        configured_token,
+        funnel_enabled,
+        handle_public_pairing_request,
+    )
+
+    # Disabled by default: no Funnel base configured -> the route does not exist.
+    if not funnel_enabled():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+
+    raw = await request.body()
+    if len(raw) > _MAX_PAIR_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"pairing request exceeds {_MAX_PAIR_BYTES} bytes",
+        )
+
+    import json as _json
+
+    try:
+        body = _json.loads(raw or b"{}")
+        req = PublicPairingRequest(**body)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"unparseable pairing request: {exc}",
+        ) from exc
+
+    try:
+        result = handle_public_pairing_request(req, expected_token=configured_token())
+    except PublicPairingError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+    except KeyExchangeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+    logger.info("public pairing accepted from %s", (result.get("paired") or {}).get("fqid"))
+    return {"ok": True, **result}
+
+
+# ---------------------------------------------------------------------------
 # Operator consent surface (skfed-consent-design gate 5) — LOCAL ONLY
 # ---------------------------------------------------------------------------
 #
