@@ -266,7 +266,14 @@ def _load_recipient_key(to_fqid: str) -> Optional[str]:
     """
     if "@" in to_fqid:
         agent, suffix = to_fqid.split("@", 1)
-        same_box = suffix == f"{get_operator()}.{get_realm()}"
+        # Match on the OPERATOR component only, not the exact operator.realm
+        # string. The threat model is a cross-operator agent-name collision
+        # (lumina@stranger.otherrealm on a box with local lumina), which the
+        # operator prefix still rejects. A realm rename (skworld -> skworld.io)
+        # must NOT strand a local agent's own key, which the exact-string
+        # compare did (see the calling-backend design doc).
+        operator_component = suffix.split(".", 1)[0]
+        same_box = operator_component == get_operator()
     else:
         agent = to_fqid
         same_box = True
@@ -288,6 +295,10 @@ def _load_recipient_key(to_fqid: str) -> Optional[str]:
     for path in candidates:
         if path.exists():
             return path.read_text(encoding="utf-8")
+    logger.debug(
+        "no recipient key for %s (same_box=%s, tried %d candidates)",
+        to_fqid, same_box, len(candidates),
+    )
     return None
 
 
