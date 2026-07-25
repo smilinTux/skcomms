@@ -15,8 +15,8 @@ The detached PGP signature covers the UTF-8 string::
 A ±300-second window is accepted to tolerate clock skew while preventing
 replay attacks. The signer's public key is resolved from:
 
-1. ``~/.skcapstone/skcomms/keys/<FINGERPRINT>.asc`` — SKComms per-agent keystore
-2. ``gpg --export --armor <FINGERPRINT>`` — system GPG keyring
+1. ``~/.skcapstone/skcomms/keys/<FINGERPRINT>.asc`` - SKComms per-agent keystore
+2. ``gpg --export --armor <FINGERPRINT>`` - system GPG keyring
 
 **Remote validation** is available by setting ``capauth_url`` to a
 CapAuth API base URL. Remote is tried first; on unreachable server the
@@ -77,7 +77,7 @@ def _find_pubkey_by_fingerprint(
         for path in glob.glob(pattern, recursive=True):
             try:
                 key, _ = pgpy.PGPKey.from_file(path)
-            except Exception:  # noqa: BLE001 — skip unreadable/non-key files
+            except Exception:  # noqa: BLE001 - skip unreadable/non-key files
                 continue
             if str(key.fingerprint).replace(" ", "").upper() == want:
                 return str(key)
@@ -87,6 +87,78 @@ logger = logging.getLogger("skcomms.capauth_validator")
 
 # PGP fingerprint: 40 hex characters
 _FINGERPRINT_RE = re.compile(r"^[0-9A-Fa-f]{40}$")
+
+
+def _reject_reason_if_key_unusable(pub_key, signer_keyids) -> Optional[str]:
+    """Return a reason string if the signing key is revoked or expired, else None.
+
+    SECURITY: pgpy's own ``PGPKey.verify()`` performs NEITHER revocation NOR
+    expiry checks (its source literally warns "Revocation checks are not yet
+    implemented"), so a signature made by a revoked or expired key verifies as
+    valid. That let a revoked/expired CapAuth signing key keep authenticating on
+    the WebRTC signaling / SDP auth path (card 6abe9bef).
+
+    This routes the usability decision through capauth's single source of truth,
+    ``capauth.crypto.pgpy_backend._assert_key_usable`` (the same helper the
+    capauth backend uses, card a93b0528). When that helper cannot be imported we
+    fall back to an inline check that mirrors it, so skcomms stays fail-closed
+    and never authenticates a revoked/expired signing key even if capauth's
+    internal layout changes.
+
+    Args:
+        pub_key: Parsed pgpy public key (primary, with subkeys).
+        signer_keyids: Set of 16-hex key IDs that produced the signature being
+            verified. Scopes subkey checks to the actual signer.
+
+    Returns:
+        A human-readable reason string when the key must be rejected, or None
+        when the key is usable.
+    """
+    try:
+        from capauth.crypto.pgpy_backend import _assert_key_usable
+        from capauth.exceptions import KeyExpiredError, KeyRevokedError
+    except Exception:  # noqa: BLE001 - capauth helper unavailable, use fallback
+        _assert_key_usable = None
+
+    if _assert_key_usable is not None:
+        try:
+            _assert_key_usable(pub_key, signer_keyids)
+            return None
+        except (KeyRevokedError, KeyExpiredError) as exc:
+            return str(exc)
+        except Exception as exc:  # noqa: BLE001 - unexpected: fail closed
+            return f"key usability check errored: {exc}"
+
+    # Inline fallback mirroring capauth.crypto.pgpy_backend._assert_key_usable.
+    try:
+        fingerprint = str(pub_key.fingerprint).replace(" ", "")
+        for _rev in pub_key.revocation_signatures:
+            return f"key {fingerprint} carries a revocation signature"
+        if pub_key.is_expired:
+            return f"key {fingerprint} is expired"
+        for keyid, subkey in pub_key.subkeys.items():
+            if signer_keyids and keyid not in signer_keyids:
+                continue
+            for _rev in subkey.revocation_signatures:
+                return f"signing subkey {keyid} of key {fingerprint} carries a revocation signature"
+            if signer_keyids and keyid in signer_keyids and subkey.is_expired:
+                return f"signing subkey {keyid} of key {fingerprint} is expired"
+    except Exception as exc:  # noqa: BLE001 - cannot determine usability: fail closed
+        return f"could not verify key usability: {exc}"
+    return None
+
+
+def _signer_keyids(sig) -> set:
+    """Best-effort set of 16-hex signer key IDs from a pgpy signature object.
+
+    Returns an empty set when the signer cannot be read; an empty set makes the
+    revocation/expiry check apply to the primary key and every subkey (the
+    broadest, safest scope).
+    """
+    try:
+        return {sig.signer}
+    except Exception:  # noqa: BLE001
+        return set()
 
 # Replay-prevention window: tokens older than this (or future-dated beyond
 # this) are rejected.
@@ -152,7 +224,7 @@ class CapAuthValidator:
         """
         if not token:
             if self._require_auth:
-                logger.warning("WebRTC signaling: no auth token — rejecting connection")
+                logger.warning("WebRTC signaling: no auth token - rejecting connection")
                 return None
             return "anonymous"
 
@@ -233,13 +305,13 @@ class CapAuthValidator:
         # Require exactly 3 parts for signed tokens.                          #
         # ------------------------------------------------------------------ #
         # SECURITY (fail-closed): a token that *looks* signed (>1 part) but is
-        # missing its signature CANNOT be verified. Deny it in every mode —
-        # even permissive — so a peer can never be upgraded to a claimed
+        # missing its signature CANNOT be verified. Deny it in every mode -
+        # even permissive - so a peer can never be upgraded to a claimed
         # identity it did not prove. The only permissive convenience is the
         # explicit single-part dev token handled above.
         if len(parts) != 3:
             logger.warning(
-                "CapAuth local: expected fingerprint.timestamp.sig, got %d parts — rejecting",
+                "CapAuth local: expected fingerprint.timestamp.sig, got %d parts - rejecting",
                 len(parts),
             )
             return None
@@ -279,11 +351,21 @@ class CapAuthValidator:
             pub_key = self._load_public_key(fingerprint)
             if pub_key is None:
                 # SECURITY (fail-closed): without the signer's public key we
-                # cannot verify the signature. Deny in every mode — never trust
+                # cannot verify the signature. Deny in every mode - never trust
                 # the self-asserted fingerprint just because we lack its key.
                 logger.warning(
-                    "CapAuth local: public key not found for %s — rejecting (cannot verify)",
+                    "CapAuth local: public key not found for %s - rejecting (cannot verify)",
                     fingerprint,
+                )
+                return None
+
+            # SECURITY (fail-closed): reject revoked/expired signing keys before
+            # trusting the signature. pgpy.verify() ignores revocation/expiry, so
+            # route this decision through capauth's usability check (card 6abe9bef).
+            reason = _reject_reason_if_key_unusable(pub_key, _signer_keyids(sig))
+            if reason:
+                logger.warning(
+                    "CapAuth local: signing key rejected for %s: %s", fingerprint, reason
                 )
                 return None
 
@@ -299,7 +381,7 @@ class CapAuthValidator:
 
         except ImportError:
             logger.warning(
-                "pgpy not installed — cannot verify CapAuth signature; rejecting. "
+                "pgpy not installed - cannot verify CapAuth signature; rejecting. "
                 "Install skcomms[crypto] for full CapAuth PGP verification."
             )
             # SECURITY (fail-closed): without pgpy we cannot verify the
@@ -312,7 +394,7 @@ class CapAuthValidator:
             # SECURITY (fail-closed): any error mid-verification is a denial,
             # never a fall-through to the claimed identity.
             logger.error(
-                "CapAuth local: PGP verification error for %s: %s — rejecting",
+                "CapAuth local: PGP verification error for %s: %s - rejecting",
                 fingerprint,
                 exc,
             )
@@ -323,8 +405,8 @@ class CapAuthValidator:
 
         Search order:
 
-        1. ``~/.skcapstone/skcomms/keys/<FINGERPRINT>.asc`` — SKComms per-agent keystore
-        2. ``gpg --export --armor <FINGERPRINT>`` — system GPG keyring
+        1. ``~/.skcapstone/skcomms/keys/<FINGERPRINT>.asc`` - SKComms per-agent keystore
+        2. ``gpg --export --armor <FINGERPRINT>`` - system GPG keyring
 
         Args:
             fingerprint: 40-char uppercase hex PGP fingerprint.
@@ -349,7 +431,7 @@ class CapAuthValidator:
         # 2. Per-agent CapAuth identity dirs + skcomms peers store, matched by
         #    fingerprint. Reconciles the WebRTC verify path with the mailbox/TOFU
         #    layer (2026-06-11) so a *local* agent's signed SDP (e.g. opus↔lumina)
-        #    verifies — those keys live under capauth/identity, not ~/.skcapstone/skcomms/keys.
+        #    verifies - those keys live under capauth/identity, not ~/.skcapstone/skcomms/keys.
         armor = _find_pubkey_by_fingerprint(fingerprint)
         if armor:
             try:
@@ -434,6 +516,16 @@ class CapAuthValidator:
                 logger.warning("verify_detached: public key not found for %s", fingerprint)
                 return False
 
+            # SECURITY (fail-closed): reject revoked/expired signing keys before
+            # trusting the signature. pgpy.verify() ignores revocation/expiry, so
+            # route this decision through capauth's usability check (card 6abe9bef).
+            reason = _reject_reason_if_key_unusable(pub_key, _signer_keyids(pgp_sig))
+            if reason:
+                logger.warning(
+                    "verify_detached: signing key rejected for %s: %s", fingerprint, reason
+                )
+                return False
+
             result = pub_key.verify(signed_payload, pgp_sig)
             if not bool(result):
                 logger.warning("verify_detached: PGP signature INVALID for %s", fingerprint)
@@ -444,7 +536,7 @@ class CapAuthValidator:
 
         except ImportError:
             logger.warning(
-                "pgpy not installed — cannot verify SDP signature. "
+                "pgpy not installed - cannot verify SDP signature. "
                 "Install skcomms[crypto] for full CapAuth PGP verification."
             )
             return False
