@@ -31,6 +31,7 @@ Store layout (``${SKCOMMS_HOME:-~/.skcapstone/skcomms}/peers.json``)::
 
 Public API:
     add_peer(fqid, syncthing_device_id, pubkey_path) -> dict
+    remove_peer(fqid) -> bool
     show_peer(fqid) -> dict | None
     list_peers() -> dict[fqid, entry]
     peers_path() -> Path
@@ -222,6 +223,40 @@ def add_peer(
         tofu.status.value,
     )
     return {"fqid": fqid, "status": tofu.status.value, **entry}
+
+
+def remove_peer(fqid: str) -> bool:
+    """Remove (untrust) a peer, dropping its Syncthing + PGP binding.
+
+    Deletes the ``fqid`` entry from ``peers.json``. Returns ``True`` if a peer was
+    removed, ``False`` if the fqid was unknown (idempotent no-op).
+
+    On a successful local removal, the capauth.pairing kernel record for this peer
+    is revoked as a best-effort mirror (the symmetric counterpart to the accept
+    mirror in :func:`skcomms.pairing.accept_pairing`): so a peer removed here can
+    no longer stay live in the kernel the authz PDP reads. The mirror is additive
+    and fail-safe — it never raises and never changes this function's return value.
+
+    Args:
+        fqid: The peer FQID handle to remove.
+
+    Returns:
+        True if the peer existed and was removed, else False.
+    """
+    data = _load_peers()
+    if fqid not in data["peers"]:
+        return False
+    del data["peers"][fqid]
+    _save_peers(data)
+    logger.debug("removed peer %s", fqid)
+
+    # M2 pairing fold (removal side): best-effort revoke the mirrored capauth
+    # enrollment. Never raises and never changes the return value (see
+    # pairing_mirror.mirror_revocation).
+    from .pairing_mirror import mirror_revocation
+
+    mirror_revocation(fqid)
+    return True
 
 
 def show_peer(fqid: str) -> Optional[dict]:

@@ -76,4 +76,28 @@ def mirror_pairing(fqid: str, pubkey: str) -> None:
         logger.debug("capauth pairing mirror failed", exc_info=True)
 
 
-__all__ = ["kernel_enabled", "mirror_pairing"]
+def mirror_revocation(fqid: str) -> None:
+    """Revoke every non-revoked capauth device whose subject is this peer's fqid.
+
+    The symmetric counterpart to :func:`mirror_pairing`: when a peer is removed
+    (untrusted) in skcomms, the durable capauth.pairing record for that fqid must
+    stop being live, otherwise a peer removed here would stay authoritative in the
+    kernel the authz PDP reads.
+
+    Best-effort: gated on the kernel flag, and any capauth error is logged at
+    debug and swallowed so it can never break the peer removal that triggered it.
+    """
+    if not kernel_enabled() or not fqid:
+        return
+    try:
+        from capauth.pairing import list_devices, revoke
+
+        base = _base()
+        for dev in list_devices(subject=fqid, base_dir=base):
+            if not dev.revoked:
+                revoke(dev.device_id, "skcomms peer removed", base_dir=base)
+    except Exception:
+        logger.debug("capauth pairing mirror (revocation) failed", exc_info=True)
+
+
+__all__ = ["kernel_enabled", "mirror_pairing", "mirror_revocation"]
