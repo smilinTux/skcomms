@@ -196,3 +196,90 @@ def test_revocation_kernel_disabled_writes_nothing(tmp_path, monkeypatch):
     PM.mirror_revocation("opus@chef.skworld")
     devs = list_devices(subject="opus@chef.skworld", base_dir=str(tmp_path))
     assert len(devs) == 1 and not devs[0].revoked
+
+
+# ---------------------------------------------------------------------------
+# M2 pairing fold, public-pairing surface: handle_public_pairing_request also
+# mirrors the admitted peer into capauth.pairing (the SECOND pairing front door).
+# Public pairing is also a TOFU add (import_peer_bundle persists the peer + its
+# armored key), so the same mirror_pairing is correct.
+# ---------------------------------------------------------------------------
+
+
+def _peer_bundle(fqid="opus@chef.skworld", name="Testpeer"):
+    from skcomms.peers import fingerprint_from_pubkey
+
+    pub = _gen_pubkey()
+    return {
+        "skcomms_peer_bundle": "1.0",
+        "name": name,
+        "fqid": fqid,
+        "fingerprint": fingerprint_from_pubkey(pub),
+        "public_key": pub,
+        "transports": [],
+    }
+
+
+def test_public_pairing_mirrors_peer_into_capauth(tmp_path, monkeypatch):
+    """A successful handle_public_pairing_request mirrors exactly one tofu
+    capauth device whose subject is the peer's fqid."""
+    from capauth.pairing import list_devices
+    import skcomms.public_pairing as pp
+
+    monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "skcomms"))
+    monkeypatch.setenv("SKCOMMS_PAIRING_KERNEL_BASE", str(tmp_path / "capauth"))
+    bundle = _peer_bundle()
+    res = pp.handle_public_pairing_request(
+        {"bundle": bundle},
+        peers_dir=tmp_path / "peers",
+        self_bundle_provider=lambda: None,
+    )
+    assert res["paired"]["fqid"] == "opus@chef.skworld"
+
+    devs = list_devices(subject="opus@chef.skworld", base_dir=str(tmp_path / "capauth"))
+    assert len(devs) == 1
+    assert devs[0].subject == "opus@chef.skworld"
+    assert str(getattr(devs[0].mode, "value", devs[0].mode)) == "tofu"
+
+
+def test_public_pairing_still_succeeds_when_mirror_raises(tmp_path, monkeypatch):
+    """End-to-end: even if capauth.enroll_device blows up, the public pairing
+    succeeds and returns its normal payload (mirror is additive, best-effort)."""
+    import skcomms.public_pairing as pp
+
+    monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "skcomms"))
+    monkeypatch.setenv("SKCOMMS_PAIRING_KERNEL_BASE", str(tmp_path / "capauth"))
+
+    def _boom(*a, **k):
+        raise RuntimeError("capauth down")
+
+    monkeypatch.setattr("capauth.pairing.enroll_device", _boom)
+    bundle = _peer_bundle()
+    res = pp.handle_public_pairing_request(
+        {"bundle": bundle},
+        peers_dir=tmp_path / "peers",
+        self_bundle_provider=lambda: None,
+    )
+    assert res["paired"]["fqid"] == "opus@chef.skworld"
+    assert res["paired"]["fingerprint"] == bundle["fingerprint"]
+
+
+def test_public_pairing_kernel_disabled_writes_nothing(tmp_path, monkeypatch):
+    """SKCOMMS_PAIRING_KERNEL=0 disables the public-pairing mirror: the peer is
+    still admitted locally but no capauth device is created."""
+    from capauth.pairing import list_devices
+    import skcomms.public_pairing as pp
+
+    monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "skcomms"))
+    monkeypatch.setenv("SKCOMMS_PAIRING_KERNEL", "0")
+    monkeypatch.setenv("SKCOMMS_PAIRING_KERNEL_BASE", str(tmp_path / "capauth"))
+    bundle = _peer_bundle()
+    res = pp.handle_public_pairing_request(
+        {"bundle": bundle},
+        peers_dir=tmp_path / "peers",
+        self_bundle_provider=lambda: None,
+    )
+    assert res["paired"]["fqid"] == "opus@chef.skworld"
+    assert list_devices(
+        subject="opus@chef.skworld", base_dir=str(tmp_path / "capauth")
+    ) == []
