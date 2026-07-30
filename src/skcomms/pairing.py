@@ -220,6 +220,10 @@ def accept_pairing(uri_or_path: str, *, fetcher=None) -> dict:
     try:
         Path(tmp).write_text(pubkey, encoding="utf-8")
         add_peer(bundle.fqid, bundle.syncthing_device_id or "", tmp)
+        # M2 pairing fold: best-effort dual-write into capauth.pairing. Never
+        # raises and never changes the return value (see pairing_mirror).
+        from .pairing_mirror import mirror_pairing
+        mirror_pairing(bundle.fqid, pubkey)
     finally:
         os.unlink(tmp)
     return {"fqid": bundle.fqid, "fingerprint": actual_fp,
