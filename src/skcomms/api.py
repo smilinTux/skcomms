@@ -27,9 +27,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from . import skfed_directory
 from .capauth_validator import CapAuthValidator
 from .core import SKComms
-from . import skfed_directory
 from .discovery import PeerInfo, PeerStore
 from .heartbeat import HeartbeatConfig, HeartbeatPublisher
 from .models import (
@@ -2590,25 +2590,50 @@ async def get_webrtc_peers(room: Optional[str] = None):
 # Consciousness / Soul Snapshot endpoints
 # ---------------------------------------------------------------------------
 
-try:
-    from skcapstone.snapshots import (
-        ConversationMessage as _ConversationMessage,
-    )
-    from skcapstone.snapshots import (
-        OOFState as _OOFState,
-    )
-    from skcapstone.snapshots import (
-        PersonalityTraits as _PersonalityTraits,
-    )
-    from skcapstone.snapshots import (
-        SnapshotIndex,
-        SnapshotStore,
-        SoulSnapshot,
-    )
+# skcapstone.snapshots is an OPTIONAL higher-layer subapp surface.  skcomms is
+# the L0 core and must import without it, so the import is resolved LAZILY on
+# first use (see ``_load_snapshots``) rather than at module load.  These names
+# stay ``None`` until then; ``from __future__ import annotations`` (top of file)
+# keeps the string annotations below valid while they are unbound.
+SnapshotStore = None  # type: ignore[assignment]
+SnapshotIndex = None  # type: ignore[assignment]
+SoulSnapshot = None  # type: ignore[assignment]
+_OOFState = None  # type: ignore[assignment]
+_PersonalityTraits = None  # type: ignore[assignment]
+_ConversationMessage = None  # type: ignore[assignment]
 
-    _SNAPSHOTS_AVAILABLE = True
-except ImportError:
-    _SNAPSHOTS_AVAILABLE = False
+#: Tri-state: ``None`` = not yet probed, ``True``/``False`` = resolved.
+_SNAPSHOTS_AVAILABLE: Optional[bool] = None
+
+
+def _load_snapshots() -> bool:
+    """Resolve ``skcapstone.snapshots`` lazily on first use, caching the result.
+
+    The consciousness/snapshot endpoints legitimately bridge to skcapstone, but
+    deferring the import to first use means merely importing ``skcomms.api``
+    never pulls skcapstone into ``sys.modules``.  Returns whether the snapshot
+    types are available; callers 501 when they are not.
+    """
+    global _SNAPSHOTS_AVAILABLE
+    global SnapshotStore, SnapshotIndex, SoulSnapshot
+    global _OOFState, _PersonalityTraits, _ConversationMessage
+    if _SNAPSHOTS_AVAILABLE is None:
+        try:
+            # ``global`` above routes each of these bindings to the module name.
+            from skcapstone.snapshots import ConversationMessage as _ConversationMessage
+            from skcapstone.snapshots import OOFState as _OOFState
+            from skcapstone.snapshots import PersonalityTraits as _PersonalityTraits
+            from skcapstone.snapshots import (
+                SnapshotIndex,
+                SnapshotStore,
+                SoulSnapshot,
+            )
+
+            _SNAPSHOTS_AVAILABLE = True
+        except Exception:  # ImportError, or a broken partial install
+            _SNAPSHOTS_AVAILABLE = False
+    return _SNAPSHOTS_AVAILABLE
+
 
 _snapshot_store: Optional[SnapshotStore] = None
 
@@ -2623,7 +2648,7 @@ def _get_store() -> "SnapshotStore":
         HTTPException: If skcapstone is not installed.
     """
     global _snapshot_store
-    if not _SNAPSHOTS_AVAILABLE:
+    if not _load_snapshots():
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail="skcapstone package not installed — cannot manage snapshots",

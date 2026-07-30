@@ -41,11 +41,38 @@ SERVICE = "skcomms"
 #: Fleet-scheduler job name for the heartbeat health sweep.
 HEALTH_JOB = "skcomms_health_sweep"
 
-# Optional import — never a hard dependency.
-try:
-    from skcapstone import sdk as _sdk
-except Exception:  # ImportError, or a broken partial install
-    _sdk = None  # type: ignore[assignment]
+# Optional dependency, never a hard one, and never imported at module load time.
+# ``skcapstone`` is an OPTIONAL, HIGHER-layer subapp; skcomms is the L0 core and
+# must import without it.  This adapter legitimately BRIDGES to skcapstone (that
+# is its whole purpose), so we keep it optional-by-presence but resolve the
+# import LAZILY on first use.  Importing ``skcomms.integration`` (let alone
+# ``import skcomms``, which pulls in ``skcomms.core`` -> this module) therefore
+# never pulls skcapstone into ``sys.modules``.
+#
+# ``_sdk`` is a cache with a sentinel: ``_UNSET`` means "not yet resolved", while
+# ``None`` means "resolved and absent".  Tests set ``_sdk = None`` to force the
+# absent path, and the sentinel keeps that monkeypatch from being re-resolved.
+_UNSET: Any = object()
+_sdk: Any = _UNSET
+
+
+def _get_sdk() -> Any:
+    """Resolve ``skcapstone.sdk`` lazily, caching the result (module or ``None``).
+
+    The import is deferred to first call so that merely importing this module
+    never triggers a subapp import.  Any failure (package absent or a broken
+    partial install) caches ``None`` so callers transparently take the native
+    fallback path.
+    """
+    global _sdk
+    if _sdk is _UNSET:
+        try:
+            from skcapstone import sdk as sdk_mod  # type: ignore
+
+            _sdk = sdk_mod
+        except Exception:  # ImportError, or a broken partial install
+            _sdk = None
+    return _sdk
 
 #: severity → logging method name (native fallback)
 _LOG_METHOD = {
@@ -66,10 +93,11 @@ def is_present() -> bool:
     """
     if os.environ.get("SK_STANDALONE"):
         return False
-    if _sdk is None:
+    sdk = _get_sdk()
+    if sdk is None:
         return False
     try:
-        return bool(_sdk.is_available())
+        return bool(sdk.is_available())
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("skcapstone present-check failed: %s", exc)
         return False
@@ -98,7 +126,7 @@ def alert(event: str, payload: dict[str, Any], level: str = "info") -> bool:
     if is_present():
         try:
             return bool(
-                _sdk.alert(
+                _get_sdk().alert(
                     f"{SERVICE}.{level}",
                     body,
                     level=level,
@@ -132,7 +160,7 @@ def ensure_schedule(interval_hours: float = 1.0) -> bool:
     if not is_present():
         return False
     try:
-        _sdk.register_job(
+        _get_sdk().register_job(
             {
                 "name": HEALTH_JOB,
                 "type": "shell",
@@ -156,10 +184,11 @@ def ensure_schedule(interval_hours: float = 1.0) -> bool:
 
 def unregister_schedule() -> bool:
     """Remove the health-sweep drop-in from the fleet scheduler."""
-    if _sdk is None:
+    sdk = _get_sdk()
+    if sdk is None:
         return False
     try:
-        return bool(_sdk.unregister_job(HEALTH_JOB))
+        return bool(sdk.unregister_job(HEALTH_JOB))
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("unregister_schedule failed: %s", exc)
         return False
@@ -177,7 +206,7 @@ def register_self(pid_file: Optional[str] = None) -> bool:
     if not is_present():
         return False
     try:
-        _sdk.register_service(
+        _get_sdk().register_service(
             SERVICE,
             pid_file=pid_file or str(Path("~/.skcapstone/skcomms/daemon.pid").expanduser()),
         )
