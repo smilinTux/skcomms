@@ -3611,3 +3611,71 @@ def skfed_show_cmd(as_json):
         if e.caps:
             click.echo(f"    caps:       {', '.join(e.caps)}")
         click.echo(f"    updated_at: {e.updated_at}")
+
+
+# ---------------------------------------------------------------------------
+# Operator facet — the explain / observe / act contract (R2.12)
+# ---------------------------------------------------------------------------
+
+
+@main.group("operator")
+def operator() -> None:
+    """skcomms operator facet: the explain / observe / act contract (R2.12).
+
+    The canonical CLI that Atlas's skcomms adapter mirrors. `explain` self-
+    describes the operator contract (kinds/conditions/actions), `observe`
+    reports live conditions from real probes (each failing safe = healthy when
+    unreachable), and `act` performs a reversible standard action.
+    failover_discovery is human-approval-only and refuses (it escalates as
+    MAJOR).
+
+    Examples:
+
+        skcomms operator explain
+
+        skcomms operator observe
+
+        skcomms operator act restart_service
+    """
+
+
+@operator.command("explain")
+def operator_explain() -> None:
+    """Print the operator-facet contract (kinds/conditions/actions) as JSON."""
+    import json as _json
+
+    from .operator_probe import explain as _explain
+
+    click.echo(_json.dumps(_explain(), indent=2))
+
+
+@operator.command("observe")
+def operator_observe() -> None:
+    """Print live operator conditions as JSON from real probes (fails safe)."""
+    import json as _json
+
+    from .operator_probe import observe as _observe
+
+    click.echo(_json.dumps(_observe(), indent=2))
+
+
+@operator.command("act")
+@click.argument("action")
+@click.option("--unit", default=None, help="Override the systemd unit to restart.")
+def operator_act(action: str, unit: Optional[str]) -> None:
+    """Perform a reversible standard action, or refuse.
+
+    ACTION restart_service is standard, reversible, low blast; it runs
+    `systemctl --user restart <unit>`. failover_discovery is non-standard
+    (fleet_restart blast): it refuses and reports that it escalates as MAJOR.
+    An unknown action is refused.
+    """
+    import json as _json
+
+    from .operator_probe import act as _act
+
+    try:
+        result = _act(action, unit=unit)
+    except ValueError as exc:
+        raise click.ClickException(str(exc))
+    click.echo(_json.dumps(result, indent=2))
