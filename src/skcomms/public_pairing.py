@@ -257,6 +257,17 @@ def handle_public_pairing_request(
 
     fqid = req.bundle.get("fqid") or None
 
+    # M2 pairing fold: best-effort dual-write into capauth.pairing. Public
+    # pairing is also a TOFU add (import_peer_bundle just persisted the peer +
+    # its armored key locally), so the SAME mirror as pairing.accept_pairing is
+    # correct: subject = the peer's fqid, carrying its real armored public key.
+    # mirror_pairing is gated on the kernel flag, no-ops on a missing fqid/key,
+    # and swallows every capauth error, so it can NEVER change this accept path's
+    # return value or raise (see pairing_mirror).
+    from .pairing_mirror import mirror_pairing
+
+    mirror_pairing(fqid, req.bundle.get("public_key") or "")
+
     # 3. Best-effort mutual bundle so the peer can import us back.
     self_bundle: Optional[dict] = None
     try:
