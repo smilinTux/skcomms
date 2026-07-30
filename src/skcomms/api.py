@@ -642,6 +642,22 @@ async def health():
     return body
 
 
+@app.get("/.well-known/skworld-module.json", tags=["health"])
+async def skworld_module_manifest(request: Request):
+    """skcomms' SKWorld module manifest (public discovery metadata, no bearer).
+
+    skcomms is a UI-less backend transport service, so this manifest declares no
+    UI module: only the operator facet plus a service marker. The shell reads it
+    to discover skcomms and learn its health + operator contract before it has a
+    token. URLs are origin-relative to the request, so health resolves against
+    wherever the api actually answers. Served unauthenticated, like skchat's and
+    skcode's manifests.
+    """
+    from .skworld_manifest import skcomms_module_manifest
+
+    return skcomms_module_manifest(str(request.base_url))
+
+
 # ---------------------------------------------------------------------------
 # MCP tool relay — used by the consciousness-swipe browser extension.
 #
