@@ -71,6 +71,8 @@ except Exception:  # noqa: BLE001 — sk-pqc absent: use local fallback below
     _SK_PQC_BACKED = False
 # --- local fallback definitions follow, UNCHANGED ----------------------------
 
+import base64
+import hashlib
 import json
 import os
 from dataclasses import dataclass
@@ -90,6 +92,7 @@ from .pqkem import (
     PqKemError,
     hybrid_decap,
     hybrid_encap,
+    hybrid_keypair,
 )
 
 # ---------------------------------------------------------------------------
@@ -387,6 +390,232 @@ def negotiate_suite(local_supports_hybrid: bool, bundle: PrekeyBundle) -> str:
     if local_supports_hybrid and bundle.is_hybrid:
         return HYBRID_SUITE
     return CLASSICAL_SUITE
+
+
+# ---------------------------------------------------------------------------
+# pqdm2: multi-recipient (fanout) envelope
+# ---------------------------------------------------------------------------
+#
+# One DM is sealed ONCE under a random 32-byte message key ``K``; ``K`` is then
+# wrapped once per recipient device slot (its own hybrid_encap + HKDF + AESGCM),
+# modelled on the audited ``group_ratchet`` per-member wrap. The recipient set is
+# every peer device slot PLUS every one of the sender's own device slots, so all
+# enrolled devices of both parties can open the message. See
+# ``docs/superpowers/specs/2026-08-02-multi-device-dm-fanout-design.md`` section 4.
+#
+# Token layout (interop contract -- must match sk_pqc / sk-pqc-dart byte-for-byte)::
+#
+#     pqdm2: + b64(header_json) + "." + b64(slots) + "." + b64(nonce || ct)
+#
+#     header = {"v":2,"suite":...,"sender":...,"recipient":...,"kids":[key_id,...]}
+#     slot   = key_id_len(1) || key_id || encap(1120) || wrappedK(48)
+#
+# AAD binds ``suite || sender || recipient || sha256("".join(sorted(kids)))`` so a
+# store-writer that strips a slot (and its kid) breaks every remaining open: the
+# slot-set is authenticated by the body AEAD.
+
+#: Token scheme prefix for the multi-recipient envelope.
+PQDM2_PREFIX = "pqdm2:"
+
+#: Header codec version recorded for skew tolerance.
+PQDM2_VERSION = 2
+
+#: HKDF domain-separation label for the per-slot ``K`` wrap key. Distinct from
+#: the single-recipient ``_INFO_WRAP`` label (never reuse a wrap label across
+#: constructions).
+_PQDM2_WRAP_INFO = b"pqdm2-wrap"
+
+#: Bytes wrapping ``K``: 32-byte key + 16-byte GCM tag.
+_PQDM2_WRAPPED_K_LEN = 32 + _AESGCM_TAG_LEN
+
+
+def generate_hybrid_keypair() -> tuple[str, str]:
+    """Generate a hybrid keypair as ``(public_hex, private_hex)``.
+
+    Thin hex-encoding shim over :func:`skcomms.pqkem.hybrid_keypair` (the same
+    primitive :func:`seal` encapsulates to). Exposed here so callers that speak in
+    hex prekey material (the prekey store, the fanout sender, tests) have a single
+    keygen entry point on the ``pqdm`` surface.
+
+    Returns:
+        ``(public_hex, private_hex)`` -- 1216-byte public / 2432-byte private,
+        hex-encoded.
+
+    Raises:
+        PqKemUnavailable: if the liboqs/``oqs`` backend is missing.
+    """
+    kp = hybrid_keypair()
+    return kp.public_key.hex(), kp.private_key.hex()
+
+
+def _pqdm2_aad(suite: str, sender: str, recipient: str, kids: list[str]) -> bytes:
+    """Build the pqdm2 body AAD, binding the suite, parties, and slot-set.
+
+    ``suite || "|" || sender || "|" || recipient || "|" || sha256(sorted kids)``.
+    The kid-set digest binds the envelope to its exact recipient list so a
+    slot-stripping tamper fails the body open.
+    """
+    kid_digest = hashlib.sha256("".join(sorted(kids)).encode("utf-8")).digest()
+    return (
+        suite.encode("utf-8")
+        + b"|"
+        + sender.encode("utf-8")
+        + b"|"
+        + recipient.encode("utf-8")
+        + b"|"
+        + kid_digest
+    )
+
+
+def _pqdm2_wrap_key(shared: bytes) -> bytes:
+    """Derive the AES-256 wrap key for one slot from that slot's shared secret."""
+    return HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=b"",
+        info=_PQDM2_WRAP_INFO,
+    ).derive(shared)
+
+
+def seal_multi(
+    body: bytes,
+    recipients: list,
+    *,
+    sender: str,
+    recipient_id: str,
+) -> str:
+    """Seal ``body`` once, wrapped per recipient device slot -> a ``pqdm2:`` token.
+
+    Args:
+        body: The plaintext body (DM / payload bytes).
+        recipients: List of ``{"key_id": str, "hybrid_public_hex": str}`` dicts,
+            one per recipient device slot (peer devices + the sender's own).
+        sender / recipient_id: Party identifiers bound into the AAD.
+
+    Returns:
+        A ``pqdm2:`` token: ``pqdm2:`` + b64(header_json) + "." + b64(slots) +
+        "." + b64(nonce || ct).
+
+    Raises:
+        PqDmFormatError: if ``recipients`` is empty / malformed.
+        PqKemError / PqKemUnavailable: propagated from the KEM.
+    """
+    if not recipients:
+        raise PqDmFormatError("seal_multi() requires at least one recipient slot")
+
+    kids = [r["key_id"] for r in recipients]
+    aad = _pqdm2_aad(HYBRID_SUITE, sender, recipient_id, kids)
+
+    message_key = os.urandom(32)
+    nonce = os.urandom(_WRAP_NONCE_LEN)
+    ct = AESGCM(message_key).encrypt(nonce, bytes(body), aad)
+
+    slots = bytearray()
+    for r in recipients:
+        key_id = r["key_id"]
+        kid_bytes = key_id.encode("utf-8")
+        if len(kid_bytes) > 255:
+            raise PqDmFormatError(f"key_id too long ({len(kid_bytes)} bytes)")
+        try:
+            pub = bytes.fromhex(r["hybrid_public_hex"])
+        except (ValueError, KeyError, TypeError) as exc:
+            raise PqDmFormatError(f"bad hybrid_public_hex for {key_id!r}: {exc}") from exc
+        encap, shared = hybrid_encap(pub)
+        wrap_key = _pqdm2_wrap_key(shared)
+        wrapped_k = AESGCM(wrap_key).encrypt(nonce, message_key, None)
+        slots.append(len(kid_bytes))
+        slots += kid_bytes
+        slots += encap
+        slots += wrapped_k
+
+    header = {
+        "v": PQDM2_VERSION,
+        "suite": HYBRID_SUITE,
+        "sender": sender,
+        "recipient": recipient_id,
+        "kids": kids,
+    }
+    header_json = json.dumps(header, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    return (
+        PQDM2_PREFIX
+        + base64.b64encode(header_json).decode("ascii")
+        + "."
+        + base64.b64encode(bytes(slots)).decode("ascii")
+        + "."
+        + base64.b64encode(nonce + ct).decode("ascii")
+    )
+
+
+def _pqdm2_iter_slots(slots: bytes):
+    """Yield ``(key_id, encap, wrapped_k)`` for each slot in the packed blob.
+
+    Raises PqDmFormatError on a truncated / malformed slot region.
+    """
+    off = 0
+    n = len(slots)
+    while off < n:
+        kid_len = slots[off]
+        off += 1
+        end_kid = off + kid_len
+        end_encap = end_kid + HYBRID_CIPHERTEXT_LEN
+        end_wrap = end_encap + _PQDM2_WRAPPED_K_LEN
+        if end_wrap > n:
+            raise PqDmFormatError("truncated pqdm2 slot")
+        key_id = slots[off:end_kid].decode("utf-8", "replace")
+        encap = bytes(slots[end_kid:end_encap])
+        wrapped_k = bytes(slots[end_encap:end_wrap])
+        off = end_wrap
+        yield key_id, encap, wrapped_k
+
+
+def open_multi(
+    token: str,
+    *,
+    my_key_id: str,
+    my_private_hex: str,
+    sender: str,
+    recipient_id: str,
+) -> Optional[bytes]:
+    """Open a ``pqdm2:`` token by unwrapping this device's slot.
+
+    Recomputes the body AAD from the header's ``kids`` (slot-set binding) and the
+    passed party identifiers, finds the slot whose ``key_id == my_key_id``,
+    decapsulates + unwraps the message key, then opens the body.
+
+    Returns:
+        The plaintext body, or ``None`` if there is no matching slot, the token is
+        malformed, or any AEAD open fails (tamper / slot-strip / wrong key). This
+        function NEVER raises on a bad token.
+    """
+    try:
+        if not token.startswith(PQDM2_PREFIX):
+            return None
+        rest = token[len(PQDM2_PREFIX):]
+        h_b64, slots_b64, body_b64 = rest.split(".")
+        header = json.loads(base64.b64decode(h_b64))
+        slots = base64.b64decode(slots_b64)
+        blob = base64.b64decode(body_b64)
+
+        kids = header.get("kids", [])
+        suite = header.get("suite", HYBRID_SUITE)
+        aad = _pqdm2_aad(suite, sender, recipient_id, kids)
+
+        nonce = blob[:_WRAP_NONCE_LEN]
+        ct = blob[_WRAP_NONCE_LEN:]
+
+        my_priv = bytes.fromhex(my_private_hex)
+
+        for key_id, encap, wrapped_k in _pqdm2_iter_slots(slots):
+            if key_id != my_key_id:
+                continue
+            shared = hybrid_decap(encap, my_priv)
+            wrap_key = _pqdm2_wrap_key(shared)
+            message_key = AESGCM(wrap_key).decrypt(nonce, wrapped_k, None)
+            return AESGCM(message_key).decrypt(nonce, ct, aad)
+        return None
+    except Exception:  # noqa: BLE001 -- malformed / tamper / wrong key -> None
+        return None
 
 
 # --- coord 0a1f0a51: when sk-pqc is installed, the published lib is authoritative
