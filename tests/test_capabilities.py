@@ -174,6 +174,10 @@ def test_api_and_modules_block(tmp_path):
     assert all(isinstance(m, str) for m in doc["modules"])
     assert "skmap" in doc["modules"]
     assert "chats" in doc["modules"]
+    # skcode: folded into the Flutter nav as the "Code" subapp (R4.1). The
+    # server catalog must advertise it or the client filters the builtin out of
+    # the nav entirely (the Code tab silently never appears).
+    assert "skcode" in doc["modules"]
 
     # Additive: the existing arrays are untouched and still present.
     assert isinstance(doc["transports"], list) and doc["transports"]

@@ -128,6 +128,7 @@ _TRANSPORT_PROBES: dict[str, int] = {
 _MODULE_HINTS: list[str] = [
     "chats",
     "spaces",
+    "skcode",
     "activity",
     "profile",
     "skmap",
