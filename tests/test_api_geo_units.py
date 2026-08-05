@@ -23,6 +23,9 @@ def _client(tmp_path, monkeypatch):
     home.mkdir(parents=True, exist_ok=True)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "skcomms"))
+    # Disable the live skcot bridge so these tests deterministically exercise
+    # the local in-process store (the bridge is covered in test_api_geo_skcot_bridge).
+    monkeypatch.setenv("SKCOT_GEO_URL", "")
 
     import skcomms.api as api
 

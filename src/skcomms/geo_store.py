@@ -27,9 +27,100 @@ Backend selection:
 
 from __future__ import annotations
 
+import json
+import logging
+import os
 import threading
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Optional
+
+logger = logging.getLogger("skcomms.geo_store")
+
+# --------------------------------------------------------------------------
+# Live skcot bridge (source of truth = skcot's process, not this one).
+# --------------------------------------------------------------------------
+#
+# The real situational picture lives in the `skcot` service process (fed from
+# TCP/TLS/mesh CoT + federation). That process exposes it read-only over HTTP
+# (`skcot.geo_http`, default 127.0.0.1:8091). When that endpoint is reachable
+# AND has units, it is the source of truth; otherwise we fall back to this
+# process's local store (the opt-in fleet seed), so the map endpoint always
+# returns a valid shape and never 500s.
+
+SKCOT_GEO_URL_ENV = "SKCOT_GEO_URL"
+DEFAULT_SKCOT_GEO_URL = "http://127.0.0.1:8091/geo/units"
+SKCOT_GEO_TIMEOUT_ENV = "SKCOT_GEO_TIMEOUT_S"
+DEFAULT_SKCOT_GEO_TIMEOUT_S = 0.75
+
+
+def skcot_geo_url() -> Optional[str]:
+    """The skcot geo endpoint URL, or None if the bridge is disabled.
+
+    Defaults to :data:`DEFAULT_SKCOT_GEO_URL`. Set ``SKCOT_GEO_URL`` to an empty
+    string to disable the bridge and serve only the local in-process store.
+    """
+    url = os.environ.get(SKCOT_GEO_URL_ENV, DEFAULT_SKCOT_GEO_URL)
+    return url or None
+
+
+def _skcot_geo_timeout() -> float:
+    try:
+        return float(os.environ.get(SKCOT_GEO_TIMEOUT_ENV, DEFAULT_SKCOT_GEO_TIMEOUT_S))
+    except (TypeError, ValueError):
+        return DEFAULT_SKCOT_GEO_TIMEOUT_S
+
+
+def fetch_skcot_geo(*, include_stale: bool = False, fmt: str = "units") -> Optional[Any]:
+    """Fetch the live situational picture from skcot's HTTP endpoint.
+
+    Blocking (stdlib ``urllib``) with a short timeout; call from an async
+    handler via ``asyncio.to_thread`` so the event loop is never blocked.
+
+    Returns the parsed JSON payload (a ``{"units": [...], "count": N}`` dict for
+    ``fmt="units"``, a GeoJSON ``FeatureCollection`` for ``fmt="geojson"``), or
+    ``None`` on ANY failure (bridge disabled, connection refused, timeout,
+    non-200, unparseable body). Fail-soft: never raises to the caller.
+    """
+    url = skcot_geo_url()
+    if not url:
+        return None
+    params: dict[str, str] = {}
+    if include_stale:
+        params["include_stale"] = "1"
+    if fmt == "geojson":
+        params["format"] = "geojson"
+    if params:
+        sep = "&" if urllib.parse.urlsplit(url).query else "?"
+        url = url + sep + urllib.parse.urlencode(params)
+    try:
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=_skcot_geo_timeout()) as resp:
+            if getattr(resp, "status", 200) != 200:
+                return None
+            body = resp.read()
+        return json.loads(body.decode("utf-8"))
+    except Exception as exc:  # noqa: BLE001 - map endpoint must never 500 on this
+        logger.debug("skcot geo fetch failed (%s): %s", url, exc)
+        return None
+
+
+def geo_payload_has_units(payload: Any) -> bool:
+    """Whether a skcot geo payload actually carries at least one unit.
+
+    Handles both response shapes: the flat ``{"units": [...], "count": N}`` and
+    the GeoJSON ``{"type": "FeatureCollection", "features": [...]}``.
+    """
+    if not isinstance(payload, dict):
+        return False
+    units = payload.get("units")
+    if isinstance(units, list):
+        return len(units) > 0
+    feats = payload.get("features")
+    if isinstance(feats, list):
+        return len(feats) > 0
+    return False
 
 # --------------------------------------------------------------------------
 # Minimal fallback store (used only when `skcot` is not installed).

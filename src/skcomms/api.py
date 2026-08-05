@@ -795,11 +795,14 @@ async def get_capabilities():
 async def get_geo_units(include_stale: bool = False, format: str = "units"):
     """Current situational picture: live unit / marker / waypoint positions.
 
-    The backend half of the Flutter ``skmap`` pane. Reads the process-global
-    geo store (see :mod:`skcomms.geo_store`), which the CoT (Cursor-on-Target)
-    bridge feeds from every CoT event the node receives. When no CoT feed is
-    wired (or the ``skcot`` geo plane is not installed) the store is simply
-    empty and this returns an empty set in the correct shape, never an error.
+    The backend half of the Flutter ``skmap`` pane. Source of truth is the live
+    CoT store in the separate ``skcot`` service process, exposed read-only over
+    HTTP (``skcot.geo_http``, default ``http://127.0.0.1:8091/geo/units``, env
+    ``SKCOT_GEO_URL``). When that bridge is reachable AND has units, its REAL
+    telemetry is returned. Otherwise this falls back to the process-global local
+    store (see :mod:`skcomms.geo_store`, the opt-in fleet seed). Both paths are
+    fail-soft: an empty or unreachable bridge yields the correct shape, never a
+    500.
 
     Args:
         include_stale: Include fixes past their CoT stale time / TTL. Default
@@ -813,10 +816,21 @@ async def get_geo_units(include_stale: bool = False, format: str = "units"):
     Returns:
         A dict the ``skmap`` client renders directly.
     """
-    from .geo_store import get_geo_store
+    from .geo_store import fetch_skcot_geo, geo_payload_has_units, get_geo_store
 
+    fmt = "geojson" if format == "geojson" else "units"
+
+    # Prefer the live skcot store (real CoT). Blocking fetch off the event loop.
+    remote = await asyncio.to_thread(
+        fetch_skcot_geo, include_stale=include_stale, fmt=fmt
+    )
+    if remote is not None and geo_payload_has_units(remote):
+        return remote
+
+    # Fall back to the local in-process store (fleet seed) when skcot is
+    # unreachable OR reports zero units.
     store = get_geo_store()
-    if format == "geojson":
+    if fmt == "geojson":
         return store.to_feature_collection(include_stale=include_stale)
     units = store.units_json(include_stale=include_stale)
     return {"units": units, "count": len(units)}
