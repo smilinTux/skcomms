@@ -224,6 +224,20 @@ async def lifespan(app: FastAPI):
         logger.exception("Failed to start depth-monitor loop")
         _depth_monitor_task = None
 
+    # Geo self-seed: opt-in (SKCOMMS_GEO_SEED_FLEET) upsert of the sovereign
+    # fleet nodes into the process-global geo store so the skmap pane
+    # (GET /api/v1/geo/units) shows units before a live CoT device connects.
+    # Fed through the real upsert_from_cot path; clearly labeled fleet:<node>
+    # seeds; superseded by real CoT once a feed is wired. See geo_seed.py.
+    try:
+        from .geo_seed import seed_fleet_if_enabled
+
+        seeded = seed_fleet_if_enabled()
+        if seeded:
+            logger.info("Geo store seeded with %d fleet unit(s): %s", len(seeded), seeded)
+    except Exception:
+        logger.exception("Failed to seed geo store")
+
     yield
 
     logger.info("Shutting down SKComms API server...")
