@@ -777,6 +777,37 @@ async def get_capabilities():
     return build_capabilities(get_skcomms())
 
 
+@app.get("/api/v1/geo/units", tags=["geo"])
+async def get_geo_units(include_stale: bool = False, format: str = "units"):
+    """Current situational picture: live unit / marker / waypoint positions.
+
+    The backend half of the Flutter ``skmap`` pane. Reads the process-global
+    geo store (see :mod:`skcomms.geo_store`), which the CoT (Cursor-on-Target)
+    bridge feeds from every CoT event the node receives. When no CoT feed is
+    wired (or the ``skcot`` geo plane is not installed) the store is simply
+    empty and this returns an empty set in the correct shape, never an error.
+
+    Args:
+        include_stale: Include fixes past their CoT stale time / TTL. Default
+            ``False`` (only fresh positions, what a live map wants).
+        format: ``"units"`` (default) → ``{"units": [...], "count": N}`` where
+            each item is a flat GeoUnit dict (``uid``, ``callsign``, ``lat``,
+            ``lon``, ``cot_type``, ``last_seen``, ...); ``"geojson"`` → a
+            GeoJSON ``FeatureCollection``. Both are accepted by the app's
+            ``GeoUnit.fromJson`` (which reads ``features`` then ``units``).
+
+    Returns:
+        A dict the ``skmap`` client renders directly.
+    """
+    from .geo_store import get_geo_store
+
+    store = get_geo_store()
+    if format == "geojson":
+        return store.to_feature_collection(include_stale=include_stale)
+    units = store.units_json(include_stale=include_stale)
+    return {"units": units, "count": len(units)}
+
+
 class AccessTokenRequest(BaseModel):
     """Request to mint a capauth token for a single sk-access tool call.
 
