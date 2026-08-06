@@ -39,7 +39,7 @@ def _client(tmp_path, monkeypatch):
 
 def _seed_local(gs):
     """Install a fresh fallback store as the local singleton and seed one unit."""
-    store = gs._FallbackGeoStore()
+    store = gs.SkcotGeoStore()
     gs.set_geo_store(store)
     store.upsert(
         {
@@ -122,7 +122,7 @@ def test_skcot_empty_and_no_local_is_valid_empty(tmp_path, monkeypatch):
     """skcot empty + empty local -> a well-shaped empty envelope, never a 500."""
     import skcomms.geo_store as gs
 
-    store = gs._FallbackGeoStore()
+    store = gs.SkcotGeoStore()
     gs.set_geo_store(store)  # nothing seeded
     monkeypatch.setattr(gs, "fetch_skcot_geo", lambda **kw: None)
 

@@ -15,14 +15,23 @@ That single accessor is the documented seam for wiring the real position feed:
 whoever runs the CoT service inside (or alongside) the daemon upserts into the
 store returned by :func:`get_geo_store`, and the endpoint publishes it.
 
-Backend selection:
-  * If ``skcot`` is importable its full :class:`skcot.geo.GeoStore` is used
-    verbatim (CoT classification, staleness/TTL, GeoJSON, federation
-    envelopes).
-  * Otherwise a minimal in-process fallback with the *same* ``units_json`` /
-    ``to_feature_collection`` / ``upsert`` contract keeps the endpoint
-    functional, it just returns the currently-known set (which may be empty)
-    rather than 500-ing when the geo plane is not installed.
+One shared type
+---------------
+There is a single ``GeoUnit`` / ``GeoStore`` type, and it lives in
+:mod:`skcot.geo` (the authoritative, CoT-fed store). This module does **not**
+reimplement it. :class:`SkcotGeoStore` is a *thin adapter* over that shared
+type: it holds a real :class:`skcot.geo.GeoStore` and delegates everything to
+it, adding only one skcomms-side convenience -- dict-coercion on ``upsert`` so
+the fleet self-seed (and tests) can feed plain GeoUnit-shaped dicts. All
+storage, staleness, GeoJSON serialization and CoT classification come from the
+shared skcot type, so the two processes agree on unit serialization by
+construction (a GeoUnit serialized by skcot deserializes identically here).
+
+The local adapter store is only ever the *fallback* the endpoint reads when the
+live skcot HTTP bridge (:func:`fetch_skcot_geo`) has no units; it is seeded with
+sovereign fleet placeholders that must not expire, so its inner store is built
+with an infinite TTL (the real freshness clock lives on the live skcot store
+behind the HTTP bridge).
 """
 
 from __future__ import annotations
@@ -33,7 +42,6 @@ import os
 import threading
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
 from typing import Any, Optional
 
 logger = logging.getLogger("skcomms.geo_store")
@@ -123,82 +131,59 @@ def geo_payload_has_units(payload: Any) -> bool:
     return False
 
 # --------------------------------------------------------------------------
-# Minimal fallback store (used only when `skcot` is not installed).
+# Thin adapter over the ONE shared skcot GeoStore type.
 # --------------------------------------------------------------------------
 
 
-class _FallbackGeoStore:
-    """A tiny thread-safe stand-in for :class:`skcot.geo.GeoStore`.
+class SkcotGeoStore:
+    """Thin skcomms-side adapter over the shared :class:`skcot.geo.GeoStore`.
 
-    Implements just the surface the daemon needs: ``upsert`` (dict or object
-    with ``uid``), ``units_json`` and ``to_feature_collection``. It performs no
-    CoT classification or staleness pruning, it simply holds the last-known
-    dict per ``uid`` so the endpoint has a real, feedable store even on a
-    deployment without the ``skcot`` geo plane.
+    This is **not** a reimplementation. It composes a real
+    :class:`skcot.geo.GeoStore` (the single shared type -- CoT classification,
+    staleness/TTL, GeoJSON serialization, federation envelopes all live there)
+    and delegates every attribute to it via :meth:`__getattr__`. The only thing
+    it adds is dict-coercion on :meth:`upsert`, so the fleet self-seed and the
+    API can feed plain GeoUnit-shaped dicts as well as real
+    :class:`skcot.geo.GeoUnit` objects.
+
+    ``skcot`` is imported lazily (in ``__init__``) rather than at module import
+    time: ``skcot`` depends on ``skcomms``, so a top-level import here would be a
+    packaging cycle. Because this module is itself imported lazily (only from the
+    endpoint / seed paths, after ``skcomms`` has fully loaded), the lazy import
+    resolves cleanly.
+
+    The inner store is built with an infinite TTL by default: the local store is
+    only the endpoint's *fallback* (fleet-seed placeholders that must not
+    expire); the authoritative freshness clock lives on the live skcot store
+    reached over the HTTP bridge.
     """
 
-    def __init__(self) -> None:
-        self._lock = threading.RLock()
-        self._units: dict[str, dict[str, Any]] = {}
+    def __init__(self, inner: Any = None, *, ttl_s: float = float("inf")) -> None:
+        if inner is None:
+            from skcot.geo import GeoStore  # type: ignore  # lazy: avoid dep cycle
 
-    @staticmethod
-    def _as_dict(unit: Any) -> dict[str, Any]:
+            inner = GeoStore(ttl_s=ttl_s)
+        self._inner = inner
+
+    def upsert(self, unit: Any) -> Any:
+        """Upsert a :class:`skcot.geo.GeoUnit` or a GeoUnit-shaped dict.
+
+        A dict is coerced into the shared :class:`skcot.geo.GeoUnit` (unknown
+        keys dropped) so the whole store speaks one type; then it is stored by
+        the shared store verbatim.
+        """
         if isinstance(unit, dict):
-            d = dict(unit)
-        elif hasattr(unit, "model_dump"):
-            d = unit.model_dump(mode="json")
-        else:
-            raise TypeError(f"cannot store geo unit of type {type(unit)!r}")
-        d.setdefault(
-            "last_seen", datetime.now(timezone.utc).isoformat()
-        )
-        return d
+            from skcot.geo import GeoUnit  # type: ignore  # lazy: avoid dep cycle
 
-    def upsert(self, unit: Any) -> dict[str, Any]:
-        d = self._as_dict(unit)
-        uid = str(d.get("uid") or d.get("id") or "")
-        if not uid:
-            raise ValueError("geo unit requires a non-empty 'uid'")
-        d["uid"] = uid
-        with self._lock:
-            self._units[uid] = d
-        return d
+            fields = set(GeoUnit.model_fields)
+            unit = GeoUnit(**{k: v for k, v in unit.items() if k in fields})
+        return self._inner.upsert(unit)
 
-    def upsert_from_cot(self, cot: Any, *, source: Optional[str] = None):  # pragma: no cover - no CoT plane
-        raise NotImplementedError(
-            "CoT ingest requires the 'skcot' package; install it to feed the "
-            "geo store from live CoT events."
-        )
-
-    def remove(self, uid: str) -> bool:
-        with self._lock:
-            return self._units.pop(uid, None) is not None
-
-    def clear(self) -> None:
-        with self._lock:
-            self._units.clear()
-
-    def units_json(self, *, include_stale: bool = False) -> list[dict[str, Any]]:
-        # The fallback keeps no staleness clock, so `include_stale` is a no-op:
-        # every known unit is returned.
-        with self._lock:
-            return [dict(u) for u in self._units.values()]
-
-    def to_feature_collection(self, *, include_stale: bool = False) -> dict[str, Any]:
-        feats = []
-        for u in self.units_json(include_stale=include_stale):
-            props = {k: v for k, v in u.items() if k not in ("lat", "lon")}
-            feats.append(
-                {
-                    "type": "Feature",
-                    "geometry": {
-                        "type": "Point",
-                        "coordinates": [u.get("lon", 0.0), u.get("lat", 0.0)],
-                    },
-                    "properties": props,
-                }
-            )
-        return {"type": "FeatureCollection", "features": feats}
+    def __getattr__(self, name: str) -> Any:
+        # Delegate everything else (upsert_from_cot, units_json,
+        # to_feature_collection, get_all, remove, clear, ...) to the shared
+        # skcot store. Only reached for names not defined on the adapter.
+        return getattr(self._inner, name)
 
 
 # --------------------------------------------------------------------------
@@ -210,13 +195,9 @@ _store: Any = None
 
 
 def _new_store() -> Any:
-    """Construct the best available store: real skcot GeoStore, else fallback."""
-    try:
-        from skcot.geo import GeoStore  # type: ignore
-
-        return GeoStore()
-    except Exception:
-        return _FallbackGeoStore()
+    """Construct the process-global local store: the shared skcot GeoStore,
+    wrapped in the thin :class:`SkcotGeoStore` adapter."""
+    return SkcotGeoStore()
 
 
 def get_geo_store() -> Any:

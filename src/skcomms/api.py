@@ -828,12 +828,19 @@ async def get_geo_units(include_stale: bool = False, format: str = "units"):
         return remote
 
     # Fall back to the local in-process store (fleet seed) when skcot is
-    # unreachable OR reports zero units.
-    store = get_geo_store()
-    if fmt == "geojson":
-        return store.to_feature_collection(include_stale=include_stale)
-    units = store.units_json(include_stale=include_stale)
-    return {"units": units, "count": len(units)}
+    # unreachable OR reports zero units. Fail-soft: the local store wraps the
+    # shared skcot GeoStore, so if the skcot package is somehow absent this
+    # still yields the correct empty shape rather than a 500.
+    try:
+        store = get_geo_store()
+        if fmt == "geojson":
+            return store.to_feature_collection(include_stale=include_stale)
+        units = store.units_json(include_stale=include_stale)
+        return {"units": units, "count": len(units)}
+    except Exception:  # noqa: BLE001 - the map endpoint must never 500
+        if fmt == "geojson":
+            return {"type": "FeatureCollection", "features": []}
+        return {"units": [], "count": 0}
 
 
 class AccessTokenRequest(BaseModel):

@@ -41,7 +41,7 @@ def _seed_store(gs):
     the richer ``skcot`` GeoStore is installed in the test environment (its
     300s TTL would otherwise prune fixtures with a fixed ``last_seen``).
     """
-    store = gs._FallbackGeoStore()
+    store = gs.SkcotGeoStore()
     gs.set_geo_store(store)
     return store
 

@@ -31,7 +31,7 @@ def _client(tmp_path, monkeypatch):
 
 def _fresh_fallback_store(gs):
     """Install a fresh fallback store as the singleton (deterministic shape)."""
-    store = gs._FallbackGeoStore()
+    store = gs.SkcotGeoStore()
     gs.set_geo_store(store)
     return store
 
