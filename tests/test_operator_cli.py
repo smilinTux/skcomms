@@ -120,6 +120,26 @@ def test_count_queue_missing_dir_is_zero(tmp_path):
     assert op._count_queue(tmp_path / "nope") == 0
 
 
+def test_queue_depth_is_the_unified_backlog_metric(monkeypatch, tmp_path):
+    # queue_depth() is the ONE canonical outbox-depth probe (coord eb659f61 /
+    # CR-5.3): it counts pending *.json under the unified PersistentOutbox,
+    # honoring SKCOMMS_OUTBOX_DIR. skchat's OutboxBounded delegates to it.
+    outbox = tmp_path / "unified-outbox"
+    monkeypatch.setenv("SKCOMMS_OUTBOX_DIR", str(outbox))
+    pending = outbox / "pending"
+    pending.mkdir(parents=True)
+    for i in range(5):
+        (pending / f"{i}.json").write_text("{}")
+    (pending / "skip.txt").write_text("x")  # non-json is not a pending entry
+    assert op.queue_depth() == 5
+
+
+def test_queue_depth_missing_store_is_zero(monkeypatch, tmp_path):
+    # A missing/empty store is drained (0), so the metric fails safe to healthy.
+    monkeypatch.setenv("SKCOMMS_OUTBOX_DIR", str(tmp_path / "nonexistent"))
+    assert op.queue_depth() == 0
+
+
 def test_probe_path_healthy_fails_safe_when_unreachable(monkeypatch):
     # Unreachable endpoint -> healthy (True), never a false 'path down'.
     monkeypatch.setenv("SKCOMMS_HEALTH_URL", "http://127.0.0.1:1/health")

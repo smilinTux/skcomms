@@ -119,16 +119,36 @@ def _count_queue(pending_dir) -> int:
     return sum(1 for f in p.glob("*.json") if f.is_file())
 
 
+def queue_depth() -> int:
+    """The unified PersistentOutbox pending depth: the ONE backlog metric.
+
+    This is the single canonical outbox-depth probe (coord eb659f61 / roadmap
+    CR-5.3). It counts pending entries under the consolidated skcomms
+    :class:`~skcomms.outbox.PersistentOutbox` retry store
+    (``skcomms.paths.retry_outbox_dir()/pending``, honoring the
+    ``SKCOMMS_OUTBOX_DIR`` override). Both this module's ``QueueDrained``
+    condition and the skchat ``OutboxBounded`` condition (the skchat operator
+    CLI and Atlas's skchat adapter, "one probe, two consumers") read this same
+    function, so outbox depth is a single source of truth across the fleet.
+
+    Fails SAFE (returns 0 = drained) when the store cannot be read, so a probe
+    failure never raises a false 'outbox flooded' alarm.
+
+    Returns:
+        int: Number of pending entries in the unified retry store.
+    """
+    try:
+        return _count_queue(_pending_dir())
+    except Exception:
+        return 0
+
+
 def _default_probe() -> dict:
     """Best-effort skcomms health from real signals. Fails SAFE (healthy) when
     skcomms is unreachable, so an inability to probe never raises a false alarm."""
-    try:
-        depth = _count_queue(_pending_dir())
-    except Exception:
-        depth = 0
     return {
         "path_healthy": _probe_path_healthy(),
-        "queue_depth": depth,
+        "queue_depth": queue_depth(),
         "queue_limit": _QUEUE_LIMIT,
     }
 
@@ -243,4 +263,5 @@ __all__ = [
     "explain",
     "observe",
     "act",
+    "queue_depth",
 ]
