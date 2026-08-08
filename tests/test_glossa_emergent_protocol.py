@@ -27,5 +27,6 @@ def test_apply_propose_adds_to_a_peers_session_macros():
 
 def test_parse_rejects_malformed():
     import pytest
+
     with pytest.raises(ValueError):
         parse_propose(b"not-cbor-or-json{{{")

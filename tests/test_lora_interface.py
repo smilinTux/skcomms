@@ -32,8 +32,8 @@ async def test_bytes_sent_is_accounted_as_telemetry():
     await a.send_frame(b"x" * 40, dest=None)
     assert a.bytes_sent == 40
     await a.send_frame(b"x" * 60, dest=None)
-    assert a.bytes_sent == 100          # raw telemetry keeps accumulating
-    assert not hasattr(a, "can_send")   # no second enforcement path
+    assert a.bytes_sent == 100  # raw telemetry keeps accumulating
+    assert not hasattr(a, "can_send")  # no second enforcement path
     assert not hasattr(a, "airtime_budget")
 
 

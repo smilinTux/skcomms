@@ -66,7 +66,7 @@ def test_forged_from_fqid_signed_with_own_key_is_rejected():
 
     v = EnvelopeVerifier()
     v.add_key("lumina@chef.skworld", str(lumina.pubkey))  # victim, exec-granted
-    v.add_key("bob@chef.skworld", str(bob.pubkey))        # attacker, low-priv
+    v.add_key("bob@chef.skworld", str(bob.pubkey))  # attacker, low-priv
 
     res = v.verify(forged)
     assert res.valid is False  # must NOT verify against bob's key for a lumina claim

@@ -86,9 +86,7 @@ def _legacy_to_signed_json(data: dict) -> Optional[str]:
     payload = data.get("payload") or {}
     body = payload.get("content", "") if isinstance(payload, dict) else ""
     content_type = (
-        payload.get("content_type", "text/plain")
-        if isinstance(payload, dict)
-        else "text/plain"
+        payload.get("content_type", "text/plain") if isinstance(payload, dict) else "text/plain"
     )
 
     metadata = data.get("metadata") or {}
@@ -318,9 +316,7 @@ def migrate_retry_queue_jsonl(
                     envelope_id = (
                         envelope_id or parsed.get("envelope_id") or parsed.get("id") or ""
                     )
-                    recipient = (
-                        recipient or parsed.get("recipient") or parsed.get("to_fqid") or ""
-                    )
+                    recipient = recipient or parsed.get("recipient") or parsed.get("to_fqid") or ""
             except (json.JSONDecodeError, TypeError):
                 pass
 

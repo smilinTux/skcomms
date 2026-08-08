@@ -30,6 +30,7 @@ Persistence: one JSON file per agent under
 ``$SKCOMMS_HOME/consent/<agent>/invite_policy.json`` (Syncthing-shareable,
 isolated per agent — same home tree as :mod:`skcomms.consent`).
 """
+
 from __future__ import annotations
 
 import json
@@ -45,9 +46,9 @@ from .home import skcomms_home
 class InviteDecision(str, Enum):
     """The MSC4155 verbs. ``str`` subclass → compares equal to its value."""
 
-    ALLOW = "allow"     #: deliver / let the invite through
-    IGNORE = "ignore"   #: silently quarantine (no sync, no push)
-    BLOCK = "block"     #: hard reject (user-visible)
+    ALLOW = "allow"  #: deliver / let the invite through
+    IGNORE = "ignore"  #: silently quarantine (no sync, no push)
+    BLOCK = "block"  #: hard reject (user-visible)
 
 
 def server_of(fqid: str) -> str:
@@ -151,8 +152,7 @@ class InvitePolicy:
         """Persist this policy to ``$SKCOMMS_HOME/consent/<agent>/invite_policy.json``."""
         path = _policy_path(self.agent)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(self.to_dict(), indent=2, sort_keys=True),
-                        encoding="utf-8")
+        path.write_text(json.dumps(self.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
         return path
 
     @classmethod

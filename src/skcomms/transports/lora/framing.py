@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from skcomms.transports.ble.protocol import MeshPacket, Reassembler, decode, fragment
 
-SK_PORTNUM = 260          # Meshtastic PRIVATE_APP id for SK traffic
-LORA_MTU = 200            # bytes; conservative, fits a Meshtastic data payload
+SK_PORTNUM = 260  # Meshtastic PRIVATE_APP id for SK traffic
+LORA_MTU = 200  # bytes; conservative, fits a Meshtastic data payload
 
 
 def to_frames(packet: MeshPacket, *, mtu: int = LORA_MTU) -> list[bytes]:

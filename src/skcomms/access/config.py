@@ -214,7 +214,9 @@ class AccessConfig:
             or "127.0.0.1"
         )
         eff_port = int(
-            port if port is not None else os.environ.get("SK_ACCESS_PORT", raw.get("port", _DEFAULT_PORT))
+            port
+            if port is not None
+            else os.environ.get("SK_ACCESS_PORT", raw.get("port", _DEFAULT_PORT))
         )
 
         roots_src = raw.get("exposed_roots") or list(DEFAULT_EXPOSED_ROOTS)

@@ -72,7 +72,9 @@ def client(tmp_path, monkeypatch, operator_keys):
     from skcomms.signing import EnvelopeSigner
 
     priv, _pub = operator_keys
-    monkeypatch.setattr(api.skfed_directory, "load_node_signer", lambda agent=None: EnvelopeSigner(priv))
+    monkeypatch.setattr(
+        api.skfed_directory, "load_node_signer", lambda agent=None: EnvelopeSigner(priv)
+    )
 
     return TestClient(api.app)
 
@@ -85,18 +87,26 @@ def _pin(from_fqid, pub_armor):
     tofu.record_fingerprint(from_fqid, fp, pubkey=pub_armor)
 
 
-def _signed_announce(priv, *, fqid=JARVIS_FQID, inbox="https://jarvis.ts.net/api/v1/inbox",
-                     prekey="https://jarvis.ts.net/api/v1/prekey", from_fqid=None):
+def _signed_announce(
+    priv,
+    *,
+    fqid=JARVIS_FQID,
+    inbox="https://jarvis.ts.net/api/v1/inbox",
+    prekey="https://jarvis.ts.net/api/v1/prekey",
+    from_fqid=None,
+):
     from skcomms.envelope import Envelope
     from skcomms.signing import EnvelopeSigner
 
-    body = json.dumps({
-        "fqid": fqid,
-        "inbox_url": inbox,
-        "prekey_url": prekey,
-        "did": f"did:skfed:{fqid}",
-        "caps": ["dm", "files"],
-    })
+    body = json.dumps(
+        {
+            "fqid": fqid,
+            "inbox_url": inbox,
+            "prekey_url": prekey,
+            "did": f"did:skfed:{fqid}",
+            "caps": ["dm", "files"],
+        }
+    )
     env = Envelope(
         from_fqid=from_fqid or fqid,
         to_fqid="directory@chef.skworld",
@@ -140,8 +150,12 @@ def test_announce_upsert_replaces(client, jarvis_keys):
     j_priv, j_pub = jarvis_keys
     _pin(JARVIS_FQID, j_pub)
 
-    client.post("/api/v1/skfed/announce", content=_signed_announce(j_priv, inbox="https://a/api/v1/inbox"))
-    client.post("/api/v1/skfed/announce", content=_signed_announce(j_priv, inbox="https://b/api/v1/inbox"))
+    client.post(
+        "/api/v1/skfed/announce", content=_signed_announce(j_priv, inbox="https://a/api/v1/inbox")
+    )
+    client.post(
+        "/api/v1/skfed/announce", content=_signed_announce(j_priv, inbox="https://b/api/v1/inbox")
+    )
 
     served = client.get("/.well-known/skfed/directory")
     from skcomms.skfed_directory import SignedDirectory

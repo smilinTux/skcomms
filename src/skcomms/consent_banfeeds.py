@@ -103,8 +103,7 @@ class BanFeed(BaseModel):
             "publisher": self.publisher,
             "signed_at": self.signed_at,
             "entries": [
-                e.model_dump(mode="json")
-                for e in sorted(self.entries, key=lambda x: x.entity)
+                e.model_dump(mode="json") for e in sorted(self.entries, key=lambda x: x.entity)
             ],
         }
         return json.dumps(

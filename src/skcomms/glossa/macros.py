@@ -19,16 +19,16 @@ import re
 # (".41" host-not-version, "NA"/next-action-not-region, skmem-pg service-not-slab).
 _SEED = {
     "GTD-sweep": "review all open coord tasks, reprioritize by the 4 C's, flag any "
-                 "blocked, and propose next actions",
+    "blocked, and propose next actions",
     "ROLLBACK <host> prev": "roll back the deployment ON HOST <host> to the previous "
-                            "version (<host> is a machine, not a software version)",
+    "version (<host> is a machine, not a software version)",
     "NEXT-DO mine": "return the single highest-priority NEXT ACTION assigned to me "
-                    "(not a region/geography)",
+    "(not a region/geography)",
     "P0 <svc> down <host>": "priority-0 incident: service <svc> is down on host "
-                            "<host>; page the operator, severity high",
+    "<host>; page the operator, severity high",
     "ack+claim <id> eta<t>": "acknowledge and claim coord task <id> with an ETA of <t>",
     "mem-snapshot": "snapshot the agent's working MEMORY and run the daily digest "
-                    "(agent memory, not OS RAM)",
+    "(agent memory, not OS RAM)",
     "secscan->PR": "run the security scanner, and if it finds issues open a fix PR",
     "CAB-gate <id>": "submit change <id> to the CAB for approval and wait for the vote",
     "hybrid-recall <q>": "run a hybrid (vector+BM25) memory recall for query <q>",

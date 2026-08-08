@@ -40,10 +40,7 @@ def _make_comms(payloads, tmp_path, monkeypatch):
 
 
 def _core_warnings(caplog):
-    return [
-        r for r in caplog.records
-        if r.levelno == logging.WARNING and r.name == "skcomms.core"
-    ]
+    return [r for r in caplog.records if r.levelno == logging.WARNING and r.name == "skcomms.core"]
 
 
 def test_leading_lt_payload_skipped_at_debug_not_warning(tmp_path, monkeypatch, caplog):
@@ -53,10 +50,7 @@ def test_leading_lt_payload_skipped_at_debug_not_warning(tmp_path, monkeypatch, 
         got = comms.receive()
 
     assert got == []
-    debugs = [
-        r for r in caplog.records
-        if r.levelno == logging.DEBUG and r.name == "skcomms.core"
-    ]
+    debugs = [r for r in caplog.records if r.levelno == logging.DEBUG and r.name == "skcomms.core"]
     assert _core_warnings(caplog) == []
     assert any("beacon" in r.getMessage().lower() for r in debugs)
 
@@ -75,7 +69,8 @@ def test_malformed_chat_payload_still_warns(tmp_path, monkeypatch, caplog):
         got = comms.receive()
     assert got == []
     warnings = [
-        r for r in caplog.records
+        r
+        for r in caplog.records
         if r.levelno == logging.WARNING and "deserialize" in r.getMessage()
     ]
     assert len(warnings) == 1

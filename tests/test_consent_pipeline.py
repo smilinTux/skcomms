@@ -1,4 +1,5 @@
 """ConsentPipeline composition — the full gate stack in order."""
+
 import pytest
 
 from skcomms.consent import ContactStore
@@ -35,8 +36,8 @@ def test_unknown_anonymous_is_greylisted_first():
 
 def test_unknown_quarantines_after_greylist_admit():
     g = Greylist("lumina")
-    g.see(S, now=0)          # first sighting → records first_seen
-    g.see(S, now=10_000)     # past the window → admit (sticky)
+    g.see(S, now=0)  # first sighting → records first_seen
+    g.see(S, now=10_000)  # past the window → admit (sticky)
     out = ConsentPipeline("lumina").decide(S)
     assert out.decision == "quarantine" and out.reason == "knock"
 
@@ -53,10 +54,9 @@ def test_on_accept_issues_token_and_known_delivers():
 def test_node_policy_can_disable_greylist():
     # Operator policy overrides the per-tier friction → unknown goes straight to knock.
     from skcomms.consent_tiering import FrictionPolicy, SenderTier
+
     overrides = {
-        SenderTier.ANONYMOUS: FrictionPolicy(
-            greylist=False, rate_per_day=3, require_token=True
-        )
+        SenderTier.ANONYMOUS: FrictionPolicy(greylist=False, rate_per_day=3, require_token=True)
     }
     out = ConsentPipeline("lumina", node_policy=overrides).decide(S)
     assert out.decision == "quarantine"

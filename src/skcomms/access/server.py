@@ -39,7 +39,7 @@ from ..envelope import SignedEnvelope
 from ..signing import EnvelopeVerifier
 from .audit import AccessAuditLog
 from .config import AccessConfig
-from .registry import AccessRegistry, DEFAULT_REGISTRY, RegisteredTool, Scope
+from .registry import DEFAULT_REGISTRY, AccessRegistry, RegisteredTool, Scope
 
 logger = logging.getLogger("skcomms.access.server")
 
@@ -161,18 +161,14 @@ class AccessServer:
         verifier: Optional[EnvelopeVerifier] = None,
         peer_store: Optional[PeerStore] = None,
         audit: Optional[AccessAuditLog] = None,
-        nonce_cache: Optional[
-            Union[fed.NonceCache, fed.DurableNonceCache]
-        ] = None,
+        nonce_cache: Optional[Union[fed.NonceCache, fed.DurableNonceCache]] = None,
     ) -> None:
         self.config = config or AccessConfig.load()
         self.registry = registry or DEFAULT_REGISTRY
         self._peer_store = peer_store if peer_store is not None else PeerStore()
         self.verifier = verifier or self._build_verifier()
         # Durable by default; fail-closed if the store cannot be opened.
-        self.nonce_cache = (
-            nonce_cache if nonce_cache is not None else _default_nonce_cache()
-        )
+        self.nonce_cache = nonce_cache if nonce_cache is not None else _default_nonce_cache()
         self.audit = audit or AccessAuditLog(node=self.config.node_name)
         self._register_builtins()
 
@@ -297,9 +293,7 @@ class AccessServer:
 
         signed = self._coerce_signed(token)
         try:
-            env = fed.accept_signed(
-                signed, verifier=self.verifier, nonce_cache=self.nonce_cache
-            )
+            env = fed.accept_signed(signed, verifier=self.verifier, nonce_cache=self.nonce_cache)
         except fed.FederationError as exc:
             raise AccessAuthError(str(exc)) from exc
 
@@ -354,8 +348,7 @@ class AccessServer:
             # remains the (LOCAL-DEV-ONLY) blanket escape hatch.
             if self.config.sse_require_auth and not self.config.dev_bypass and not same_node:
                 raise AccessAuthError(
-                    "sse session requires a capauth-signed hello "
-                    "(sse_require_auth is ON)"
+                    "sse session requires a capauth-signed hello " "(sse_require_auth is ON)"
                 )
             # Same-node / dev / loopback: node-local trusted session.
             ident = self.config.node_fqid or self.config.node_name
@@ -385,8 +378,12 @@ class AccessServer:
     # -- dispatch -----------------------------------------------------------
 
     async def call_tool(
-        self, token: Any, name: str, arguments: Optional[dict] = None,
-        *, transport: str = "tool",
+        self,
+        token: Any,
+        name: str,
+        arguments: Optional[dict] = None,
+        *,
+        transport: str = "tool",
     ) -> Any:
         """Authenticate, enforce scope, then invoke a registered tool.
 
@@ -408,15 +405,23 @@ class AccessServer:
             ctx = self.authenticate(token)
         except AccessAuthError:
             self.audit.record(
-                transport=transport, identity=None, tool=name, scope=None,
-                decision="deny", reason="auth",
+                transport=transport,
+                identity=None,
+                tool=name,
+                scope=None,
+                decision="deny",
+                reason="auth",
             )
             raise
         return await self.call_tool_with_ctx(ctx, name, arguments, transport=transport)
 
     async def call_tool_with_ctx(
-        self, ctx: ToolContext, name: str, arguments: Optional[dict] = None,
-        *, transport: str = "tool",
+        self,
+        ctx: ToolContext,
+        name: str,
+        arguments: Optional[dict] = None,
+        *,
+        transport: str = "tool",
     ) -> Any:
         """Dispatch when the caller is already authenticated.
 
@@ -426,25 +431,37 @@ class AccessServer:
         tool: Optional[RegisteredTool] = self.registry.get(name)
         if tool is None:
             self.audit.record(
-                transport=transport, identity=ctx.identity, fingerprint=ctx.fingerprint,
-                tool=name, scope=None, decision="deny", reason="not_found",
+                transport=transport,
+                identity=ctx.identity,
+                fingerprint=ctx.fingerprint,
+                tool=name,
+                scope=None,
+                decision="deny",
+                reason="not_found",
             )
             raise ToolNotFoundError(f"unknown tool: {name}")
         if not ctx.has_scope(tool.scope):
             self.audit.record(
-                transport=transport, identity=ctx.identity, fingerprint=ctx.fingerprint,
-                tool=name, scope=tool.scope.value, decision="deny", reason="scope",
+                transport=transport,
+                identity=ctx.identity,
+                fingerprint=ctx.fingerprint,
+                tool=name,
+                scope=tool.scope.value,
+                decision="deny",
+                reason="scope",
             )
             raise AccessScopeError(
                 f"identity {ctx.identity!r} lacks scope {tool.scope.value!r} "
                 f"for tool {name!r} (granted: {sorted(s.value for s in ctx.scopes)})"
             )
-        logger.info(
-            "access tool=%s scope=%s caller=%s", name, tool.scope.value, ctx.identity
-        )
+        logger.info("access tool=%s scope=%s caller=%s", name, tool.scope.value, ctx.identity)
         self.audit.record(
-            transport=transport, identity=ctx.identity, fingerprint=ctx.fingerprint,
-            tool=name, scope=tool.scope.value, decision="allow",
+            transport=transport,
+            identity=ctx.identity,
+            fingerprint=ctx.fingerprint,
+            tool=name,
+            scope=tool.scope.value,
+            decision="allow",
         )
         return await tool.invoke(arguments or {}, ctx)
 
@@ -711,15 +728,20 @@ def _mount_mcp_sse(app, srv: AccessServer) -> None:
             ctx = srv.authenticate_session(token, same_node=_is_same_node(request, srv.config))
         except AccessAuthError as exc:
             srv.audit.record(
-                transport="sse", identity=None, tool="<session>", scope=None,
-                decision="deny", reason="auth",
+                transport="sse",
+                identity=None,
+                tool="<session>",
+                scope=None,
+                decision="deny",
+                reason="auth",
             )
             return JSONResponse({"error": str(exc)}, status_code=401)
         _session_ctx.set(ctx)
         logger.info("sse session bound to identity=%s", ctx.identity)
-        async with transport.connect_sse(
-            request.scope, request.receive, request._send
-        ) as (read_stream, write_stream):
+        async with transport.connect_sse(request.scope, request.receive, request._send) as (
+            read_stream,
+            write_stream,
+        ):
             await mcp.run(read_stream, write_stream, mcp.create_initialization_options())
 
     app.router.routes.append(Route("/sse", endpoint=_handle_sse))
@@ -743,6 +765,7 @@ def main() -> None:
     srv = AccessServer()
     from .exec import register_builtin_exec_tools
     from .wiring import register_builtin_tools
+
     tools = register_builtin_tools(registry=srv.registry)
     # exec tools register too, but are exec-scope (denied unless explicitly granted).
     tools += register_builtin_exec_tools(registry=srv.registry)

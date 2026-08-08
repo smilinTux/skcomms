@@ -47,8 +47,7 @@ def _clean_import_leaks(modules: tuple[str, ...]) -> list[str]:
     side effect of importing the given modules.  An empty list is the pass
     condition.
     """
-    script = textwrap.dedent(
-        f"""
+    script = textwrap.dedent(f"""
         import sys
         for _m in {modules!r}:
             __import__(_m)
@@ -58,8 +57,7 @@ def _clean_import_leaks(modules: tuple[str, ...]) -> list[str]:
             if any(k == s or k.startswith(s + ".") for k in sys.modules)
         )
         print(",".join(_leaked))
-        """
-    )
+        """)
     proc = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,

@@ -121,9 +121,7 @@ def _save_store(store: dict) -> None:
     tmp.replace(path)
 
 
-def record_fingerprint(
-    fqid: str, fingerprint: str, pubkey: Optional[str] = None
-) -> dict:
+def record_fingerprint(fqid: str, fingerprint: str, pubkey: Optional[str] = None) -> dict:
     """Record a fingerprint for *fqid* (TOFU first-contact).
 
     Writes (or overwrites) the entry for *fqid*. This is the low-level setter;
@@ -222,9 +220,7 @@ def fingerprint_for(fqid: str) -> Optional[str]:
     return entry.get("fingerprint")
 
 
-def verify_fingerprint(
-    fqid: str, fingerprint: str, pubkey: Optional[str] = None
-) -> TofuResult:
+def verify_fingerprint(fqid: str, fingerprint: str, pubkey: Optional[str] = None) -> TofuResult:
     """Verify *fingerprint* against the TOFU store for *fqid*.
 
     SSH host-key style TOFU:

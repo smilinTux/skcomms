@@ -157,9 +157,7 @@ class TestAddPeerFailures:
         peers = list_peers()
         assert len(peers) == 1
 
-    def test_conflicting_fingerprint_refused(
-        self, home, tmp_path, opus_keys, other_keys
-    ):
+    def test_conflicting_fingerprint_refused(self, home, tmp_path, opus_keys, other_keys):
         from skcomms.peers import add_peer, list_peers
         from skcomms.tofu import fingerprint_for
 
@@ -227,9 +225,7 @@ class TestPeersCLI:
         assert entry["fingerprint"] == _fp(pub)
         assert entry["syncthing_device_id"] == DEVICE_ID
 
-    def test_cli_conflict_exits_nonzero(
-        self, home, tmp_path, opus_keys, other_keys
-    ):
+    def test_cli_conflict_exits_nonzero(self, home, tmp_path, opus_keys, other_keys):
         from click.testing import CliRunner
 
         from skcomms.cli import main
@@ -242,13 +238,11 @@ class TestPeersCLI:
         runner = CliRunner()
         runner.invoke(
             main,
-            ["peers", "add", PEER_FQID, "--syncthing-device-id", DEVICE_ID,
-             "--pubkey", str(good)],
+            ["peers", "add", PEER_FQID, "--syncthing-device-id", DEVICE_ID, "--pubkey", str(good)],
         )
         conflict = runner.invoke(
             main,
-            ["peers", "add", PEER_FQID, "--syncthing-device-id", DEVICE_ID,
-             "--pubkey", str(bad)],
+            ["peers", "add", PEER_FQID, "--syncthing-device-id", DEVICE_ID, "--pubkey", str(bad)],
         )
         assert conflict.exit_code != 0
         assert "conflict" in conflict.output.lower()
@@ -259,8 +253,6 @@ class TestPeersCLI:
         from skcomms.cli import main
 
         runner = CliRunner()
-        result = runner.invoke(
-            main, ["peers", "add", PEER_FQID, "--via-registry"]
-        )
+        result = runner.invoke(main, ["peers", "add", PEER_FQID, "--via-registry"])
         assert result.exit_code != 0
         assert "t11" in result.output.lower() or "registry" in result.output.lower()

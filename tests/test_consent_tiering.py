@@ -12,12 +12,12 @@ baked into the protocol — they are policy defaults, fully overridable.
 Friction ordering MUST be monotone: anonymous is never softer than introduced,
 which is never softer than sovereign.
 """
+
 import dataclasses
 
 import pytest
 
-from skcomms.consent_tiering import (FrictionPolicy, SenderTier, classify_tier,
-                                     friction_for)
+from skcomms.consent_tiering import FrictionPolicy, SenderTier, classify_tier, friction_for
 
 L = "lumina@chef.skworld"
 O = "opus@chef.skworld"
@@ -105,9 +105,7 @@ def test_require_token_ordering_monotone():
 def test_overrides_replace_defaults():
     # A node operator can tune any tier's friction without code changes.
     custom = {
-        SenderTier.ANONYMOUS: FrictionPolicy(
-            greylist=False, rate_per_day=999, require_token=False
-        )
+        SenderTier.ANONYMOUS: FrictionPolicy(greylist=False, rate_per_day=999, require_token=False)
     }
     pol = friction_for(SenderTier.ANONYMOUS, overrides=custom)
     assert pol.greylist is False
@@ -116,8 +114,9 @@ def test_overrides_replace_defaults():
 
 
 def test_override_one_tier_leaves_others_default():
-    custom = {SenderTier.ANONYMOUS: FrictionPolicy(greylist=False, rate_per_day=999,
-                                                   require_token=False)}
+    custom = {
+        SenderTier.ANONYMOUS: FrictionPolicy(greylist=False, rate_per_day=999, require_token=False)
+    }
     # Sovereign untouched → still the built-in default.
     pol = friction_for(SenderTier.SOVEREIGN, overrides=custom)
     assert pol == friction_for(SenderTier.SOVEREIGN)

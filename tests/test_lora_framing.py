@@ -4,15 +4,20 @@ from skcomms.transports.lora import framing
 
 def _pkt(payload):
     return MeshPacket(
-        type=PacketType.MESSAGE, ttl=1, flags=0, timestamp=0,
-        msg_id=b"\x01" * 8, sender_id=b"\xaa" * 8, recipient_id=b"\xbb" * 8,
+        type=PacketType.MESSAGE,
+        ttl=1,
+        flags=0,
+        timestamp=0,
+        msg_id=b"\x01" * 8,
+        sender_id=b"\xaa" * 8,
+        recipient_id=b"\xbb" * 8,
         payload=payload,
     )
 
 
 def test_constants_in_private_range_and_small_mtu():
-    assert 256 <= framing.SK_PORTNUM <= 511    # Meshtastic PRIVATE_APP range
-    assert framing.LORA_MTU <= 237             # fits a Meshtastic data payload
+    assert 256 <= framing.SK_PORTNUM <= 511  # Meshtastic PRIVATE_APP range
+    assert framing.LORA_MTU <= 237  # fits a Meshtastic data payload
 
 
 def test_small_packet_one_frame():

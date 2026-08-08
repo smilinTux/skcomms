@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # --- in-process keys -------------------------------------------------------
 
 
@@ -84,8 +83,10 @@ def _signed_directory(operator_priv):
 
     signer = EnvelopeSigner(operator_priv)
     return SignedDirectory.build(
-        realm=REALM, operator=OPERATOR,
-        entries=[_entry(JARVIS_FQID), _entry(LUMINA_FQID)], signer=signer,
+        realm=REALM,
+        operator=OPERATOR,
+        entries=[_entry(JARVIS_FQID), _entry(LUMINA_FQID)],
+        signer=signer,
     )
 
 
@@ -141,9 +142,7 @@ def test_resolve_realm_directory_txt_url():
 def test_resolve_realm_directory_config_bootstrap(tmp_path, monkeypatch):
     monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
     (tmp_path).mkdir(parents=True, exist_ok=True)
-    (tmp_path / "realms.yml").write_text(
-        f"{REALM}: {DIR_BASE}\nother: https://dir.other.realm\n"
-    )
+    (tmp_path / "realms.yml").write_text(f"{REALM}: {DIR_BASE}\nother: https://dir.other.realm\n")
     from skcomms.skfed_resolve import resolve_realm_directory
 
     # Empty DNS -> falls through to config bootstrap.
@@ -249,22 +248,25 @@ def test_resolve_agent_caches_directory_within_ttl(tmp_path, monkeypatch, operat
     cache = DirectoryCache(ttl_s=300, clock=lambda: clock["t"])
 
     # First resolve fetches.
-    r1 = resolve_agent(JARVIS_FQID, http_get=http_get, dns=dns,
-                       verifier=_verifier_for(pub), cache=cache)
+    r1 = resolve_agent(
+        JARVIS_FQID, http_get=http_get, dns=dns, verifier=_verifier_for(pub), cache=cache
+    )
     assert r1 is not None
     assert counter["n"] == 1
 
     # Second resolve within TTL -> served from cache, no extra GET.
     clock["t"] = 1200.0
-    r2 = resolve_agent(LUMINA_FQID, http_get=http_get, dns=dns,
-                       verifier=_verifier_for(pub), cache=cache)
+    r2 = resolve_agent(
+        LUMINA_FQID, http_get=http_get, dns=dns, verifier=_verifier_for(pub), cache=cache
+    )
     assert r2["fqid"] == LUMINA_FQID
     assert counter["n"] == 1
 
     # After TTL -> re-fetch.
     clock["t"] = 1000.0 + 301
-    r3 = resolve_agent(JARVIS_FQID, http_get=http_get, dns=dns,
-                       verifier=_verifier_for(pub), cache=cache)
+    r3 = resolve_agent(
+        JARVIS_FQID, http_get=http_get, dns=dns, verifier=_verifier_for(pub), cache=cache
+    )
     assert r3 is not None
     assert counter["n"] == 2
 

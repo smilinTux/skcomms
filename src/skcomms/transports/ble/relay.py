@@ -14,9 +14,9 @@ from skcomms.transports.ble.protocol import MeshPacket
 
 @dataclass
 class RelayDecision:
-    packet: MeshPacket      # possibly TTL-decremented copy
-    deliver_local: bool     # addressed to me or broadcast → hand up the stack
-    forward: bool           # rebroadcast to other peers
+    packet: MeshPacket  # possibly TTL-decremented copy
+    deliver_local: bool  # addressed to me or broadcast → hand up the stack
+    forward: bool  # rebroadcast to other peers
     duplicate: bool = False
 
 
@@ -52,8 +52,7 @@ class RelayEngine:
 
     def consider(self, pkt: MeshPacket) -> RelayDecision:
         if pkt.msg_id in self._seen:
-            return RelayDecision(packet=pkt, deliver_local=False,
-                                 forward=False, duplicate=True)
+            return RelayDecision(packet=pkt, deliver_local=False, forward=False, duplicate=True)
         self._seen.add(pkt.msg_id)
 
         for_me = pkt.recipient_id == self.my_id
@@ -64,5 +63,4 @@ class RelayEngine:
         decremented = replace(pkt, ttl=new_ttl)
         # Forward if there is hop budget left and it is not addressed solely to me.
         forward = new_ttl > 0 and not for_me
-        return RelayDecision(packet=decremented, deliver_local=deliver_local,
-                             forward=forward)
+        return RelayDecision(packet=decremented, deliver_local=deliver_local, forward=forward)

@@ -33,14 +33,12 @@ def _clean_env(monkeypatch):
 def _write_min_config(tmp_path):
     cfg = tmp_path / "config.yml"
     cfg.write_text(
-        textwrap.dedent(
-            """
+        textwrap.dedent("""
             skcomm:
               identity: {name: config_default_identity}
               transports:
                 file: {enabled: true, priority: 2, settings: {archive: true}}
-            """
-        ),
+            """),
         encoding="utf-8",
     )
     return cfg

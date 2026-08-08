@@ -4,8 +4,9 @@ from skcomms.glossa.message import Message
 
 
 def test_to_english_renders_prose():
-    eng = gloss.to_english(Message(intent="coord.claim", args={"task": "abc"},
-                                   refs=["t1"], text="mine"))
+    eng = gloss.to_english(
+        Message(intent="coord.claim", args={"task": "abc"}, refs=["t1"], text="mine")
+    )
     assert "coord.claim" in eng
     assert "abc" in eng
     assert isinstance(eng, str) and len(eng) > 0

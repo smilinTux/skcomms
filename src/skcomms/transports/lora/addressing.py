@@ -29,8 +29,7 @@ class NodeMap:
 
     def _save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps({"fqid_to_node": self._f2n}, indent=2),
-                             encoding="utf-8")
+        self.path.write_text(json.dumps({"fqid_to_node": self._f2n}, indent=2), encoding="utf-8")
 
     def bind(self, fqid: str, node_id: str) -> None:
         # Clear any stale entries before rebinding so the forward/reverse maps

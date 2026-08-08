@@ -195,13 +195,7 @@ def private_key_paths(agent: Optional[str] = None) -> list[Path]:
     """
     name = _resolve_agent(agent)
     return [
-        Path.home()
-        / ".skcapstone"
-        / "agents"
-        / name
-        / "capauth"
-        / "identity"
-        / "private.asc",
+        Path.home() / ".skcapstone" / "agents" / name / "capauth" / "identity" / "private.asc",
         Path.home() / ".skcapstone" / "capauth" / "identity" / "private.asc",
         Path.home() / ".capauth" / "identity" / "private.asc",
     ]

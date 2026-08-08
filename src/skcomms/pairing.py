@@ -1,11 +1,12 @@
 """QR device-pairing — encode an agent's pairing bundle to a skp:// URI/QR and
 accept a scanned one (verify fingerprint via TOFU, add the peer)."""
+
 from __future__ import annotations
 
 import base64
 import logging
 from typing import Optional
-from urllib.parse import urlencode, urlparse, parse_qs
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from pydantic import BaseModel, field_validator
 
@@ -16,17 +17,18 @@ SKP_SCHEME = "skp"
 try:
     from .identity import resolve_self_identity
 except Exception:  # noqa: BLE001
+
     def resolve_self_identity(agent=None):
         return {}
 
 
 class PairingBundle(BaseModel):
     fqid: str
-    fingerprint: str                       # 40-hex (or test value); canonical id
+    fingerprint: str  # 40-hex (or test value); canonical id
     syncthing_device_id: Optional[str] = None
     tailscale: Optional[str] = None
     https: Optional[str] = None
-    pubkey: Optional[str] = None           # armored, only when --embed-key
+    pubkey: Optional[str] = None  # armored, only when --embed-key
     noise_static_pubkey: Optional[str] = None  # urlsafe-b64 of 32-byte X25519 pub (SMP/BLE)
 
     @field_validator("fqid", "fingerprint")
@@ -59,31 +61,46 @@ def parse_skp_uri(uri: str) -> PairingBundle:
     q = {k: v[0] for k, v in parse_qs(u.query).items()}
     pk = q.get("pk")
     pubkey = base64.urlsafe_b64decode(pk.encode()).decode() if pk else None
-    return PairingBundle(fqid=q.get("fqid", ""), fingerprint=q.get("fp", ""),
-                         syncthing_device_id=q.get("sy"), tailscale=q.get("ts"),
-                         https=q.get("https"), pubkey=pubkey,
-                         noise_static_pubkey=q.get("ns"))
+    return PairingBundle(
+        fqid=q.get("fqid", ""),
+        fingerprint=q.get("fp", ""),
+        syncthing_device_id=q.get("sy"),
+        tailscale=q.get("ts"),
+        https=q.get("https"),
+        pubkey=pubkey,
+        noise_static_pubkey=q.get("ns"),
+    )
 
 
 def _self_hints(fqid: str) -> dict:
     """Connectivity hints for *fqid* from the peer registry (best-effort)."""
     try:
         from .registry import PeerRegistry
+
         rec = PeerRegistry.from_config().resolve(fqid)
         if rec is None:
             return {}
-        return {k: v for k, v in {
-            "syncthing_device_id": rec.syncthing_device_id,
-            "tailscale": (rec.tailscale or {}).get("magicdns") if isinstance(rec.tailscale, dict) else rec.tailscale,
-            "https": rec.https,
-        }.items() if v}
+        return {
+            k: v
+            for k, v in {
+                "syncthing_device_id": rec.syncthing_device_id,
+                "tailscale": (
+                    (rec.tailscale or {}).get("magicdns")
+                    if isinstance(rec.tailscale, dict)
+                    else rec.tailscale
+                ),
+                "https": rec.https,
+            }.items()
+            if v
+        }
     except Exception as exc:  # noqa: BLE001
         logger.debug("self hints unavailable: %s", exc)
         return {}
 
 
-def _self_pubkey_armor(expected_fingerprint: Optional[str] = None,
-                       agent: Optional[str] = None) -> Optional[str]:
+def _self_pubkey_armor(
+    expected_fingerprint: Optional[str] = None, agent: Optional[str] = None
+) -> Optional[str]:
     """The active AGENT's own armored public key (for --embed-key).
 
     Returns the agent's CapAuth public key — **never the operator key**.
@@ -112,6 +129,7 @@ def _self_pubkey_armor(expected_fingerprint: Optional[str] = None,
                 continue
             if expected_fingerprint:
                 from .peers import fingerprint_from_pubkey
+
                 if fingerprint_from_pubkey(armor).upper() != expected_fingerprint.upper():
                     logger.debug("agent key at %s does not match identity fingerprint", p)
                     continue
@@ -133,6 +151,7 @@ def bundle_from_self(agent: Optional[str] = None, *, embed_key: bool = False) ->
 def make_pairing_qr(bundle: PairingBundle):
     """Return (skp_uri, segno.QRCode). Caller can .save(path) or .terminal()."""
     import segno
+
     uri = to_skp_uri(bundle)
     return uri, segno.make(uri, error="m")
 
@@ -145,6 +164,7 @@ def _local_agent_pubkey(fqid: str) -> Optional[str]:
     """
     try:
         from pathlib import Path
+
         agent = fqid.split("@", 1)[0]
         if not agent:
             return None
@@ -162,6 +182,7 @@ def _known_peer_pubkey(fqid: str) -> Optional[str]:
     """A previously-stored armored pubkey for *fqid* from the TOFU store."""
     try:
         from .tofu import _load_store  # type: ignore
+
         rec = (_load_store() or {}).get(fqid) or {}
         armor = rec.get("pubkey")
         if armor and "PGP PUBLIC KEY" in armor:
@@ -184,6 +205,7 @@ def _default_fetcher(bundle: "PairingBundle") -> Optional[str]:
         return local
     try:
         from .key_exchange import fetch_peer_from_did
+
         target = bundle.https or bundle.fqid.split("@")[0]
         peer = fetch_peer_from_did(target)
         if isinstance(peer, dict):
@@ -200,7 +222,9 @@ def accept_pairing(uri_or_path: str, *, fetcher=None) -> dict:
     import os
     import tempfile
     from pathlib import Path
+
     from .peers import add_peer, fingerprint_from_pubkey
+
     text = uri_or_path
     p = Path(uri_or_path)
     if not uri_or_path.startswith(f"{SKP_SCHEME}://") and p.exists():
@@ -213,7 +237,8 @@ def accept_pairing(uri_or_path: str, *, fetcher=None) -> dict:
     if actual_fp.upper() != bundle.fingerprint.upper():
         raise ValueError(
             f"fingerprint mismatch for {bundle.fqid}: QR claims {bundle.fingerprint}, "
-            f"key is {actual_fp} — refusing to pair")
+            f"key is {actual_fp} — refusing to pair"
+        )
     # write the pubkey to a temp file for peers.add_peer (which reads a path)
     fd, tmp = tempfile.mkstemp(suffix=".asc")
     os.close(fd)
@@ -223,9 +248,15 @@ def accept_pairing(uri_or_path: str, *, fetcher=None) -> dict:
         # M2 pairing fold: best-effort dual-write into capauth.pairing. Never
         # raises and never changes the return value (see pairing_mirror).
         from .pairing_mirror import mirror_pairing
+
         mirror_pairing(bundle.fqid, pubkey)
     finally:
         os.unlink(tmp)
-    return {"fqid": bundle.fqid, "fingerprint": actual_fp,
-            "syncthing_device_id": bundle.syncthing_device_id,
-            "transport_hints": {k: getattr(bundle, k) for k in ("tailscale", "https") if getattr(bundle, k)}}
+    return {
+        "fqid": bundle.fqid,
+        "fingerprint": actual_fp,
+        "syncthing_device_id": bundle.syncthing_device_id,
+        "transport_hints": {
+            k: getattr(bundle, k) for k in ("tailscale", "https") if getattr(bundle, k)
+        },
+    }

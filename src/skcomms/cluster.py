@@ -188,19 +188,13 @@ def load_cluster_config(path: Optional[Union[Path, str]] = None) -> ClusterConfi
     try:
         raw = json.loads(resolved.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise ClusterConfigError(
-            f"cluster.json at {resolved} is not valid JSON: {exc}"
-        ) from exc
+        raise ClusterConfigError(f"cluster.json at {resolved} is not valid JSON: {exc}") from exc
     except OSError as exc:
-        raise ClusterConfigError(
-            f"cluster.json at {resolved} could not be read: {exc}"
-        ) from exc
+        raise ClusterConfigError(f"cluster.json at {resolved} could not be read: {exc}") from exc
     try:
         return ClusterConfig.model_validate(raw)
     except ValidationError as exc:
-        raise ClusterConfigError(
-            f"cluster.json at {resolved} failed validation: {exc}"
-        ) from exc
+        raise ClusterConfigError(f"cluster.json at {resolved} failed validation: {exc}") from exc
 
 
 def get_realm() -> str:

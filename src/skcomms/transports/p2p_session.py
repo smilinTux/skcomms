@@ -50,9 +50,7 @@ class P2PSession:
         from aiortc import RTCConfiguration, RTCIceServer, RTCPeerConnection
 
         if ice_servers:
-            cfg = RTCConfiguration(
-                iceServers=[RTCIceServer(**s) for s in ice_servers]
-            )
+            cfg = RTCConfiguration(iceServers=[RTCIceServer(**s) for s in ice_servers])
             self.pc = RTCPeerConnection(cfg)
         else:
             self.pc = RTCPeerConnection()

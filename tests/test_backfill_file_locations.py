@@ -22,7 +22,6 @@ _spec.loader.exec_module(bfl)  # type: ignore[union-attr]
 
 from skcomms.access.files import FileAccess, FileAccessConfig
 
-
 # --------------------------------------------------------------------------- #
 # Fixtures                                                                     #
 # --------------------------------------------------------------------------- #

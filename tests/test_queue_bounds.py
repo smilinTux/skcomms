@@ -269,9 +269,7 @@ def test_file_transport_broadcast_is_not_persisted(tmp_path):
 
     t = FileTransport(outbox_path=tmp_path / "out", inbox_path=tmp_path / "in")
 
-    hb = json.dumps(
-        {"envelope": {"to_fqid": "*", "content_type": "heartbeat"}}
-    ).encode()
+    hb = json.dumps({"envelope": {"to_fqid": "*", "content_type": "heartbeat"}}).encode()
     result = t.send(hb, "*")
 
     assert result.success is True

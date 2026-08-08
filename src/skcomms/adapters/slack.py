@@ -166,9 +166,7 @@ class SlackAdapter(ChannelAdapter):
         self._workspace_name: Optional[str] = None
 
         # --- Identity bindings ---
-        self._bindings: dict[str, str] = (
-            bindings_store if bindings_store is not None else {}
-        )
+        self._bindings: dict[str, str] = bindings_store if bindings_store is not None else {}
         self._external_bindings = bindings_store is not None
 
         # --- Injectable client ---
@@ -194,9 +192,7 @@ class SlackAdapter(ChannelAdapter):
             try:
                 info = await self._client.auth_test()
             except Exception as exc:
-                raise AdapterConnectError(
-                    f"Slack auth_test failed: {exc}"
-                ) from exc
+                raise AdapterConnectError(f"Slack auth_test failed: {exc}") from exc
 
             if not info.get("ok", False):
                 raise AdapterAuthError(
@@ -267,12 +263,12 @@ class SlackAdapter(ChannelAdapter):
             text=True,
             files=True,
             images=True,
-            voice_notes=False,   # Slack has audio clips but no classic voice notes
+            voice_notes=False,  # Slack has audio clips but no classic voice notes
             video=False,
             reactions=True,
-            threads=True,        # Slack threaded replies
+            threads=True,  # Slack threaded replies
             read_receipts=False,
-            typing_hint=False,   # chat.postMessage typing = not standard
+            typing_hint=False,  # chat.postMessage typing = not standard
             max_text_bytes=40000,  # Slack message text limit ~40 KB
         )
 
@@ -408,19 +404,23 @@ class SlackAdapter(ChannelAdapter):
         """
         if self._client is None:
             raise AdapterSendError(
-                "SlackAdapter.send() requires a connected client. "
-                "Call connect() first."
+                "SlackAdapter.send() requires a connected client. " "Call connect() first."
             )
 
         channel = message.room_id
         thread_ts: Optional[str] = message.reply_to_platform_id
 
         try:
-            if message.kind in (
-                MessageKind.FILE,
-                MessageKind.IMAGE,
-                MessageKind.VOICE,
-            ) and message.attachments and message.attachments[0].data is not None:
+            if (
+                message.kind
+                in (
+                    MessageKind.FILE,
+                    MessageKind.IMAGE,
+                    MessageKind.VOICE,
+                )
+                and message.attachments
+                and message.attachments[0].data is not None
+            ):
                 att = message.attachments[0]
                 result = await self._client.upload_file(
                     channel,
@@ -436,16 +436,12 @@ class SlackAdapter(ChannelAdapter):
                 )
 
             if not result.get("ok", False):
-                raise AdapterSendError(
-                    f"Slack API error: {result.get('error', 'unknown')}"
-                )
+                raise AdapterSendError(f"Slack API error: {result.get('error', 'unknown')}")
             return str(result.get("ts", ""))
         except AdapterSendError:
             raise
         except Exception as exc:
-            raise AdapterSendError(
-                f"Slack send failed for channel {channel}: {exc}"
-            ) from exc
+            raise AdapterSendError(f"Slack send failed for channel {channel}: {exc}") from exc
 
     # -----------------------------------------------------------------------
     # Identity mapping
@@ -468,9 +464,7 @@ class SlackAdapter(ChannelAdapter):
         external ``bindings_store`` was injected (test mode).
         """
         self._bindings[platform_id.canonical_key] = fqid
-        logger.info(
-            "bound %s → %s (trust=%s)", platform_id.canonical_key, fqid, trust_level
-        )
+        logger.info("bound %s → %s (trust=%s)", platform_id.canonical_key, fqid, trust_level)
         if not self._external_bindings:
             self._save_bindings()
 

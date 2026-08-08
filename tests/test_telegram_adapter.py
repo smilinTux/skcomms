@@ -292,14 +292,24 @@ class _FakeAsyncIter:
 def test_fake_client_satisfies_protocol():
     """FakeTelethonClient is a structural subtype of TelethonClientProtocol."""
     client = FakeTelethonClient()
-    assert isinstance(client, TelethonClientProtocol), (
-        "FakeTelethonClient does not satisfy TelethonClientProtocol. "
-        "Missing methods: " + str(
-            [m for m in ("connect", "disconnect", "is_connected",
-                         "is_user_authorized", "get_me", "get_entity",
-                         "iter_messages", "send_message", "send_file")
-             if not hasattr(client, m)]
-        )
+    assert isinstance(
+        client, TelethonClientProtocol
+    ), "FakeTelethonClient does not satisfy TelethonClientProtocol. " "Missing methods: " + str(
+        [
+            m
+            for m in (
+                "connect",
+                "disconnect",
+                "is_connected",
+                "is_user_authorized",
+                "get_me",
+                "get_entity",
+                "iter_messages",
+                "send_message",
+                "send_file",
+            )
+            if not hasattr(client, m)
+        ]
     )
 
 
@@ -447,13 +457,10 @@ class TestHealth:
         adapter = _make_adapter()
         await adapter.connect()
         # The DR-Chiro chat id must be in rooms config
-        chat_ids = [
-            room.get("chat_id")
-            for room in adapter._rooms.values()
-        ]
-        assert DR_CHIRO_CHAT_ID in chat_ids, (
-            f"DR-Chiro chat id {DR_CHIRO_CHAT_ID} not found in rooms: {chat_ids}"
-        )
+        chat_ids = [room.get("chat_id") for room in adapter._rooms.values()]
+        assert (
+            DR_CHIRO_CHAT_ID in chat_ids
+        ), f"DR-Chiro chat id {DR_CHIRO_CHAT_ID} not found in rooms: {chat_ids}"
 
 
 # ---------------------------------------------------------------------------
@@ -519,7 +526,9 @@ class TestNormalizeTelethon:
         tg_msg = FakeTGMessage(
             msg_id=20,
             text="look at this",
-            media=FakeMediaPhoto(photo=FakePhoto(sizes=[FakePhotoSize(1000), FakePhotoSize(80000)])),
+            media=FakeMediaPhoto(
+                photo=FakePhoto(sizes=[FakePhotoSize(1000), FakePhotoSize(80000)])
+            ),
         )
         msg = adapter._normalize_telethon(tg_msg, DR_CHIRO_CHAT_ID, self._room_cfg())
         assert msg is not None
@@ -545,9 +554,7 @@ class TestNormalizeTelethon:
     def test_sticker_message(self):
         adapter = self._adapter()
         # Sticker: no media, but tg_msg.sticker is set
-        sticker_doc = FakeDocument(
-            attributes=[_FakeDocumentAttributeSticker(alt="😎")]
-        )
+        sticker_doc = FakeDocument(attributes=[_FakeDocumentAttributeSticker(alt="😎")])
         tg_msg = FakeTGMessage(msg_id=40, text="", sticker=sticker_doc)
         msg = adapter._normalize_telethon(tg_msg, DR_CHIRO_CHAT_ID, self._room_cfg())
         assert msg is not None
@@ -681,6 +688,7 @@ class TestInbound:
         await adapter.connect()
 
         collected: list[ChannelMessage] = []
+
         # Drain one cycle then stop
         async def _collect():
             async for m in adapter.inbound():
@@ -712,6 +720,7 @@ class TestInbound:
         await adapter.connect()
 
         collected: list[ChannelMessage] = []
+
         async def _collect():
             async for m in adapter.inbound():
                 collected.append(m)

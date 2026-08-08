@@ -821,9 +821,7 @@ async def get_geo_units(include_stale: bool = False, format: str = "units"):
     fmt = "geojson" if format == "geojson" else "units"
 
     # Prefer the live skcot store (real CoT). Blocking fetch off the event loop.
-    remote = await asyncio.to_thread(
-        fetch_skcot_geo, include_stale=include_stale, fmt=fmt
-    )
+    remote = await asyncio.to_thread(fetch_skcot_geo, include_stale=include_stale, fmt=fmt)
     if remote is not None and geo_payload_has_units(remote):
         return remote
 
@@ -1162,7 +1160,9 @@ def _build_inbox_verifier(from_fqid: str):
         try:
             store = PeerStore()
             for peer in store.list_all():
-                if (peer.fqid == from_fqid or peer.name == from_fqid.split("@", 1)[0]) and peer.pubkey:
+                if (
+                    peer.fqid == from_fqid or peer.name == from_fqid.split("@", 1)[0]
+                ) and peer.pubkey:
                     verifier.add_key(from_fqid, peer.pubkey)
                     break
         except Exception as exc:  # pragma: no cover - defensive
@@ -1243,13 +1243,12 @@ def _consent_classify(recipient: str, sender: str, *, token: Optional[str] = Non
     except Exception as exc:
         logger.warning(
             "consent ban gate could not run for %s (dropping, fail-closed): %s",
-            recipient, exc,
+            recipient,
+            exc,
         )
         return "drop"
     if banned is not None:
-        logger.info(
-            "consent: ban gate dropped %s -> %s (%s)", sender, recipient, banned.reason
-        )
+        logger.info("consent: ban gate dropped %s -> %s (%s)", sender, recipient, banned.reason)
         return "drop"
 
     if mode in ("", "off"):
@@ -1328,7 +1327,8 @@ def _write_to_recipient_inbox(env) -> str:
         )
         logger.info(
             "consent: quarantined first-contact %s → %s (request queue)",
-            env.from_fqid, recipient,
+            env.from_fqid,
+            recipient,
         )
         return f"quarantined:{env.id}"
 
@@ -1417,9 +1417,7 @@ async def post_inbox(request: Request):
         # may verify fine on a fresh attempt. Return 425 (Too Early) so the
         # sending transport classifies it as retryable instead of dropping the
         # rail. Unparseable bodies stay 422 (permanent) above.
-        raise HTTPException(
-            status_code=status.HTTP_425_TOO_EARLY, detail=str(exc)
-        ) from exc
+        raise HTTPException(status_code=status.HTTP_425_TOO_EARLY, detail=str(exc)) from exc
 
     try:
         path = _write_to_recipient_inbox(env)
@@ -1563,8 +1561,7 @@ def _require_local(request: Request) -> None:
     raise HTTPException(
         status_code=status.HTTP_403_FORBIDDEN,
         detail=(
-            "consent endpoints are local/operator-only "
-            "(loopback or SKCOMMS_DEV_AUTH required)"
+            "consent endpoints are local/operator-only " "(loopback or SKCOMMS_DEV_AUTH required)"
         ),
     )
 

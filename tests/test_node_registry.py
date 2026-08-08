@@ -16,7 +16,6 @@ import pytest
 
 from skcomms.node_registry import NodeEntry, NodeRegistry
 
-
 # ---------------------------------------------------------------------------
 # Resolver — ts_ip / ts_host / port
 # ---------------------------------------------------------------------------
@@ -156,9 +155,7 @@ def _store_with_peer(tmp_path, inbox_url):
         PeerInfo(
             name="jarvis",
             fqid="jarvis@chef.skworld",
-            transports=[
-                PeerTransport(transport="https-s2s", settings={"inbox_url": inbox_url})
-            ],
+            transports=[PeerTransport(transport="https-s2s", settings={"inbox_url": inbox_url})],
         )
     )
     return store

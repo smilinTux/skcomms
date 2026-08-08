@@ -4,6 +4,7 @@ Two managers over a shared signaling bus: one calls the other, the callee's
 route loop auto-answers an incoming offer, a direct data channel opens, and they
 exchange both ways. This is what skchat's initiate_call/accept_call drive.
 """
+
 from collections import defaultdict
 
 import pytest
@@ -42,16 +43,15 @@ class _FakeSignaling:
 async def test_manager_call_and_auto_answer():
     bus = _Bus()
     incoming: list = []
-    opus = P2PSessionManager(
-        signaling=_FakeSignaling("opus@chef.skworld", bus), poll_interval=0.1
-    )
+    opus = P2PSessionManager(signaling=_FakeSignaling("opus@chef.skworld", bus), poll_interval=0.1)
     lumina = P2PSessionManager(
-        signaling=_FakeSignaling("lumina@chef.skworld", bus), poll_interval=0.1,
+        signaling=_FakeSignaling("lumina@chef.skworld", bus),
+        poll_interval=0.1,
         on_session=lambda peer, s: incoming.append(peer),
     )
     try:
-        await lumina.start()                       # lumina listening (auto-answer)
-        sess_o = await opus.call("lumina@chef.skworld")   # opus dials
+        await lumina.start()  # lumina listening (auto-answer)
+        sess_o = await opus.call("lumina@chef.skworld")  # opus dials
         sess_l_peer = "opus@chef.skworld"
 
         await sess_o.wait_open(timeout=20)
@@ -65,7 +65,7 @@ async def test_manager_call_and_auto_answer():
         sess_l.send("pong")
         assert await sess_o.recv(timeout=20) == "pong"
 
-        assert "opus@chef.skworld" in incoming     # on_session fired for the incoming call
+        assert "opus@chef.skworld" in incoming  # on_session fired for the incoming call
         assert "lumina@chef.skworld" in opus.active()
     finally:
         await opus.close()
@@ -74,6 +74,7 @@ async def test_manager_call_and_auto_answer():
 
 async def _until(pred, timeout):
     import asyncio
+
     end = timeout / 0.1
     i = 0
     while not pred() and i < end:

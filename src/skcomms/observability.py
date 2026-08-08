@@ -207,11 +207,7 @@ class DepthMonitor:
             self._outbox_alerting = False
 
         dead_threshold = self._cfg.dead_letter_threshold
-        if (
-            dead_threshold > 0
-            and dead_count >= dead_threshold
-            and dead_count > self._last_dead
-        ):
+        if dead_threshold > 0 and dead_count >= dead_threshold and dead_count > self._last_dead:
             self._alert(
                 "dead_letter_growth",
                 {
@@ -382,9 +378,7 @@ def render_prometheus(
         for name in sorted(eviction_counts):
             label = _escape_label(name)
             evictions = int(eviction_counts[name])
-            lines.append(
-                f'skcomms_outbox_evictions_total{{transport="{label}"}} {evictions}'
-            )
+            lines.append(f'skcomms_outbox_evictions_total{{transport="{label}"}} {evictions}')
 
     if transport_health:
         lines.append("# HELP skcomms_transport_up Whether a rail is currently reachable (1/0).")

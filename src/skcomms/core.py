@@ -13,7 +13,9 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+from . import integration as _integration
 from .config import SKCommsConfig, load_config
+from .crypto import CryptoError
 from .discovery import PeerStore
 from .models import (
     MessageEnvelope,
@@ -27,9 +29,7 @@ from .models import (
 from .outbox import OutboxFullError, PersistentOutbox
 from .ratelimit import RateLimitConfig, RateLimiter
 from .router import Router
-from .crypto import CryptoError
 from .transport import DeliveryReport, SendResult, Transport, TransportStatus
-from . import integration as _integration
 
 logger = logging.getLogger("skcomms.core")
 
@@ -200,9 +200,7 @@ def envelope_v1_to_message(env) -> MessageEnvelope:
     headers: dict = dict(getattr(env, "headers", None) or {})
 
     content_type = headers.get(WIRE_HEADER_MESSAGE_TYPE) or (
-        MessageType.TEXT.value
-        if env.content_type in _TEXTUAL_CONTENT_TYPES
-        else env.content_type
+        MessageType.TEXT.value if env.content_type in _TEXTUAL_CONTENT_TYPES else env.content_type
     )
 
     try:
@@ -827,12 +825,14 @@ class SKComms:
             # Confidentiality was requested and could not be provided. Do NOT
             # route, do NOT enqueue (that would persist plaintext to disk):
             # fail closed with a clear not-delivered report.
-            logger.error(
-                "Refusing to send %s → %s: %s", envelope.envelope_id[:8], recipient, exc
-            )
+            logger.error("Refusing to send %s → %s: %s", envelope.envelope_id[:8], recipient, exc)
             _integration.alert(
                 "encryption_failed",
-                {"envelope_id": envelope.envelope_id[:8], "recipient": recipient, "error": str(exc)},
+                {
+                    "envelope_id": envelope.envelope_id[:8],
+                    "recipient": recipient,
+                    "error": str(exc),
+                },
                 level="error",
             )
             return DeliveryReport(
@@ -867,16 +867,14 @@ class SKComms:
             # Signing broke unexpectedly (corrupt key, signer error). Fall back
             # to the legacy local-only path rather than dropping the message.
             logger.warning(
-                "Sign-at-send failed for %s (%s): falling back to legacy "
-                "local-only rails",
+                "Sign-at-send failed for %s (%s): falling back to legacy " "local-only rails",
                 envelope.envelope_id[:8],
                 exc,
             )
             return self._route_legacy_unsigned(envelope)
 
         logger.info(
-            "Sending %s to %s [%s] via %s as SignedEnvelope "
-            "(compressed=%s, encrypted=%s)",
+            "Sending %s to %s [%s] via %s as SignedEnvelope " "(compressed=%s, encrypted=%s)",
             message_type.value,
             recipient,
             envelope.envelope_id[:8],
@@ -1062,9 +1060,7 @@ class SKComms:
             # outbox is at its bound) without failing the delivered send.
             self._alert_outbox_full(envelope.envelope_id, envelope.recipient, exc)
         except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "outbox hold enqueue failed for %s: %s", envelope.envelope_id[:8], exc
-            )
+            logger.warning("outbox hold enqueue failed for %s: %s", envelope.envelope_id[:8], exc)
 
     def _alert_outbox_full(self, envelope_id: str, recipient: str, exc: Exception) -> None:
         """Log + sk-alert an outbox-full backpressure event (coord 74d7b799).
@@ -1113,9 +1109,7 @@ class SKComms:
                 # No held entry: not a queued-only send we are tracking here
                 # (e.g. a confirmed rail whose entry was already removed).
                 continue
-            error_msg = (
-                "queued on file rail but no ACK within the retry horizon"
-            )
+            error_msg = "queued on file rail but no ACK within the retry horizon"
             logger.warning(
                 "Delivery unconfirmed for %s -> %s: %s",
                 pending.envelope_id[:8],
@@ -1254,9 +1248,7 @@ class SKComms:
                         len(data),
                     )
                 else:
-                    logger.warning(
-                        "Failed to deserialize incoming envelope — skipping: %s", exc
-                    )
+                    logger.warning("Failed to deserialize incoming envelope — skipping: %s", exc)
 
         # Surface any queued (file-rail) sends whose ACK horizon has lapsed.
         try:

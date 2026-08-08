@@ -212,9 +212,7 @@ class MatrixAdapter(ChannelAdapter):
         self._txn_counter: int = 0
 
         # --- Identity bindings ---
-        self._bindings: dict[str, str] = (
-            bindings_store if bindings_store is not None else {}
-        )
+        self._bindings: dict[str, str] = bindings_store if bindings_store is not None else {}
         self._external_bindings = bindings_store is not None
 
         # --- Injectable client ---
@@ -240,15 +238,12 @@ class MatrixAdapter(ChannelAdapter):
             try:
                 me = await self._client.whoami()
             except Exception as exc:
-                raise AdapterConnectError(
-                    f"Matrix whoami failed: {exc}"
-                ) from exc
+                raise AdapterConnectError(f"Matrix whoami failed: {exc}") from exc
 
             mxid = me.get("user_id")
             if not mxid:
                 raise AdapterAuthError(
-                    "Matrix whoami did not return a valid user_id — "
-                    "check the access token."
+                    "Matrix whoami did not return a valid user_id — " "check the access token."
                 )
 
             # If user_id was not set in config, fill from whoami response.
@@ -317,12 +312,12 @@ class MatrixAdapter(ChannelAdapter):
             text=True,
             files=True,
             images=True,
-            voice_notes=True,   # m.audio event type
-            video=True,         # m.video event type
-            reactions=True,     # m.reaction (annotation)
-            threads=False,      # MSC3440 threads not universally deployed yet
+            voice_notes=True,  # m.audio event type
+            video=True,  # m.video event type
+            reactions=True,  # m.reaction (annotation)
+            threads=False,  # MSC3440 threads not universally deployed yet
             read_receipts=True,  # Matrix has first-class read receipts
-            typing_hint=True,   # PUT /typing
+            typing_hint=True,  # PUT /typing
             max_text_bytes=65536,  # no hard limit in spec; 64 KB is a safe practical cap
         )
 
@@ -523,8 +518,7 @@ class MatrixAdapter(ChannelAdapter):
         """
         if self._client is None:
             raise AdapterSendError(
-                "MatrixAdapter.send() requires a connected client. "
-                "Call connect() first."
+                "MatrixAdapter.send() requires a connected client. " "Call connect() first."
             )
 
         room_id = message.room_id
@@ -542,15 +536,11 @@ class MatrixAdapter(ChannelAdapter):
         except AdapterSendError:
             raise
         except Exception as exc:
-            raise AdapterSendError(
-                f"Matrix send failed for room {room_id}: {exc}"
-            ) from exc
+            raise AdapterSendError(f"Matrix send failed for room {room_id}: {exc}") from exc
 
         event_id = result.get("event_id")
         if not event_id:
-            raise AdapterSendError(
-                f"Matrix API error: response missing 'event_id': {result}"
-            )
+            raise AdapterSendError(f"Matrix API error: response missing 'event_id': {result}")
         return str(event_id)
 
     # -----------------------------------------------------------------------
@@ -584,9 +574,7 @@ class MatrixAdapter(ChannelAdapter):
         external ``bindings_store`` was injected (test mode).
         """
         self._bindings[platform_id.canonical_key] = fqid
-        logger.info(
-            "bound %s → %s (trust=%s)", platform_id.canonical_key, fqid, trust_level
-        )
+        logger.info("bound %s → %s (trust=%s)", platform_id.canonical_key, fqid, trust_level)
         if not self._external_bindings:
             self._save_bindings()
 
@@ -694,8 +682,8 @@ def _room_name_from_config(room_id: str, rooms_cfg: dict) -> Optional[str]:
 # Mapping from Matrix msgtype → (MessageKind, is_media)
 _MSGTYPE_MAP: dict[str, MessageKind] = {
     "m.text": MessageKind.TEXT,
-    "m.notice": MessageKind.TEXT,   # bot notices treated as text
-    "m.emote": MessageKind.TEXT,    # /me actions treated as text
+    "m.notice": MessageKind.TEXT,  # bot notices treated as text
+    "m.emote": MessageKind.TEXT,  # /me actions treated as text
     "m.image": MessageKind.IMAGE,
     "m.file": MessageKind.FILE,
     "m.audio": MessageKind.VOICE,
@@ -768,7 +756,10 @@ def _channel_message_to_matrix_content(message: ChannelMessage) -> dict:
                 content["org.matrix.msc1767.caption"] = message.text
             return content
         # No mxc URL — fall back to text
-        return {"msgtype": "m.text", "body": message.text or f"[image: {att.filename if att else 'unknown'}]"}
+        return {
+            "msgtype": "m.text",
+            "body": message.text or f"[image: {att.filename if att else 'unknown'}]",
+        }
 
     if kind == MessageKind.FILE:
         att = message.attachments[0] if message.attachments else None
@@ -782,7 +773,10 @@ def _channel_message_to_matrix_content(message: ChannelMessage) -> dict:
                     "size": att.size_bytes,
                 },
             }
-        return {"msgtype": "m.text", "body": message.text or f"[file: {att.filename if att else 'unknown'}]"}
+        return {
+            "msgtype": "m.text",
+            "body": message.text or f"[file: {att.filename if att else 'unknown'}]",
+        }
 
     if kind == MessageKind.VOICE:
         att = message.attachments[0] if message.attachments else None

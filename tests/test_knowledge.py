@@ -14,7 +14,6 @@ import pytest
 
 from skcomms.access import knowledge as K
 
-
 # --------------------------------------------------------------------------- #
 # Fake DB layer                                                               #
 # --------------------------------------------------------------------------- #
@@ -109,8 +108,13 @@ def test_pg_locate_by_doc_id_hits_index():
     )
     out = K.pg_locate(42, conn=conn)
     assert out == [
-        {"node": ".41", "path": "/home/cbrd21/clawd/x.md", "doc_id": 42,
-         "mtime": 1.5, "sha": "abc"}
+        {
+            "node": ".41",
+            "path": "/home/cbrd21/clawd/x.md",
+            "doc_id": 42,
+            "mtime": 1.5,
+            "sha": "abc",
+        }
     ]
     # int doc_id path must NOT do an ILIKE path search
     assert all("ILIKE" not in s for s, _ in conn.executed)
@@ -121,15 +125,12 @@ def test_pg_locate_doc_id_falls_back_to_docs_source():
     conn = FakeConn(canned={"SELECT source FROM docs WHERE id = %s": [("lens/foo.md",)]})
     out = K.pg_locate("99", conn=conn)  # digit-string treated as doc_id
     assert out == [
-        {"node": K.LOCAL_NODE, "path": "lens/foo.md", "doc_id": 99,
-         "mtime": None, "sha": None}
+        {"node": K.LOCAL_NODE, "path": "lens/foo.md", "doc_id": 99, "mtime": None, "sha": None}
     ]
 
 
 def test_pg_locate_by_path_substring():
-    conn = FakeConn(
-        canned={"path ILIKE %s": [(".158", "lens/applications/x.md", 7, None, None)]}
-    )
+    conn = FakeConn(canned={"path ILIKE %s": [(".158", "lens/applications/x.md", 7, None, None)]})
     out = K.pg_locate("applications", conn=conn)
     assert out[0]["path"] == "lens/applications/x.md"
     sql, params = conn.executed[0]
@@ -212,8 +213,9 @@ def test_pg_search_empty_embedding_passes_null_vector():
 
 def test_graph_query_builds_cypher_and_columns():
     conn = FakeConn(canned={"cypher": [("{...}::vertex",)]})
-    out = K.graph_query("MATCH (n) RETURN n LIMIT 1", graph="opus_knowledge",
-                        columns=["n"], conn=conn)
+    out = K.graph_query(
+        "MATCH (n) RETURN n LIMIT 1", graph="opus_knowledge", columns=["n"], conn=conn
+    )
     assert out == [("{...}::vertex",)]
     joined = " ".join(norm(s) for s, _ in conn.executed)
     assert "load 'age'" in joined
@@ -242,9 +244,7 @@ def test_corpus_stats_shape():
         canned={
             "SELECT count(*) FROM docs": [(46496,)],
             "SELECT count(*) FROM memories": [(16353,)],
-            "GROUP BY corpus ORDER BY count(*) DESC": [
-                ("wiki", 30000), ("youtube-corpus", 16496)
-            ],
+            "GROUP BY corpus ORDER BY count(*) DESC": [("wiki", 30000), ("youtube-corpus", 16496)],
             "FROM file_locations": [(5,)],
             "ag_graph": [("lumina_knowledge",), ("opus_knowledge",)],
         }

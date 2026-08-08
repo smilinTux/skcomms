@@ -241,24 +241,22 @@ def _text_event(
 def test_fake_client_satisfies_protocol():
     """FakeDiscordClient is a structural subtype of DiscordClientProtocol."""
     client = FakeDiscordClient()
-    assert isinstance(client, DiscordClientProtocol), (
-        "FakeDiscordClient does not satisfy DiscordClientProtocol. "
-        "Missing methods: "
-        + str(
-            [
-                m
-                for m in (
-                    "is_connected",
-                    "login",
-                    "send_message",
-                    "send_file",
-                    "drain_events",
-                    "connect",
-                    "disconnect",
-                )
-                if not hasattr(client, m)
-            ]
-        )
+    assert isinstance(
+        client, DiscordClientProtocol
+    ), "FakeDiscordClient does not satisfy DiscordClientProtocol. " "Missing methods: " + str(
+        [
+            m
+            for m in (
+                "is_connected",
+                "login",
+                "send_message",
+                "send_file",
+                "drain_events",
+                "connect",
+                "disconnect",
+            )
+            if not hasattr(client, m)
+        ]
     )
 
 

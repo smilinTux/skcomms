@@ -126,9 +126,7 @@ def test_is_available_true_when_peer_has_inbox(peer_store):
 
 def test_posts_bytes_to_resolved_inbox_url(peer_store, monkeypatch):
     captured: dict = {}
-    monkeypatch.setattr(
-        urllib.request, "urlopen", _capturing_urlopen(200, captured)
-    )
+    monkeypatch.setattr(urllib.request, "urlopen", _capturing_urlopen(200, captured))
 
     t = HttpS2STransport()
     result = t.send(ENVELOPE, "jarvis")
@@ -206,9 +204,7 @@ def test_2xx_with_ok_true_is_delivered(peer_store, monkeypatch):
 
 def test_404_maps_to_permanent_failure(peer_store, monkeypatch):
     def _raise(req, timeout=None):
-        raise urllib.error.HTTPError(
-            INBOX_URL, 404, "Not Found", hdrs=None, fp=io.BytesIO(b"")
-        )
+        raise urllib.error.HTTPError(INBOX_URL, 404, "Not Found", hdrs=None, fp=io.BytesIO(b""))
 
     monkeypatch.setattr(urllib.request, "urlopen", _raise)
     result = HttpS2STransport().send(ENVELOPE, "jarvis")
@@ -219,9 +215,7 @@ def test_404_maps_to_permanent_failure(peer_store, monkeypatch):
 
 def test_4xx_403_maps_to_permanent_failure(peer_store, monkeypatch):
     def _raise(req, timeout=None):
-        raise urllib.error.HTTPError(
-            INBOX_URL, 403, "Forbidden", hdrs=None, fp=io.BytesIO(b"")
-        )
+        raise urllib.error.HTTPError(INBOX_URL, 403, "Forbidden", hdrs=None, fp=io.BytesIO(b""))
 
     monkeypatch.setattr(urllib.request, "urlopen", _raise)
     result = HttpS2STransport().send(ENVELOPE, "jarvis")
@@ -232,10 +226,9 @@ def test_4xx_403_maps_to_permanent_failure(peer_store, monkeypatch):
 def test_425_stale_maps_to_retryable_failure(peer_store, monkeypatch):
     """425 (Too Early) is the inbox's stale-envelope signal: a freshness-window
     expiry that is retryable, NOT a permanent 4xx like a schema 422/403."""
+
     def _raise(req, timeout=None):
-        raise urllib.error.HTTPError(
-            INBOX_URL, 425, "Too Early", hdrs=None, fp=io.BytesIO(b"")
-        )
+        raise urllib.error.HTTPError(INBOX_URL, 425, "Too Early", hdrs=None, fp=io.BytesIO(b""))
 
     monkeypatch.setattr(urllib.request, "urlopen", _raise)
     result = HttpS2STransport().send(ENVELOPE, "jarvis")
@@ -285,6 +278,7 @@ def test_unknown_peer_is_transient_failure_without_posting(peer_store, monkeypat
     Classifying it ``perm:`` armed the router's growing per-recipient backoff and
     diverted directed traffic off the only direct rail (finding 3).
     """
+
     def _boom(req, timeout=None):
         raise AssertionError("urlopen should not be called for an unknown peer")
 

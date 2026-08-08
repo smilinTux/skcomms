@@ -18,7 +18,6 @@ import pytest
 from skcomms.cluster import get_operator, get_realm, load_cluster
 from skcomms.realm import build_fqid, resolve_fqid
 
-
 # ---------------------------------------------------------------------------
 # cluster.py
 # ---------------------------------------------------------------------------
@@ -27,9 +26,7 @@ from skcomms.realm import build_fqid, resolve_fqid
 class TestLoadCluster:
     def test_loads_from_path(self, tmp_path: Path):
         cluster_file = tmp_path / "cluster.json"
-        cluster_file.write_text(
-            json.dumps({"realm": "skworld", "operator": "chef"})
-        )
+        cluster_file.write_text(json.dumps({"realm": "skworld", "operator": "chef"}))
         from skcomms import cluster as cm
 
         original = cm._CLUSTER_LOOKUP

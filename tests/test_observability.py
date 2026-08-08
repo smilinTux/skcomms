@@ -31,7 +31,6 @@ from skcomms.observability import (
 from skcomms.transports.file import ENVELOPE_SUFFIX, FileTransport
 from skcomms.transports.syncthing import SyncthingTransport
 
-
 # ---------------------------------------------------------------------------
 # Fakes
 # ---------------------------------------------------------------------------
@@ -460,9 +459,7 @@ class TestLifespanDepthMonitorWiring:
 
         monkeypatch.setattr(api, "SignalingBroker", lambda *a, **k: object())
         monkeypatch.setattr(api, "CapAuthValidator", lambda *a, **k: object())
-        monkeypatch.setattr(
-            "skcomms.config.load_adapters_block", lambda *a, **k: {"adapters": {}}
-        )
+        monkeypatch.setattr("skcomms.config.load_adapters_block", lambda *a, **k: {"adapters": {}})
         yield
 
     async def test_lifespan_starts_and_cancels_depth_monitor(self, monkeypatch):
@@ -482,9 +479,7 @@ class TestLifespanDepthMonitorWiring:
         import skcomms.api as api
 
         transport = _FakeTransport("file", 0)
-        stub = self._StubSKComms(
-            [transport], ObservabilityConfig(enabled=False, interval_s=0.01)
-        )
+        stub = self._StubSKComms([transport], ObservabilityConfig(enabled=False, interval_s=0.01))
         monkeypatch.setattr(api.SKComms, "from_config", classmethod(lambda cls: stub))
 
         async with api.lifespan(api.app):

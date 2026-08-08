@@ -31,30 +31,22 @@ def build_fixture() -> dict:
         {"key_id": a_pub[:16], "hybrid_public_hex": a_pub},
         {"key_id": b_pub[:16], "hybrid_public_hex": b_pub},
     ]
-    token = pqdm.seal_multi(
-        BODY.encode("utf-8"), recips, sender=SENDER, recipient_id=RECIPIENT
-    )
+    token = pqdm.seal_multi(BODY.encode("utf-8"), recips, sender=SENDER, recipient_id=RECIPIENT)
     # Sanity: both slots must open on the Python side before we commit.
-    assert (
-        pqdm.open_multi(
-            token,
-            my_key_id=a_pub[:16],
-            my_private_hex=a_priv,
-            sender=SENDER,
-            recipient_id=RECIPIENT,
-        )
-        == BODY.encode("utf-8")
-    )
-    assert (
-        pqdm.open_multi(
-            token,
-            my_key_id=b_pub[:16],
-            my_private_hex=b_priv,
-            sender=SENDER,
-            recipient_id=RECIPIENT,
-        )
-        == BODY.encode("utf-8")
-    )
+    assert pqdm.open_multi(
+        token,
+        my_key_id=a_pub[:16],
+        my_private_hex=a_priv,
+        sender=SENDER,
+        recipient_id=RECIPIENT,
+    ) == BODY.encode("utf-8")
+    assert pqdm.open_multi(
+        token,
+        my_key_id=b_pub[:16],
+        my_private_hex=b_priv,
+        sender=SENDER,
+        recipient_id=RECIPIENT,
+    ) == BODY.encode("utf-8")
     return {
         "token": token,
         "sender": SENDER,

@@ -145,9 +145,7 @@ class SSRFPolicy:
             try:
                 cidrs.append(ipaddress.ip_network(token, strict=False))
             except ValueError:
-                logger.warning(
-                    "ignoring invalid CIDR %r in %s", token, ALLOW_CIDRS_ENV
-                )
+                logger.warning("ignoring invalid CIDR %r in %s", token, ALLOW_CIDRS_ENV)
 
         return cls(allow_private=allow_private, allow_cidrs=tuple(cidrs))
 
@@ -194,9 +192,7 @@ def vet_url(url: str, policy: Optional[SSRFPolicy] = None) -> VettedTarget:
     parts = urlsplit(url)
     scheme = (parts.scheme or "").lower()
     if scheme not in ALLOWED_SCHEMES:
-        raise SSRFBlockedError(
-            f"SSRF guard: scheme {scheme!r} not allowed (http/https only)"
-        )
+        raise SSRFBlockedError(f"SSRF guard: scheme {scheme!r} not allowed (http/https only)")
 
     host = parts.hostname
     if not host:
@@ -219,9 +215,7 @@ def vet_url(url: str, policy: Optional[SSRFPolicy] = None) -> VettedTarget:
     try:
         infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
     except socket.gaierror as exc:
-        raise SSRFBlockedError(
-            f"SSRF guard: host {host!r} did not resolve: {exc}"
-        ) from exc
+        raise SSRFBlockedError(f"SSRF guard: host {host!r} did not resolve: {exc}") from exc
 
     if not infos:
         raise SSRFBlockedError(f"SSRF guard: host {host!r} did not resolve")
@@ -259,9 +253,7 @@ class _PinnedHTTPConnection(http.client.HTTPConnection):
         self._pinned_ip = pinned_ip
 
     def connect(self):
-        self.sock = socket.create_connection(
-            (self._pinned_ip, self.port), self.timeout
-        )
+        self.sock = socket.create_connection((self._pinned_ip, self.port), self.timeout)
 
 
 class _PinnedHTTPSConnection(http.client.HTTPSConnection):

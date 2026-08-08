@@ -65,7 +65,9 @@ class ScriptedTransport(Transport):
 
 
 def _fail(name, error):
-    return SendResult(success=False, transport_name=name, envelope_id="", latency_ms=0.0, error=error)
+    return SendResult(
+        success=False, transport_name=name, envelope_id="", latency_ms=0.0, error=error
+    )
 
 
 def _ok(name):
@@ -96,12 +98,12 @@ def test_same_failure_warns_once_then_debug(caplog):
             r._try_send(t, b"{}", "jarvis")
 
     send_warnings = [
-        r for r in caplog.records
+        r
+        for r in caplog.records
         if r.levelno == logging.WARNING and "send failed" in r.getMessage()
     ]
     send_debug = [
-        r for r in caplog.records
-        if r.levelno == logging.DEBUG and "send failed" in r.getMessage()
+        r for r in caplog.records if r.levelno == logging.DEBUG and "send failed" in r.getMessage()
     ]
     # First failure WARNs once; the four identical repeats drop to DEBUG.
     assert len(send_warnings) == 1
@@ -115,23 +117,25 @@ def test_recovery_logs_once_and_rearms(caplog):
 
     with caplog.at_level(logging.DEBUG, logger="skcomms.router"):
         t.script.append(_fail(t.name, err))
-        r._try_send(t, b"{}", "jarvis")           # WARN (into failing)
+        r._try_send(t, b"{}", "jarvis")  # WARN (into failing)
         t.script.append(_fail(t.name, err))
-        r._try_send(t, b"{}", "jarvis")           # DEBUG (same)
+        r._try_send(t, b"{}", "jarvis")  # DEBUG (same)
         t.script.append(_ok(t.name))
-        r._try_send(t, b"{}", "jarvis")           # recovery INFO, clears state
+        r._try_send(t, b"{}", "jarvis")  # recovery INFO, clears state
         t.script.append(_fail(t.name, err))
-        r._try_send(t, b"{}", "jarvis")           # WARN again (re-armed)
+        r._try_send(t, b"{}", "jarvis")  # WARN again (re-armed)
 
     send_warnings = [
-        r for r in caplog.records
+        r
+        for r in caplog.records
         if r.levelno == logging.WARNING and "send failed" in r.getMessage()
     ]
     recovery = [
-        r for r in caplog.records
+        r
+        for r in caplog.records
         if r.levelno == logging.INFO and "recover" in r.getMessage().lower()
     ]
-    assert len(send_warnings) == 2          # once before, once after recovery
+    assert len(send_warnings) == 2  # once before, once after recovery
     assert len(recovery) == 1
 
 
@@ -146,7 +150,8 @@ def test_distinct_failure_signatures_each_warn_once(caplog):
         r._try_send(t, b"{}", "jarvis")
 
     send_warnings = [
-        r for r in caplog.records
+        r
+        for r in caplog.records
         if r.levelno == logging.WARNING and "send failed" in r.getMessage()
     ]
     # Two genuinely different failure modes each get a single WARN.
@@ -163,11 +168,13 @@ def test_receive_side_warning_is_deduped(caplog):
             r.receive_all()
 
     recv_warnings = [
-        r for r in caplog.records
+        r
+        for r in caplog.records
         if r.levelno == logging.WARNING and "Error receiving" in r.getMessage()
     ]
     recv_debug = [
-        r for r in caplog.records
+        r
+        for r in caplog.records
         if r.levelno == logging.DEBUG and "Error receiving" in r.getMessage()
     ]
     assert len(recv_warnings) == 1

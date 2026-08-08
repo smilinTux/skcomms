@@ -54,9 +54,7 @@ TRANSFER_CHUNK_SIZE = 1 * 1024 * 1024  # 1 MB  — size of each chunk
 DEFAULT_MAX_OUTBOX_DEPTH = 1000
 
 
-def _trim_dir_to_depth(
-    directory: Path, max_depth: int, suffix: str, log: logging.Logger
-) -> int:
+def _trim_dir_to_depth(directory: Path, max_depth: int, suffix: str, log: logging.Logger) -> int:
     """Evict oldest envelope files so *directory* holds at most *max_depth*.
 
     Shared depth cap used by the file and syncthing transports' send paths
@@ -76,11 +74,7 @@ def _trim_dir_to_depth(
     if max_depth <= 0 or not directory.exists():
         return 0
 
-    files = [
-        f
-        for f in directory.glob(f"*{suffix}")
-        if f.is_file() and not f.name.startswith(".")
-    ]
+    files = [f for f in directory.glob(f"*{suffix}") if f.is_file() and not f.name.startswith(".")]
     excess = len(files) - max_depth
     if excess <= 0:
         return 0
@@ -102,8 +96,7 @@ def _trim_dir_to_depth(
 
     if evicted:
         log.warning(
-            "Outbox depth cap: evicted %d oldest envelope(s) from %s "
-            "(cap=%d)",
+            "Outbox depth cap: evicted %d oldest envelope(s) from %s " "(cap=%d)",
             evicted,
             directory,
             max_depth,

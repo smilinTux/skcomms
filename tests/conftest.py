@@ -47,6 +47,7 @@ def _isolate_loop_and_registry():
 
     try:
         from skcomms.access.registry import DEFAULT_REGISTRY
+
         DEFAULT_REGISTRY.clear()
     except Exception:  # pragma: no cover — access pkg optional
         pass
@@ -62,6 +63,7 @@ def _isolate_loop_and_registry():
         asyncio.set_event_loop(asyncio.new_event_loop())
     try:
         from skcomms.access.registry import DEFAULT_REGISTRY
+
         DEFAULT_REGISTRY.clear()
     except Exception:  # pragma: no cover
         pass

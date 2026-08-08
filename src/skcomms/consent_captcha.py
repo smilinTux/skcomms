@@ -30,6 +30,7 @@ This module is purely additive: it imports the shared :func:`skcomms.home.skcomm
 primitive and does not touch :mod:`skcomms.consent`, ``api.py`` or ``cli.py`` — the
 gate composes it (see the integration note in the module that wires the stack).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -93,15 +94,15 @@ def derive_challenge(seed: Union[str, bytes]) -> Tuple[str, str, str]:
     # from the answer derivation so the id leaks nothing about the answer).
     challenge_id = hashlib.sha256(b"skcomms-captcha-cid:" + sb).hexdigest()[:16]
 
-    a = (digest[0] % 9) + 1          # 1..9
-    b = (digest[1] % 9) + 1          # 1..9
+    a = (digest[0] % 9) + 1  # 1..9
+    b = (digest[1] % 9) + 1  # 1..9
     op = _OPS[digest[2] % len(_OPS)]
 
     if op == "+":
         value = a + b
         lhs, rhs = a, b
     elif op == "-":
-        lhs, rhs = max(a, b), min(a, b)   # normalise → non-negative
+        lhs, rhs = max(a, b), min(a, b)  # normalise → non-negative
         value = lhs - rhs
     else:  # "*"
         value = a * b
@@ -154,9 +155,7 @@ class Captcha:
     def _hash(answer: str) -> str:
         return hashlib.sha256(answer.encode("utf-8")).hexdigest()
 
-    def generate(
-        self, seed: Union[str, bytes], *, now: Optional[float] = None
-    ) -> Tuple[str, str]:
+    def generate(self, seed: Union[str, bytes], *, now: Optional[float] = None) -> Tuple[str, str]:
         """Issue a challenge from *seed*; persist the hashed answer + TTL.
 
         Args:
@@ -179,9 +178,7 @@ class Captcha:
             )
         return challenge_id, prompt_text
 
-    def verify(
-        self, challenge_id: str, answer: str, *, now: Optional[float] = None
-    ) -> bool:
+    def verify(self, challenge_id: str, answer: str, *, now: Optional[float] = None) -> bool:
         """One-shot verify *answer* against the stored challenge.
 
         Fails closed (``False``) when the challenge is unknown, expired

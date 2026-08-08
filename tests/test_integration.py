@@ -61,7 +61,9 @@ def test_absent_skcapstone_falls_back_to_log(monkeypatch):
     monkeypatch.delenv("SK_STANDALONE", raising=False)
     monkeypatch.setattr(integration, "_sdk", None)
     assert integration.is_present() is False
-    assert integration.alert("heartbeat_publish_failed", {"node_id": "x", "error": "oops"}) is False
+    assert (
+        integration.alert("heartbeat_publish_failed", {"node_id": "x", "error": "oops"}) is False
+    )
     assert integration.ensure_schedule() is False
     assert integration.register_self() is False
     assert integration.unregister_schedule() is False
@@ -100,7 +102,10 @@ def test_alert_publishes_to_correct_severity_topic(home):
 
 def test_alert_critical_level_publishes(home):
     """critical-level alert lands on skcomms.critical topic."""
-    assert integration.alert("fatal_transport_error", {"detail": "conn reset"}, level="critical") is True
+    assert (
+        integration.alert("fatal_transport_error", {"detail": "conn reset"}, level="critical")
+        is True
+    )
     topic_dir = home / "pubsub" / "topics" / "skcomms.critical"
     assert topic_dir.is_dir()
     data = json.loads(next(topic_dir.glob("msg-*.json")).read_text())

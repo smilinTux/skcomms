@@ -80,7 +80,10 @@ def test_wrapped_padded_roundtrips_and_records_suite():
     pub, priv = _keypair()
     signed = _signed(to_fqid="bob@chef.skworld", body="sensitive body")
     wire = wrap_signed(
-        signed, dest_hybrid_pub=pub, next_hop="relay-1", enabled=True,
+        signed,
+        dest_hybrid_pub=pub,
+        next_hop="relay-1",
+        enabled=True,
         flags=["urgent"],
     )
     inner_meta, recovered = unwrap_signed(wire, priv)
@@ -122,10 +125,8 @@ def test_pad_false_escape_hatch_does_not_normalise():
     pub, priv = _keypair()
     short = _signed(body="hi")
     longer = _signed(body="a" * 1000)
-    w_short = wrap_signed(short, dest_hybrid_pub=pub, next_hop="r",
-                          enabled=True, pad=False)
-    w_long = wrap_signed(longer, dest_hybrid_pub=pub, next_hop="r",
-                         enabled=True, pad=False)
+    w_short = wrap_signed(short, dest_hybrid_pub=pub, next_hop="r", enabled=True, pad=False)
+    w_long = wrap_signed(longer, dest_hybrid_pub=pub, next_hop="r", enabled=True, pad=False)
     assert len(w_short) != len(w_long)
     inner_meta, recovered = unwrap_signed(w_short, priv)
     assert recovered.to_bytes() == short.to_bytes()
@@ -158,8 +159,7 @@ class _FakeTransport:
         from skcomms.transport import SendResult
 
         self.sent.append((recipient, envelope_bytes))
-        return SendResult(success=True, transport_name=self.name,
-                          envelope_id="", latency_ms=0.0)
+        return SendResult(success=True, transport_name=self.name, envelope_id="", latency_ms=0.0)
 
     def receive(self):
         return []
@@ -205,10 +205,16 @@ def test_router_route_signed_pqroute_pads_and_recovers(_isolate_retry_queue):
 
     t1, t2 = _FakeTransport(), _FakeTransport()
     Router(transports=[t1]).route_signed(
-        short, pqroute=True, dest_hybrid_pub=pub, next_hop="relay-1.skworld.io",
+        short,
+        pqroute=True,
+        dest_hybrid_pub=pub,
+        next_hop="relay-1.skworld.io",
     )
     Router(transports=[t2]).route_signed(
-        longer, pqroute=True, dest_hybrid_pub=pub, next_hop="relay-1.skworld.io",
+        longer,
+        pqroute=True,
+        dest_hybrid_pub=pub,
+        next_hop="relay-1.skworld.io",
     )
     (r1, w1), (r2, w2) = t1.sent[0], t2.sent[0]
 
@@ -234,10 +240,18 @@ def test_router_route_signed_pqroute_pad_false(_isolate_retry_queue):
     longer = _signed(body="a" * 1000)
     t1, t2 = _FakeTransport(), _FakeTransport()
     Router(transports=[t1]).route_signed(
-        short, pqroute=True, dest_hybrid_pub=pub, next_hop="r", pqroute_pad=False,
+        short,
+        pqroute=True,
+        dest_hybrid_pub=pub,
+        next_hop="r",
+        pqroute_pad=False,
     )
     Router(transports=[t2]).route_signed(
-        longer, pqroute=True, dest_hybrid_pub=pub, next_hop="r", pqroute_pad=False,
+        longer,
+        pqroute=True,
+        dest_hybrid_pub=pub,
+        next_hop="r",
+        pqroute_pad=False,
     )
     assert is_pqrouted(t1.sent[0][1]) and is_pqrouted(t2.sent[0][1])
     assert len(t1.sent[0][1]) != len(t2.sent[0][1])

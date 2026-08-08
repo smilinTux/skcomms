@@ -21,8 +21,10 @@ def _adapt(fn):
     their own exposed-root allowlist + audit identity from config); per-call
     identity threading is A6/F1.
     """
+
     def handler(arguments: dict, ctx: Any, _fn=fn):
         return _fn(**(arguments or {}))
+
     return handler
 
 
@@ -35,8 +37,9 @@ def register_builtin_tools(registry: Optional[Any] = None) -> list[str]:
 
     # A3 knowledge tools — TOOL_CATALOG = [(name, fn, description, scope), ...]
     for name, fn, description, scope in knowledge.TOOL_CATALOG:
-        register_tool(name, _adapt(fn), scope=scope, description=description,
-                      replace=True, registry=registry)
+        register_tool(
+            name, _adapt(fn), scope=scope, description=description, replace=True, registry=registry
+        )
         names.append(name)
 
     # A4 file tools — TOOL_SPECS = [{name, scope, description, inputSchema}], fn = module-level
@@ -45,10 +48,15 @@ def register_builtin_tools(registry: Optional[Any] = None) -> list[str]:
         fn = getattr(files, name, None)
         if fn is None:
             continue
-        register_tool(name, _adapt(fn), scope=spec.get("scope", "read"),
-                      description=spec.get("description", ""),
-                      input_schema=spec.get("inputSchema"),
-                      replace=True, registry=registry)
+        register_tool(
+            name,
+            _adapt(fn),
+            scope=spec.get("scope", "read"),
+            description=spec.get("description", ""),
+            input_schema=spec.get("inputSchema"),
+            replace=True,
+            registry=registry,
+        )
         names.append(name)
 
     return names

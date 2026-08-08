@@ -96,7 +96,10 @@ def test_downgrade_lock_detects_suite_mismatch():
     # Recipient is tricked into believing a classical suite was negotiated.
     with pytest.raises(DowngradeDetected):
         open_sealed(
-            sealed, priv, sender="a", recipient="b",
+            sealed,
+            priv,
+            sender="a",
+            recipient="b",
             expected_suite="x25519-pgp-wrap-v1",
         )
 
@@ -164,8 +167,11 @@ def test_envelope_auto_picks_hybrid_and_roundtrips():
     ec = _crypto()
     env = _envelope("HNDL-sensitive body")
     sealed_env, suite = ec.encrypt_payload_auto(
-        env, recipient_public_armor="", recipient_bundle=bundle,
-        sender=env.sender, recipient=env.recipient,
+        env,
+        recipient_public_armor="",
+        recipient_bundle=bundle,
+        sender=env.sender,
+        recipient=env.recipient,
     )
     assert suite == HYBRID_SUITE
     assert sealed_env.payload.encrypted is True

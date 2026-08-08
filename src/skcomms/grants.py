@@ -98,9 +98,9 @@ class ConsentToken(BaseModel):
         never part of what it signs, so it is omitted here.
         """
         data = {k: getattr(self, k) for k in _TOKEN_FIELDS}
-        return json.dumps(
-            data, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-        ).encode("utf-8")
+        return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+            "utf-8"
+        )
 
     def to_t9_dict(self) -> dict:
         """Serialize to the exact dict shape skmemory T9 reads."""
@@ -269,11 +269,7 @@ def _detached_sig(signer: EnvelopeSigner, canonical: bytes) -> str:
 
     key = signer._key  # reuse the loaded key (same as EnvelopeSigner internals)
     pgp_message = pgpy.PGPMessage.new(canonical, cleartext=False)
-    ctx = (
-        key.unlock(signer._passphrase)
-        if key.is_protected
-        else contextlib.nullcontext()
-    )
+    ctx = key.unlock(signer._passphrase) if key.is_protected else contextlib.nullcontext()
     with ctx:
         sig = key.sign(pgp_message)
     return str(sig)
@@ -308,9 +304,7 @@ def verify_grant(token: dict, pubkey: Optional[str] = None) -> GrantVerification
 
     armor = pubkey or _resolve_granter_pubkey(tok.granted_by)
     if not armor:
-        return GrantVerification(
-            valid=False, reason=f"no public key for granter {tok.granted_by}"
-        )
+        return GrantVerification(valid=False, reason=f"no public key for granter {tok.granted_by}")
 
     if not tok.signature:
         return GrantVerification(valid=False, reason="token has no signature")
@@ -346,9 +340,7 @@ def verify_grant(token: dict, pubkey: Optional[str] = None) -> GrantVerification
         )
 
     if tok.is_expired():
-        return GrantVerification(
-            valid=False, reason="grant expired", fingerprint=fingerprint
-        )
+        return GrantVerification(valid=False, reason="grant expired", fingerprint=fingerprint)
 
     return GrantVerification(valid=True, reason="grant valid", fingerprint=fingerprint)
 

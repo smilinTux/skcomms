@@ -176,7 +176,7 @@ def _tcp_probe(port: int, hosts: list[str] | None = None, timeout: float = 0.35)
     A cheap liveness signal — does not speak any protocol, just confirms a
     listener is accepting connections. Kept short so the endpoint stays snappy.
     """
-    for host in (hosts or _probe_hosts()):
+    for host in hosts or _probe_hosts():
         try:
             with socket.create_connection((host, port), timeout=timeout):
                 return True
@@ -353,9 +353,7 @@ def build_capabilities(skcomms=None, *, probe: bool = True) -> dict:
     services: list[dict] = [
         {
             "id": "text",
-            "status": _best(
-                t["file"], t["syncthing"], t["https-s2s"], t["websocket"], t["nostr"]
-            ),
+            "status": _best(t["file"], t["syncthing"], t["https-s2s"], t["websocket"], t["nostr"]),
             "via": ["file", "syncthing", "https-s2s", "websocket", "nostr"],
         },
         {"id": "voice", "status": voice_status, "via": voice_via},

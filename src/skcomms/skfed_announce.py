@@ -86,7 +86,9 @@ def _default_base_resolver() -> Optional[str]:
     return f"https://{dns}" if dns else None
 
 
-def resolve_base(base: Optional[str] = None, *, resolver: Optional[BaseResolver] = None) -> Optional[str]:
+def resolve_base(
+    base: Optional[str] = None, *, resolver: Optional[BaseResolver] = None
+) -> Optional[str]:
     """Resolve this node's directory/endpoint base URL (no trailing slash).
 
     Order: explicit ``base`` -> ``SKFED_BASE_URL`` env -> ``resolver()``

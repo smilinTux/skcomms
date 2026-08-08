@@ -99,8 +99,11 @@ class MailboxSignaling:
             if kind is None:
                 continue
             if not getattr(verification, "valid", False):
-                logger.debug("signaling: dropping unverified %s from %s",
-                             env.subject, getattr(env, "from_fqid", "?"))
+                logger.debug(
+                    "signaling: dropping unverified %s from %s",
+                    env.subject,
+                    getattr(env, "from_fqid", "?"),
+                )
                 continue
             if getattr(env, "to_fqid", None) != me:
                 continue
@@ -109,10 +112,12 @@ class MailboxSignaling:
             except (json.JSONDecodeError, ValueError):
                 logger.debug("signaling: dropping unparseable %s body", env.subject)
                 continue
-            out.append({
-                "from_fqid": env.from_fqid,
-                "kind": kind,
-                "payload": data.get("payload"),
-                "id": getattr(env, "id", None),
-            })
+            out.append(
+                {
+                    "from_fqid": env.from_fqid,
+                    "kind": kind,
+                    "payload": data.get("payload"),
+                    "id": getattr(env, "id", None),
+                }
+            )
         return out

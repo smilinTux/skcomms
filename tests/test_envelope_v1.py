@@ -15,7 +15,6 @@ import pytest
 
 from skcomms.envelope import Envelope, SignedEnvelope
 
-
 # ---------------------------------------------------------------------------
 # PGP key fixtures (generated in-process)
 # ---------------------------------------------------------------------------

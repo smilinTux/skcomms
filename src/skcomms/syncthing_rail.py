@@ -358,7 +358,9 @@ class SyncthingRest:
 
     def completion(self, folder: str, device: str) -> dict:
         """Sync completion for a (folder, device) pair (``GET /rest/db/completion``)."""
-        comp = self._call("GET", "/rest/db/completion", params={"folder": folder, "device": device})
+        comp = self._call(
+            "GET", "/rest/db/completion", params={"folder": folder, "device": device}
+        )
         return comp if isinstance(comp, dict) else {}
 
     # -- writes (provisioning) -------------------------------------------
@@ -890,9 +892,7 @@ def check_share_health(
             )
         )
     else:
-        checks.append(
-            HealthCheck("conflicts", RailStatus.OK, "no sync-conflict files", {})
-        )
+        checks.append(HealthCheck("conflicts", RailStatus.OK, "no sync-conflict files", {}))
 
     # --- stale_outbox (filesystem; always run) --------------------------
     stale = find_stale_outbox(home, realm, operator, stale_outbox_hours)

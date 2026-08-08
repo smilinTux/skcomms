@@ -4,6 +4,7 @@ SDP/ICE travel as capauth-signed skcomms envelopes (CALL_SDP_OFFER/ANSWER/ICE),
 verified on receipt against the peer's TOFU fingerprint — same mechanism as the
 A-phase CALL_INVITE ring (whose signing was fixed 2026-06-11).
 """
+
 from types import SimpleNamespace
 
 import skcomms.transports.signaling_mailbox as sm
@@ -27,10 +28,12 @@ def test_kind_subject_mapping_is_bijective():
 def test_send_signal_writes_signed_envelope(monkeypatch):
     sent = []
     monkeypatch.setattr(
-        sm, "send_message",
+        sm,
+        "send_message",
         lambda to_fqid, message, *, agent=None, subject=None, **kw: sent.append(
             {"to": to_fqid, "message": message, "subject": subject, "agent": agent}
-        ) or {"id": "x"},
+        )
+        or {"id": "x"},
     )
     chan = MailboxSignaling(agent="opus")
     chan.send_signal("lumina@chef.skworld", "offer", {"type": "offer", "sdp": "v=0..."})
@@ -39,6 +42,7 @@ def test_send_signal_writes_signed_envelope(monkeypatch):
     assert sent[0]["subject"] == SUBJECT_OFFER
     assert sent[0]["agent"] == "opus"
     import json
+
     body = json.loads(sent[0]["message"])
     assert body["kind"] == "offer"
     assert body["payload"]["sdp"] == "v=0..."
@@ -46,8 +50,12 @@ def test_send_signal_writes_signed_envelope(monkeypatch):
 
 def _env(subject, from_fqid, to_fqid, payload, kind):
     import json
+
     return SimpleNamespace(
-        id="e1", subject=subject, from_fqid=from_fqid, to_fqid=to_fqid,
+        id="e1",
+        subject=subject,
+        from_fqid=from_fqid,
+        to_fqid=to_fqid,
         body=json.dumps({"kind": kind, "payload": payload}),
     )
 
@@ -56,17 +64,27 @@ def test_poll_signals_returns_only_verified_self_addressed(monkeypatch):
     monkeypatch.setattr(sm, "_self_fqid", lambda agent=None: "lumina@chef.skworld")
     inbox = [
         # valid offer addressed to us → kept
-        (_env(SUBJECT_OFFER, "opus@chef.skworld", "lumina@chef.skworld", {"sdp": "A"}, "offer"),
-         SimpleNamespace(valid=True)),
+        (
+            _env(SUBJECT_OFFER, "opus@chef.skworld", "lumina@chef.skworld", {"sdp": "A"}, "offer"),
+            SimpleNamespace(valid=True),
+        ),
         # invalid signature → dropped
-        (_env(SUBJECT_ANSWER, "opus@chef.skworld", "lumina@chef.skworld", {"sdp": "B"}, "answer"),
-         SimpleNamespace(valid=False)),
+        (
+            _env(
+                SUBJECT_ANSWER, "opus@chef.skworld", "lumina@chef.skworld", {"sdp": "B"}, "answer"
+            ),
+            SimpleNamespace(valid=False),
+        ),
         # not addressed to us → dropped
-        (_env(SUBJECT_ICE, "opus@chef.skworld", "someone@else.z", {"candidate": "C"}, "ice"),
-         SimpleNamespace(valid=True)),
+        (
+            _env(SUBJECT_ICE, "opus@chef.skworld", "someone@else.z", {"candidate": "C"}, "ice"),
+            SimpleNamespace(valid=True),
+        ),
         # non-signaling subject → dropped
-        (_env("CALL_INVITE", "opus@chef.skworld", "lumina@chef.skworld", {}, "offer"),
-         SimpleNamespace(valid=True)),
+        (
+            _env("CALL_INVITE", "opus@chef.skworld", "lumina@chef.skworld", {}, "offer"),
+            SimpleNamespace(valid=True),
+        ),
     ]
     monkeypatch.setattr(sm, "read_inbox", lambda agent=None: inbox)
     chan = MailboxSignaling(agent="lumina")
@@ -80,8 +98,11 @@ def test_poll_signals_returns_only_verified_self_addressed(monkeypatch):
 def test_poll_signals_skips_unparseable_body(monkeypatch):
     monkeypatch.setattr(sm, "_self_fqid", lambda agent=None: "lumina@chef.skworld")
     bad = SimpleNamespace(
-        id="e2", subject=SUBJECT_OFFER, from_fqid="opus@chef.skworld",
-        to_fqid="lumina@chef.skworld", body="{not json",
+        id="e2",
+        subject=SUBJECT_OFFER,
+        from_fqid="opus@chef.skworld",
+        to_fqid="lumina@chef.skworld",
+        body="{not json",
     )
     monkeypatch.setattr(sm, "read_inbox", lambda agent=None: [(bad, SimpleNamespace(valid=True))])
     chan = MailboxSignaling(agent="lumina")

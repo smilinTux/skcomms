@@ -64,14 +64,25 @@ _FLEET_COT_TYPE = "a-f-G-U-C"
 # no GPS); they are only spread apart so seeded markers are individually visible.
 # ``hint`` is the tailscale/LAN address for human reference (not a GeoUnit field).
 _FLEET_NODES: list[dict[str, Any]] = [
-    {"name": "noroc2027", "hint": "100.108.59.57 / .158 dev+primary (this host)",
-     "lat": 39.0000, "lon": -77.0000},
-    {"name": "dot100", "hint": "192.168.0.100 RTX 5060 Ti / inference",
-     "lat": 39.0200, "lon": -77.0200},
-    {"name": "dot41", "hint": "100.86.156.5 / .41 tailscale-only heavy-build",
-     "lat": 38.9800, "lon": -77.0200},
-    {"name": "chiap08", "hint": "100.81.238.58 terminal node",
-     "lat": 39.0200, "lon": -76.9800},
+    {
+        "name": "noroc2027",
+        "hint": "100.108.59.57 / .158 dev+primary (this host)",
+        "lat": 39.0000,
+        "lon": -77.0000,
+    },
+    {
+        "name": "dot100",
+        "hint": "192.168.0.100 RTX 5060 Ti / inference",
+        "lat": 39.0200,
+        "lon": -77.0200,
+    },
+    {
+        "name": "dot41",
+        "hint": "100.86.156.5 / .41 tailscale-only heavy-build",
+        "lat": 38.9800,
+        "lon": -77.0200,
+    },
+    {"name": "chiap08", "hint": "100.81.238.58 terminal node", "lat": 39.0200, "lon": -76.9800},
 ]
 
 

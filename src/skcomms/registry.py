@@ -428,7 +428,7 @@ class TailscaleBackend(RegistryBackend):
         prefix = self.host_template.split("{", 1)[0]  # "skcomms-"
         if not host.startswith(prefix):
             return None
-        rest = host[len(prefix):]
+        rest = host[len(prefix) :]
         if "-" not in rest:
             return None
         agent, operator = rest.split("-", 1)

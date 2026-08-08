@@ -28,7 +28,7 @@ def test_rebind_fqid_to_new_node_clears_stale_reverse(tmp_path):
     m = NodeMap(path=tmp_path / "nodes.json")
     m.bind("A", "node_1")
     m.bind("A", "node_2")  # rebind A to a new node
-    assert m.fqid_for("node_1") is None       # stale reverse entry cleared
+    assert m.fqid_for("node_1") is None  # stale reverse entry cleared
     assert m.fqid_for("node_2") == "A"
     assert m.node_for("A") == "node_2"
 

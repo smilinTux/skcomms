@@ -115,12 +115,12 @@ VERSION = 0x01
 SUITE_TAG = 0x01  # 0x01 -> mldsa65-ed25519-v2 (the only suite tag today)
 
 #: Fixed leg sizes (bytes) for the mldsa65-ed25519-v2 suite.
-ED25519_SIG_LEN = 64        # RFC 8032 Ed25519 signature
-ED25519_PUB_LEN = 32        # RFC 8032 Ed25519 public key
-ED25519_SEED_LEN = 32       # Ed25519 private seed (raw)
-MLDSA_PUB_LEN = 1952        # FIPS 204 ML-DSA-65 public key
-MLDSA_SECRET_LEN = 4032     # FIPS 204 ML-DSA-65 private key
-MLDSA_SIG_LEN = 3309        # FIPS 204 ML-DSA-65 signature
+ED25519_SIG_LEN = 64  # RFC 8032 Ed25519 signature
+ED25519_PUB_LEN = 32  # RFC 8032 Ed25519 public key
+ED25519_SEED_LEN = 32  # Ed25519 private seed (raw)
+MLDSA_PUB_LEN = 1952  # FIPS 204 ML-DSA-65 public key
+MLDSA_SECRET_LEN = 4032  # FIPS 204 ML-DSA-65 private key
+MLDSA_SIG_LEN = 3309  # FIPS 204 ML-DSA-65 signature
 
 #: Header is MAGIC(4) + VERSION(1) + SUITE_TAG(1) = 6 bytes, then two
 #: length-prefixed (uint16) legs.
@@ -129,9 +129,7 @@ _LEN_PREFIX = 2  # uint16 big-endian length prefix per leg
 
 #: Total composite size for this suite (for tests / size budgeting).
 COMPOSITE_SIG_LEN = (
-    _HEADER_LEN
-    + _LEN_PREFIX + ED25519_SIG_LEN
-    + _LEN_PREFIX + MLDSA_SIG_LEN
+    _HEADER_LEN + _LEN_PREFIX + ED25519_SIG_LEN + _LEN_PREFIX + MLDSA_SIG_LEN
 )  # = 3383
 
 
@@ -290,9 +288,7 @@ def decode_composite(composite: bytes) -> tuple[bytes, bytes]:
             truncated, or trailing garbage).
     """
     if not isinstance(composite, (bytes, bytearray)):
-        raise PqSigFormatError(
-            f"composite must be bytes, got {type(composite).__name__}"
-        )
+        raise PqSigFormatError(f"composite must be bytes, got {type(composite).__name__}")
     buf = bytes(composite)
     if len(buf) < _HEADER_LEN + _LEN_PREFIX:
         raise PqSigFormatError("composite signature truncated (header)")
@@ -302,15 +298,12 @@ def decode_composite(composite: bytes) -> tuple[bytes, bytes]:
     version = buf[pos]
     pos += 1
     if version != VERSION:
-        raise PqSigFormatError(
-            f"unsupported composite version {version} (expected {VERSION})"
-        )
+        raise PqSigFormatError(f"unsupported composite version {version} (expected {VERSION})")
     suite_tag = buf[pos]
     pos += 1
     if suite_tag != SUITE_TAG:
         raise PqSigFormatError(
-            f"unknown composite suite tag {suite_tag} (expected {SUITE_TAG} "
-            f"-> {SUITE_ID})"
+            f"unknown composite suite tag {suite_tag} (expected {SUITE_TAG} " f"-> {SUITE_ID})"
         )
 
     # Ed25519 leg.
@@ -336,9 +329,7 @@ def decode_composite(composite: bytes) -> tuple[bytes, bytes]:
     if pos != len(buf):
         raise PqSigFormatError("composite signature has trailing garbage")
     if ed_len != ED25519_SIG_LEN:
-        raise PqSigFormatError(
-            f"ed25519 leg must be {ED25519_SIG_LEN} bytes, got {ed_len}"
-        )
+        raise PqSigFormatError(f"ed25519 leg must be {ED25519_SIG_LEN} bytes, got {ed_len}")
     return ed_sig, mldsa_sig
 
 
@@ -347,9 +338,7 @@ def decode_composite(composite: bytes) -> tuple[bytes, bytes]:
 # ---------------------------------------------------------------------------
 
 
-def hybrid_sign(
-    message: bytes, ed25519_priv: bytes, mldsa_priv: bytes
-) -> bytes:
+def hybrid_sign(message: bytes, ed25519_priv: bytes, mldsa_priv: bytes) -> bytes:
     """Produce a hybrid composite signature over ``message``.
 
     Both legs sign the EXACT same ``message`` bytes. The Ed25519 leg is produced
@@ -370,9 +359,7 @@ def hybrid_sign(
     """
     oqs = _import_oqs()
     if not isinstance(message, (bytes, bytearray)):
-        raise PqSigFormatError(
-            f"message must be bytes, got {type(message).__name__}"
-        )
+        raise PqSigFormatError(f"message must be bytes, got {type(message).__name__}")
     _expect_len("Ed25519 private seed", ed25519_priv, ED25519_SEED_LEN)
     _expect_len("ML-DSA private key", mldsa_priv, MLDSA_SECRET_LEN)
     message = bytes(message)
@@ -427,9 +414,7 @@ def hybrid_verify(
     """
     oqs = _import_oqs()
     if not isinstance(message, (bytes, bytearray)):
-        raise PqSigFormatError(
-            f"message must be bytes, got {type(message).__name__}"
-        )
+        raise PqSigFormatError(f"message must be bytes, got {type(message).__name__}")
     _expect_len("Ed25519 public key", ed25519_pub, ED25519_PUB_LEN)
     _expect_len("ML-DSA public key", mldsa_pub, MLDSA_PUB_LEN)
     message = bytes(message)
@@ -476,9 +461,7 @@ def default_key_dir() -> Path:
     return Path.home() / ".skcomms" / "pqc"
 
 
-def load_or_create_signer_keypair(
-    signer: str, key_dir: Path | None = None
-) -> HybridSigKeypair:
+def load_or_create_signer_keypair(signer: str, key_dir: Path | None = None) -> HybridSigKeypair:
     """Load (or generate + persist) a per-signer hybrid signing keypair.
 
     The ML-DSA-65 private key lives at ``<key_dir>/<signer>_mldsa65.key`` (0600);

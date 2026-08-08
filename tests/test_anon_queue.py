@@ -75,13 +75,13 @@ def test_aqid_no_base64_padding_chars():
     "bad",
     [
         "",
-        "relay/abcd",                       # missing scheme
-        "aqid:relay",                       # missing /sid
-        "aqid:/abcd",                       # empty relay
-        "aqid:relay/",                      # empty sid
-        "aqid:relay/!!!notbase64!!!",       # bad base64
-        "aqid:relay/YWJj",                  # decodes to 3 bytes, not 16
-        "https://relay/abcd",               # wrong scheme
+        "relay/abcd",  # missing scheme
+        "aqid:relay",  # missing /sid
+        "aqid:/abcd",  # empty relay
+        "aqid:relay/",  # empty sid
+        "aqid:relay/!!!notbase64!!!",  # bad base64
+        "aqid:relay/YWJj",  # decodes to 3 bytes, not 16
+        "https://relay/abcd",  # wrong scheme
     ],
 )
 def test_aqid_rejects_malformed(bad):

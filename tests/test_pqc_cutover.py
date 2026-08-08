@@ -28,7 +28,7 @@ class _Provider:
         self._peers[short] = {"suite": "x25519-mlkem768", "hybrid_public_hex": pub.hex()}
 
     def short(self, identity):
-        s = identity[len("capauth:"):] if identity.startswith("capauth:") else identity
+        s = identity[len("capauth:") :] if identity.startswith("capauth:") else identity
         return s.split("@")[0]
 
     def own_short(self):

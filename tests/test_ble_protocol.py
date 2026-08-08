@@ -121,6 +121,7 @@ def test_unpad_rejects_too_short():
 
 def test_unpad_rejects_length_prefix_overrun():
     import struct as _s
+
     # declares true_len=100 but provides far fewer bytes
     bogus = _s.pack(">H", 100) + b"short"
     with pytest.raises(ValueError, match="exceeds"):

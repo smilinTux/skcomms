@@ -23,6 +23,7 @@ quarantine (:mod:`skcomms.consent`), capability tokens, and signed ban feeds. St
 :class:`~skcomms.consent.ContactStore` layout. The clock is injectable so the delay
 is testable without sleeping.
 """
+
 from __future__ import annotations
 
 import sqlite3

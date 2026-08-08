@@ -61,9 +61,7 @@ def _canonical_bytes(envelope: Union[Envelope, MessageEnvelope]) -> bytes:
         return envelope.canonical_bytes()
     # Legacy MessageEnvelope path
     data = json.loads(envelope.model_dump_json())
-    return json.dumps(
-        data, sort_keys=True, separators=(",", ":"), default=str
-    ).encode("utf-8")
+    return json.dumps(data, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -215,9 +213,7 @@ class HybridEnvelopeSigner:
         self._pqsig = pqsig
         if keypair is None:
             if not signer_id:
-                raise ValueError(
-                    "HybridEnvelopeSigner needs a keypair or a signer_id"
-                )
+                raise ValueError("HybridEnvelopeSigner needs a keypair or a signer_id")
             keypair = pqsig.load_or_create_signer_keypair(signer_id)
         self._kp = keypair
         # A stable signer label: caller id if given, else a short hash of the
@@ -242,9 +238,7 @@ class HybridEnvelopeSigner:
         """
         canonical = envelope.canonical_bytes()
         content_hash = hashlib.sha256(canonical).hexdigest()
-        composite = self._pqsig.hybrid_sign(
-            canonical, self._kp.ed25519_priv, self._kp.mldsa_priv
-        )
+        composite = self._pqsig.hybrid_sign(canonical, self._kp.ed25519_priv, self._kp.mldsa_priv)
         return SignedEnvelope(
             envelope=envelope,
             signature=base64.b64encode(composite).decode("ascii"),
@@ -513,9 +507,7 @@ class EnvelopeVerifier:
             logger.warning("signing.py verify_bytes: %s", exc)
             return False
 
-    def _find_key(
-        self, signed: Union[SignedEnvelope, "LegacySignedEnvelope"]
-    ) -> Optional[str]:
+    def _find_key(self, signed: Union[SignedEnvelope, "LegacySignedEnvelope"]) -> Optional[str]:
         """Look up the public key for a signed envelope's signer.
 
         SECURITY: the key is resolved from the CLAIMED IDENTITY (``from_fqid`` /

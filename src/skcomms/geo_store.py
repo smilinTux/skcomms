@@ -130,6 +130,7 @@ def geo_payload_has_units(payload: Any) -> bool:
         return len(feats) > 0
     return False
 
+
 # --------------------------------------------------------------------------
 # Thin adapter over the ONE shared skcot GeoStore type.
 # --------------------------------------------------------------------------

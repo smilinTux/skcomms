@@ -2,8 +2,12 @@ from skcomms.glossa.macros import MacroLexicon, default_macro_lexicon
 
 
 def test_expand_and_version():
-    lex = MacroLexicon({"GTD-sweep": "review open tasks, reprioritize by the 4 C's, "
-                                     "flag blockers, propose next actions"})
+    lex = MacroLexicon(
+        {
+            "GTD-sweep": "review open tasks, reprioritize by the 4 C's, "
+            "flag blockers, propose next actions"
+        }
+    )
     assert lex.expand("GTD-sweep").startswith("review open tasks")
     assert lex.expand("nope") is None
     assert len(lex.version) == 12

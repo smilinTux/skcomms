@@ -107,8 +107,7 @@ class SignedDirectory(BaseModel):
             "operator": self.operator,
             "signed_at": self.signed_at,
             "entries": [
-                e.model_dump(mode="json")
-                for e in sorted(self.entries, key=lambda x: x.fqid)
+                e.model_dump(mode="json") for e in sorted(self.entries, key=lambda x: x.fqid)
             ],
         }
         return json.dumps(

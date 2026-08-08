@@ -63,7 +63,7 @@ class FakeLoRaInterface(LoRaMeshInterface):
         self._medium = medium
         self._cb: ReceiveCb | None = None
         self.running = False
-        self.bytes_sent = 0   # telemetry only; not a cap
+        self.bytes_sent = 0  # telemetry only; not a cap
         medium.register(self)
 
     async def start(self) -> None:
@@ -82,8 +82,7 @@ class FakeLoRaInterface(LoRaMeshInterface):
         self._cb = cb
 
     def info(self) -> dict:
-        return {"node_id": self.node_id, "bytes_sent": self.bytes_sent,
-                "running": self.running}
+        return {"node_id": self.node_id, "bytes_sent": self.bytes_sent, "running": self.running}
 
     def _inbound(self, data: bytes, src: str) -> None:
         if self._cb is not None:

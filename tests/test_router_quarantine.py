@@ -106,10 +106,17 @@ def test_quarantine_absent_health_check_does_not_crash():
         category = TransportCategory.FILE_BASED
 
         def configure(self, config): ...  # pragma: no cover
-        def is_available(self): return True
+        def is_available(self):
+            return True
+
         def send(self, b, r):  # pragma: no cover
-            return SendResult(success=True, transport_name=self.name, envelope_id="", latency_ms=0.0)
-        def receive(self): return []  # pragma: no cover
+            return SendResult(
+                success=True, transport_name=self.name, envelope_id="", latency_ms=0.0
+            )
+
+        def receive(self):
+            return []  # pragma: no cover
+
         def health_check(self):  # pragma: no cover
             raise AttributeError("no health check")
 

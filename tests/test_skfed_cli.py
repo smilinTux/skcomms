@@ -50,7 +50,18 @@ def test_skfed_announce_invokes_announce_self(monkeypatch):
     runner = CliRunner()
     res = runner.invoke(
         cli.main,
-        ["skfed", "announce", "--agent", "lumina", "--base", "https://l.ts.net", "--cap", "dm", "--cap", "files"],
+        [
+            "skfed",
+            "announce",
+            "--agent",
+            "lumina",
+            "--base",
+            "https://l.ts.net",
+            "--cap",
+            "dm",
+            "--cap",
+            "files",
+        ],
     )
     assert res.exit_code == 0, res.output
     assert captured["agent"] == "lumina"

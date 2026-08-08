@@ -17,16 +17,8 @@ FQID / realm layer (pre-alpha stubs, implementations landing in coord tasks):
 
 __version__ = "0.2.3"
 
-from .core import SKComms, SKComm
+from .core import SKComm, SKComms
 from .crypto import EnvelopeCrypto, KeyStore
-from .models import (
-    MessageEnvelope,
-    MessageMetadata,
-    MessagePayload,
-    MessageType,
-    RoutingConfig,
-    RoutingMode,
-)
 from .crypto_suites import (
     CryptoSuite,
     SuiteKind,
@@ -37,6 +29,14 @@ from .crypto_suites import (
     suite_status,
 )
 from .envelope import Envelope, SignedEnvelope
+from .models import (
+    MessageEnvelope,
+    MessageMetadata,
+    MessagePayload,
+    MessageType,
+    RoutingConfig,
+    RoutingMode,
+)
 from .signing import EnvelopeSigner, EnvelopeVerifier, VerificationResult
 from .transport import HealthStatus, SendResult, Transport, TransportError, TransportStatus
 

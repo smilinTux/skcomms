@@ -27,8 +27,10 @@ Public surface:
 from __future__ import annotations
 
 from . import exec as exec_tools  # noqa: F401  (A7 exec tools)
-from . import files  # noqa: F401  (A4 file tools)
-from . import knowledge  # noqa: F401  (A3 knowledge tools + A1 location index)
+from . import (
+    files,  # noqa: F401  (A4 file tools)
+    knowledge,  # noqa: F401  (A3 knowledge tools + A1 location index)
+)
 from .audit import AccessAuditLog
 from .config import AccessConfig
 from .exec import register_builtin_exec_tools

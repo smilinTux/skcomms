@@ -37,6 +37,7 @@ Pure / testable: ``build_pipeline(agent, config_path=...)`` injects the config
 file, and every helper accepts an explicit ``config_path`` so nothing depends on
 ambient state beyond the env it deliberately reads.
 """
+
 from __future__ import annotations
 
 import logging
@@ -80,9 +81,7 @@ def load_runtime_config(agent: str, *, config_path: Optional[Path] = None) -> di
     return data or {}
 
 
-def save_runtime_config(
-    agent: str, cfg: dict, *, config_path: Optional[Path] = None
-) -> Path:
+def save_runtime_config(agent: str, cfg: dict, *, config_path: Optional[Path] = None) -> Path:
     """Persist *cfg* to *agent*'s ``runtime.yml`` (creating parents). Returns the path."""
     path = Path(config_path) if config_path else runtime_config_path(agent)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,9 +130,7 @@ def add_feed(
     return entry
 
 
-def remove_feed(
-    agent: str, publisher: str, *, config_path: Optional[Path] = None
-) -> bool:
+def remove_feed(agent: str, publisher: str, *, config_path: Optional[Path] = None) -> bool:
     """Unsubscribe (un-pin) *publisher*. Returns whether an entry was removed."""
     cfg = load_runtime_config(agent, config_path=config_path)
     feeds = cfg.get("ban_feeds") or []

@@ -6,6 +6,7 @@ credential — issued one-per-accepted-contact, derived as
 Blocking ONE contact drops THAT one token from the valid set without re-sharing a
 single profile-key with everyone (the explicit fix vs Signal's single token).
 """
+
 import pytest
 
 from skcomms.consent_tokens import TokenStore

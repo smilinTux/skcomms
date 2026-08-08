@@ -56,6 +56,7 @@ class P2PSessionManager:
             result = self._signaling.send_signal(peer, kind, payload)
             if asyncio.iscoroutine(result):
                 await result
+
         return _send
 
     def _new_session(self, peer: str) -> P2PSession:

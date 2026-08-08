@@ -10,6 +10,7 @@ answer, an expired challenge, or one that has burned through its attempt budget.
 
 The clock is injected so TTL expiry is testable without sleeping.
 """
+
 import hashlib
 
 import pytest

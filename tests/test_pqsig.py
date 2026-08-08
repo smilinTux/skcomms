@@ -22,9 +22,7 @@ import pytest
 
 from skcomms import pqsig
 
-pytestmark = pytest.mark.skipif(
-    not pqsig.is_available(), reason="liboqs (oqs) not available"
-)
+pytestmark = pytest.mark.skipif(not pqsig.is_available(), reason="liboqs (oqs) not available")
 
 
 # ---------------------------------------------------------------------------

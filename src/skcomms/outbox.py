@@ -363,7 +363,9 @@ class PersistentOutbox:
             if evicted:
                 logger.debug(
                     "Superseded %d stale outbox entr%s for key %s",
-                    evicted, "y" if evicted == 1 else "ies", supersede_key,
+                    evicted,
+                    "y" if evicted == 1 else "ies",
+                    supersede_key,
                 )
 
         # Bound check (after supersede eviction, which may have freed a slot).
@@ -680,7 +682,10 @@ class PersistentOutbox:
         if removed:
             logger.info(
                 "Dead-letter retention pruned %d entr%s (ttl=%sh max=%s)",
-                removed, "y" if removed == 1 else "ies", ttl_hours, max_count,
+                removed,
+                "y" if removed == 1 else "ies",
+                ttl_hours,
+                max_count,
             )
         return removed
 
@@ -703,7 +708,10 @@ class PersistentOutbox:
         if removed:
             logger.info(
                 "Outbox-archive retention pruned %d entr%s (ttl=%sh max=%s)",
-                removed, "y" if removed == 1 else "ies", ttl_hours, max_count,
+                removed,
+                "y" if removed == 1 else "ies",
+                ttl_hours,
+                max_count,
             )
         return removed
 
@@ -945,8 +953,7 @@ class PersistentOutbox:
             "entry preserved for a federation-capable router"
         )
         logger.info(
-            "Outbox %s held: SignedEnvelope ready but router lacks a "
-            "federation route path",
+            "Outbox %s held: SignedEnvelope ready but router lacks a " "federation route path",
             entry.envelope_id[:8],
         )
         return _DeliveryOutcome(delivered=False)

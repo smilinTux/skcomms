@@ -184,8 +184,7 @@ class PrekeyBundle:
             raise PqDmFormatError(f"hybrid_public_hex not hex: {exc}") from exc
         if len(pub) != HYBRID_PUBLIC_KEY_LEN:
             raise PqDmFormatError(
-                f"hybrid public key must be {HYBRID_PUBLIC_KEY_LEN} bytes, "
-                f"got {len(pub)}"
+                f"hybrid public key must be {HYBRID_PUBLIC_KEY_LEN} bytes, " f"got {len(pub)}"
             )
         return pub
 
@@ -350,17 +349,11 @@ def open_sealed(
         PqKemError / PqKemUnavailable: propagated from the KEM.
     """
     if not isinstance(sealed, (bytes, bytearray)):
-        raise PqDmFormatError(
-            f"sealed must be bytes, got {type(sealed).__name__}"
-        )
+        raise PqDmFormatError(f"sealed must be bytes, got {type(sealed).__name__}")
     if len(sealed) < SEALED_MIN_LEN:
-        raise PqDmFormatError(
-            f"sealed blob must be >= {SEALED_MIN_LEN} bytes, got {len(sealed)}"
-        )
+        raise PqDmFormatError(f"sealed blob must be >= {SEALED_MIN_LEN} bytes, got {len(sealed)}")
     ciphertext = bytes(sealed[:HYBRID_CIPHERTEXT_LEN])
-    nonce = bytes(
-        sealed[HYBRID_CIPHERTEXT_LEN : HYBRID_CIPHERTEXT_LEN + _WRAP_NONCE_LEN]
-    )
+    nonce = bytes(sealed[HYBRID_CIPHERTEXT_LEN : HYBRID_CIPHERTEXT_LEN + _WRAP_NONCE_LEN])
     body = bytes(sealed[HYBRID_CIPHERTEXT_LEN + _WRAP_NONCE_LEN :])
 
     aad = downgrade_lock_aad(expected_suite, sender=sender, recipient=recipient)
@@ -591,7 +584,7 @@ def open_multi(
     try:
         if not token.startswith(PQDM2_PREFIX):
             return None
-        rest = token[len(PQDM2_PREFIX):]
+        rest = token[len(PQDM2_PREFIX) :]
         h_b64, slots_b64, body_b64 = rest.split(".")
         header = json.loads(base64.b64decode(h_b64))
         slots = base64.b64decode(slots_b64)

@@ -5,6 +5,7 @@ identity gate (:func:`skcomms.trustbackup.private_key_paths`) must agree on the
 same ordered candidate set, or a node can pass the identity gate green while
 running with dead crypto. These tests pin both to the same three-tier layout.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -39,9 +40,7 @@ def test_per_agent_key_wins(fake_home):
 
 def test_falls_back_to_consolidated_operator(fake_home):
     _write_key(fake_home, ".skcapstone/capauth")  # only the operator key
-    assert resolve_signing_capauth_dir("lumina") == (
-        fake_home / ".skcapstone" / "capauth"
-    )
+    assert resolve_signing_capauth_dir("lumina") == (fake_home / ".skcapstone" / "capauth")
 
 
 def test_none_when_no_key_anywhere(fake_home):

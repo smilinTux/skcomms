@@ -14,6 +14,7 @@ Evaluation order (``docs/skfed-consent-design.md``):
 Pure composition over the per-module primitives — it owns no persistence of its
 own, so it stays additive and each gate keeps its own tested behaviour.
 """
+
 from __future__ import annotations
 
 import logging
@@ -75,9 +76,7 @@ class ConsentPipeline:
             if ContactStore(self.agent).is_blocked(sender_fqid):
                 return ConsentOutcome("drop", "blocked")
         except Exception:
-            logger.exception(
-                "ban gate check failed for %s (dropping, fail-closed)", sender_fqid
-            )
+            logger.exception("ban gate check failed for %s (dropping, fail-closed)", sender_fqid)
             return ConsentOutcome("drop", "ban-gate-error")
         return None
 

@@ -40,7 +40,9 @@ class SessionMacros:
     def version(self) -> str:
         canonical = json.dumps(
             {"base": self._base.version, "session": self._session},
-            sort_keys=True, separators=(",", ":"))
+            sort_keys=True,
+            separators=(",", ":"),
+        )
         return hashlib.sha256(canonical.encode()).hexdigest()[:12]
 
     def render_prompt_block(self) -> str:
@@ -54,8 +56,7 @@ class SessionMacros:
 
 
 def frame_propose(phrase: str, definition: str) -> bytes:
-    return json.dumps({"p": phrase, "d": definition},
-                      separators=(",", ":")).encode()
+    return json.dumps({"p": phrase, "d": definition}, separators=(",", ":")).encode()
 
 
 def parse_propose(raw: bytes) -> tuple[str, str]:

@@ -4,6 +4,7 @@ The sovereign mailbox backend is always available; the broker is an optional
 low-latency fast path. select_signaling() picks the broker when it's reachable,
 else falls back to the mailbox — no single point of failure.
 """
+
 from skcomms.transports.signaling_base import SignalingChannel, select_signaling
 from skcomms.transports.signaling_mailbox import MailboxSignaling
 

@@ -5,6 +5,7 @@ direct WebRTC data channel (aiortc, host candidates on localhost — no SFU, no
 broker), and exchange messages both directions. This is the sovereign P2P link
 that seeds the agent-native-comms-language north star.
 """
+
 import asyncio
 
 import pytest
@@ -27,6 +28,7 @@ async def test_two_peers_open_data_channel_and_exchange():
         async def _send(kind: str, payload: dict) -> None:
             # deliver the signal straight to the peer session (in-memory shim)
             await sessions[target_key].handle_signal(kind, payload)
+
         return _send
 
     a = P2PSession(send_signal=None)

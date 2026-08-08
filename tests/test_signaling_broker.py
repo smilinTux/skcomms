@@ -4,6 +4,7 @@ Tested with a mock websocket — proves send formats correctly, the reader maps
 inbound signals fp->fqid, poll drains, and is_reachable tracks state. Live-broker
 validation (connecting to the running signaling.py relay) is a follow-up.
 """
+
 import asyncio
 import json
 
@@ -57,7 +58,9 @@ async def test_reader_maps_inbound_and_poll_drains():
     chan = _make(ws)
     await chan.start()
     assert chan.is_reachable() is True
-    ws.inject({"type": "signal", "from": "OPUSFP", "data": {"kind": "answer", "payload": {"sdp": "B"}}})
+    ws.inject(
+        {"type": "signal", "from": "OPUSFP", "data": {"kind": "answer", "payload": {"sdp": "B"}}}
+    )
     ws.inject({"type": "peer_joined", "peer": "OPUSFP"})  # ignored
 
     async def _wait():

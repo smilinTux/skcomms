@@ -46,7 +46,9 @@ try:
 
     _validator: Any = _CapAuthValidator()
 except Exception as e:
-    logger.warning("CapAuth validator unavailable — authenticated DID endpoints will be disabled: %s", e)
+    logger.warning(
+        "CapAuth validator unavailable — authenticated DID endpoints will be disabled: %s", e
+    )
     _validator = None
 
 

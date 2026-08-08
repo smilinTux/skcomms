@@ -21,7 +21,6 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-
 # --- key fixture (mirrors tests/test_federation.py) ------------------------
 
 
@@ -76,8 +75,14 @@ def client(tmp_path, monkeypatch):
     return TestClient(api.app)
 
 
-def _signed_bytes(priv_armor: str, *, from_fqid=JARVIS_FQID, to_fqid=LUMINA_FQID,
-                  body="hello over the wire", created_at=None) -> bytes:
+def _signed_bytes(
+    priv_armor: str,
+    *,
+    from_fqid=JARVIS_FQID,
+    to_fqid=LUMINA_FQID,
+    body="hello over the wire",
+    created_at=None,
+) -> bytes:
     from skcomms.envelope import Envelope
     from skcomms.signing import EnvelopeSigner
 
@@ -231,9 +236,7 @@ def test_inbox_url_for_resolves_https_s2s(tmp_path, monkeypatch):
             name="jarvis",
             fqid=JARVIS_FQID,
             rails=["https-s2s", "nostr"],
-            transports=[
-                PeerTransport(transport="https-s2s", settings={"inbox_url": url})
-            ],
+            transports=[PeerTransport(transport="https-s2s", settings={"inbox_url": url})],
         )
     )
 
@@ -259,7 +262,9 @@ def test_migrate_file_transports_drops_dead_ends(tmp_path, monkeypatch):
             name="legacy",
             transports=[
                 PeerTransport(transport="file", settings={"inbox_path": "file:///dead/end"}),
-                PeerTransport(transport="https-s2s", settings={"inbox_url": "https://x/api/v1/inbox"}),
+                PeerTransport(
+                    transport="https-s2s", settings={"inbox_url": "https://x/api/v1/inbox"}
+                ),
             ],
         )
     )

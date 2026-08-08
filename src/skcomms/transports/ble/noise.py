@@ -29,10 +29,13 @@ def _new_handshake_state(static_priv_bytes: bytes) -> HandshakeState:
     # bytes via the DH's generate_keypair(privatekey=...).
     dh = X25519DH()
     static = dh.generate_keypair(PrivateKey(static_priv_bytes))
-    return HandshakeState(
-        SymmetricState(CipherState(ChaChaPolyCipher()), SHA256Hash()),
-        dh,
-    ), static
+    return (
+        HandshakeState(
+            SymmetricState(CipherState(ChaChaPolyCipher()), SHA256Hash()),
+            dh,
+        ),
+        static,
+    )
 
 
 class NoiseSession:

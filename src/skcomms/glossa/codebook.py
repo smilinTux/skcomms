@@ -12,10 +12,22 @@ import json
 # Seed vocabulary — real SK intents agents actually exchange. Extend over time;
 # changing this changes the version (peers must match to use L2).
 _SEED = {
-    "coord.claim": 1, "coord.complete": 2, "coord.create": 3, "coord.status": 4,
-    "status.report": 5, "status.query": 6, "ack": 7, "nack": 8,
-    "itil.incident": 9, "itil.change": 10, "gtd.capture": 11, "gtd.next": 12,
-    "memory.store": 13, "memory.recall": 14, "presence.beacon": 15, "handoff": 16,
+    "coord.claim": 1,
+    "coord.complete": 2,
+    "coord.create": 3,
+    "coord.status": 4,
+    "status.report": 5,
+    "status.query": 6,
+    "ack": 7,
+    "nack": 8,
+    "itil.incident": 9,
+    "itil.change": 10,
+    "gtd.capture": 11,
+    "gtd.next": 12,
+    "memory.store": 13,
+    "memory.recall": 14,
+    "presence.beacon": 15,
+    "handoff": 16,
 }
 
 

@@ -1,6 +1,7 @@
 """_load_recipient_key must resolve a same-box agent's local key even when the
 peer fqid's realm string has drifted from the cluster realm (operator-component
 match), while still rejecting a cross-operator name collision."""
+
 import skcomms.mailbox as mb
 
 

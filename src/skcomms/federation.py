@@ -126,9 +126,7 @@ class DurableNonceCache:
             " key TEXT PRIMARY KEY,"
             " ts REAL NOT NULL)"
         )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_seen_nonces_ts ON seen_nonces(ts)"
-        )
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_seen_nonces_ts ON seen_nonces(ts)")
         self._conn.commit()
 
     @property

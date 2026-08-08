@@ -62,7 +62,9 @@ class ScriptedTransport(Transport):
 
 
 def _fail(name, error):
-    return SendResult(success=False, transport_name=name, envelope_id="", latency_ms=0.0, error=error)
+    return SendResult(
+        success=False, transport_name=name, envelope_id="", latency_ms=0.0, error=error
+    )
 
 
 # --------------------------------------------------------------------------
@@ -128,7 +130,8 @@ def test_new_recipient_warns_once_despite_matching_signature(caplog):
         r._try_send(t, b"{}", "bob")
 
     warnings = [
-        rec for rec in caplog.records
+        rec
+        for rec in caplog.records
         if rec.levelno == logging.WARNING and "send failed" in rec.getMessage()
     ]
     assert len(warnings) == 2
@@ -143,7 +146,8 @@ def test_store_forward_skips_quarantined_rail():
     r.quarantine_transport("nostr-sf")
 
     env = MessageEnvelope(
-        sender="lumina", recipient="ghost",
+        sender="lumina",
+        recipient="ghost",
         payload=MessagePayload(content="x"),
         routing=RoutingConfig(mode=RoutingMode.FAILOVER),
     )

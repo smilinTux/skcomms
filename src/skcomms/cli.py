@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import logging
 import sys
 import threading
 from pathlib import Path
@@ -20,7 +21,6 @@ from typing import Optional
 
 import click
 
-import logging
 logger = logging.getLogger(__name__)
 
 try:
@@ -101,7 +101,7 @@ def main():
     type=click.Choice(["low", "normal", "high", "critical"]),
     default="normal",
 )
-def send(
+def send_transport(
     recipient: str,
     message: str,
     config: Optional[str],
@@ -891,9 +891,7 @@ def peers_add(
                     "no public key[/] — supply --pubkey to TOFU-bind it.\n"
                 )
                 raise SystemExit(1)
-            _tmp = tempfile.NamedTemporaryFile(
-                "w", suffix=".asc", delete=False, encoding="utf-8"
-            )
+            _tmp = tempfile.NamedTemporaryFile("w", suffix=".asc", delete=False, encoding="utf-8")
             _tmp.write(rec_resolved.pubkey)
             _tmp.close()
             pubkey = _tmp.name
@@ -1109,9 +1107,7 @@ def registry_list(json_out: bool):
         if r.https:
             hints.append("https")
         via = ", ".join(r.sources) or "-"
-        _print(
-            f"  [cyan]{r.fqid}[/]  [dim]({', '.join(hints) or 'no hints'} — via {via})[/]"
-        )
+        _print(f"  [cyan]{r.fqid}[/]  [dim]({', '.join(hints) or 'no hints'} — via {via})[/]")
     _print("")
 
 
@@ -2242,9 +2238,7 @@ def grant_group():
 @click.option(
     "--out", "-o", "out_file", default=None, help="Write the signed token to a file (else stdout)."
 )
-def grant_collection_read(
-    collection: str, to_fqid: str, expires: str, out_file: Optional[str]
-):
+def grant_collection_read(collection: str, to_fqid: str, expires: str, out_file: Optional[str]):
     """Mint a signed collection read-consent token.
 
     Builds a token granting ``--to`` read access to ``--collection``,
@@ -3183,11 +3177,18 @@ def pair_group():
 
 
 @pair_group.command("show")
-@click.option("--embed-key", is_flag=True, help="Embed the full public key (self-contained, offline; larger QR).")
-@click.option("-o", "--out", type=click.Path(), default=None, help="Save the QR to a .png/.svg file.")
+@click.option(
+    "--embed-key",
+    is_flag=True,
+    help="Embed the full public key (self-contained, offline; larger QR).",
+)
+@click.option(
+    "-o", "--out", type=click.Path(), default=None, help="Save the QR to a .png/.svg file."
+)
 @click.option("-a", "--agent", default=None, help="Agent name (default: resolved self).")
 def pair_show(embed_key, out, agent):
     from .pairing import bundle_from_self, make_pairing_qr
+
     bundle = bundle_from_self(agent, embed_key=embed_key)
     uri, qr = make_pairing_qr(bundle)
     click.echo(qr.terminal(compact=True))
@@ -3201,14 +3202,20 @@ def pair_show(embed_key, out, agent):
 @click.argument("source")  # an skp:// URI or a file path containing one
 def pair_accept(source):
     from .pairing import accept_pairing
+
     res = accept_pairing(source)
     click.echo(f"paired with {res['fqid']} (fingerprint {res['fingerprint']})")
 
 
 @pair_group.command("public-url")
-@click.option("--base", default=None,
-              help="Funnel base URL (default: $SKCOMMS_FUNNEL_URL or a read-only tailscale funnel probe).")
-@click.option("--mint-token", is_flag=True, help="Mint a fresh bearer token and include it in the URL.")
+@click.option(
+    "--base",
+    default=None,
+    help="Funnel base URL (default: $SKCOMMS_FUNNEL_URL or a read-only tailscale funnel probe).",
+)
+@click.option(
+    "--mint-token", is_flag=True, help="Mint a fresh bearer token and include it in the URL."
+)
 def pair_public_url(base, mint_token):
     """Mint the public Funnel pairing URL a peer POSTs their bundle to.
 
@@ -3218,6 +3225,7 @@ def pair_public_url(base, mint_token):
     key-exchange verification.
     """
     from .public_pairing import configured_token, mint_pairing_token, mint_pairing_url
+
     token = mint_pairing_token() if mint_token else configured_token()
     url = mint_pairing_url(base, token=token)
     if not url:
@@ -3226,14 +3234,19 @@ def pair_public_url(base, mint_token):
         )
     click.echo(url)
     if mint_token:
-        click.echo(f"token: {token}  (set SKCOMMS_FUNNEL_PAIR_TOKEN={token} on this node to require it)")
+        click.echo(
+            f"token: {token}  (set SKCOMMS_FUNNEL_PAIR_TOKEN={token} on this node to require it)"
+        )
 
 
 @main.command(name="pqc-report")
-@click.option("--format", "output_format", default="text",
-              type=click.Choice(["text", "json"]))
-@click.option("--static", is_flag=True, default=False,
-              help="Show the model-DEFAULT posture instead of the live fleet.")
+@click.option("--format", "output_format", default="text", type=click.Choice(["text", "json"]))
+@click.option(
+    "--static",
+    is_flag=True,
+    default=False,
+    help="Show the model-DEFAULT posture instead of the live fleet.",
+)
 def pqc_report_cmd(output_format, static):
     """Show skcomms' OWN PQC (quantum-resistance) posture.
 
@@ -3244,9 +3257,11 @@ def pqc_report_cmd(output_format, static):
     global / end-to-end / "quantum-proof" claim is ever made.
     """
     import json as _json
+
     try:
         from sksecurity.pqc_report import (
-            build_project_report, format_project_report,
+            build_project_report,
+            format_project_report,
         )
     except Exception:
         _print(
@@ -3458,8 +3473,7 @@ def consent_feeds_list_cmd():
 @consent_feeds_group.command("subscribe")
 @click.argument("publisher")
 @click.argument("pubkey_file", type=click.Path(exists=True, dir_okay=False))
-@click.option("--feed", "feed_path", default=None,
-              help="Path to a signed BanFeed JSON to blend.")
+@click.option("--feed", "feed_path", default=None, help="Path to a signed BanFeed JSON to blend.")
 def consent_feeds_subscribe_cmd(publisher, pubkey_file, feed_path):
     """Pin *publisher*'s ban-feed key from PUBKEY_FILE (fail-closed at use)."""
     from .consent_runtime import add_feed
@@ -3516,11 +3530,7 @@ def _skfed_agent() -> Optional[str]:
     """Resolve this CLI's agent name (SKAGENT/SKCAPSTONE_AGENT), else identity, else None."""
     import os as _os
 
-    return (
-        _os.environ.get("SKAGENT")
-        or _os.environ.get("SKCAPSTONE_AGENT")
-        or None
-    )
+    return _os.environ.get("SKAGENT") or _os.environ.get("SKCAPSTONE_AGENT") or None
 
 
 @main.group("skfed")
@@ -3529,14 +3539,31 @@ def skfed_group():
 
 
 @skfed_group.command("announce")
-@click.option("--agent", default=None, help="Agent to announce (default: SKAGENT / self identity).")
-@click.option("--base", default=None, help="Node base URL (e.g. https://node.tailXYZ.ts.net). "
-              "Falls back to SKFED_BASE_URL, then a read-only tailscale probe.")
-@click.option("--inbox-url", "inbox_url", default=None, help="Explicit S2S inbox URL (overrides --base).")
-@click.option("--prekey-url", "prekey_url", default=None, help="Explicit hybrid-prekey URL (overrides --base).")
+@click.option(
+    "--agent", default=None, help="Agent to announce (default: SKAGENT / self identity)."
+)
+@click.option(
+    "--base",
+    default=None,
+    help="Node base URL (e.g. https://node.tailXYZ.ts.net). "
+    "Falls back to SKFED_BASE_URL, then a read-only tailscale probe.",
+)
+@click.option(
+    "--inbox-url", "inbox_url", default=None, help="Explicit S2S inbox URL (overrides --base)."
+)
+@click.option(
+    "--prekey-url",
+    "prekey_url",
+    default=None,
+    help="Explicit hybrid-prekey URL (overrides --base).",
+)
 @click.option("--did", default=None, help="DID to advertise for this agent.")
-@click.option("--cap", "caps", multiple=True, help="Capability tag (repeatable, e.g. --cap dm --cap files).")
-@click.option("--dry-run", is_flag=True, help="Resolve + print what WOULD be announced; do not sign/persist.")
+@click.option(
+    "--cap", "caps", multiple=True, help="Capability tag (repeatable, e.g. --cap dm --cap files)."
+)
+@click.option(
+    "--dry-run", is_flag=True, help="Resolve + print what WOULD be announced; do not sign/persist."
+)
 def skfed_announce_cmd(agent, base, inbox_url, prekey_url, did, caps, dry_run):
     """Refresh THIS node's directory entry (call on daemon startup / after a re-serve)."""
     from . import skfed_announce as sa
@@ -3548,8 +3575,12 @@ def skfed_announce_cmd(agent, base, inbox_url, prekey_url, did, caps, dry_run):
     if dry_run:
         fqid = resolve_self_identity(agent).get("fqid")
         resolved_base = sa.resolve_base(base)
-        eff_inbox = inbox_url or (sa._join(resolved_base, sa.INBOX_PATH) if resolved_base else None)
-        eff_prekey = prekey_url or (sa._join(resolved_base, sa.PREKEY_PATH) if resolved_base else None)
+        eff_inbox = inbox_url or (
+            sa._join(resolved_base, sa.INBOX_PATH) if resolved_base else None
+        )
+        eff_prekey = prekey_url or (
+            sa._join(resolved_base, sa.PREKEY_PATH) if resolved_base else None
+        )
         click.echo("DRY-RUN — would announce (nothing signed/persisted):")
         click.echo(f"  fqid:       {fqid}")
         click.echo(f"  base:       {resolved_base}")
@@ -3576,9 +3607,11 @@ def skfed_announce_cmd(agent, base, inbox_url, prekey_url, did, caps, dry_run):
         if e.fqid == fqid:
             entry = e
             break
-    click.echo(f"announced {fqid or '<self>'} into realm '{sd.realm}' "
-               f"({len(sd.entries)} entr{'y' if len(sd.entries) == 1 else 'ies'}, "
-               f"signer {sd.signer_fingerprint[:16]})")
+    click.echo(
+        f"announced {fqid or '<self>'} into realm '{sd.realm}' "
+        f"({len(sd.entries)} entr{'y' if len(sd.entries) == 1 else 'ies'}, "
+        f"signer {sd.signer_fingerprint[:16]})"
+    )
     if entry is not None:
         click.echo(f"  inbox_url:  {entry.inbox_url}")
         click.echo(f"  prekey_url: {entry.prekey_url}")

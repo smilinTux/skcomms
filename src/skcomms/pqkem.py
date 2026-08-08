@@ -97,9 +97,9 @@ MLKEM_SECRET_LEN = 2400
 MLKEM_CT_LEN = 1088
 
 # Composite wire sizes.
-PUBLIC_KEY_LEN = X25519_PUB_LEN + MLKEM_PUB_LEN       # 1216
+PUBLIC_KEY_LEN = X25519_PUB_LEN + MLKEM_PUB_LEN  # 1216
 PRIVATE_KEY_LEN = X25519_SEED_LEN + MLKEM_SECRET_LEN  # 2432
-CIPHERTEXT_LEN = X25519_PUB_LEN + MLKEM_CT_LEN        # 1120
+CIPHERTEXT_LEN = X25519_PUB_LEN + MLKEM_CT_LEN  # 1120
 
 
 # ---------------------------------------------------------------------------
@@ -146,10 +146,7 @@ def ensure_liboqs_path() -> None:
     candidates += [Path.home() / ".local", Path("/usr/local"), Path("/usr")]
     for prefix in candidates:
         libdir = prefix / "lib"
-        if any(
-            (libdir / name).exists()
-            for name in ("liboqs.so", "liboqs.so.8", "liboqs.dylib")
-        ):
+        if any((libdir / name).exists() for name in ("liboqs.so", "liboqs.so.8", "liboqs.dylib")):
             os.environ["OQS_INSTALL_PATH"] = str(prefix)
             existing = os.environ.get("LD_LIBRARY_PATH", "")
             if str(libdir) not in existing.split(os.pathsep):
@@ -302,9 +299,7 @@ def hybrid_encap(peer_public_key: bytes, info: bytes = HKDF_INFO) -> tuple[bytes
     return ciphertext, shared
 
 
-def hybrid_decap(
-    ciphertext: bytes, private_key: bytes, info: bytes = HKDF_INFO
-) -> bytes:
+def hybrid_decap(ciphertext: bytes, private_key: bytes, info: bytes = HKDF_INFO) -> bytes:
     """Decapsulate a hybrid ciphertext with the recipient's private key.
 
     Args:

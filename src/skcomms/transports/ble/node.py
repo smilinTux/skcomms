@@ -43,12 +43,18 @@ class MeshNode:
     async def stop(self) -> None:
         await self.radio.stop()
 
-    def _new_packet(self, recipient_id: bytes, payload: bytes,
-                    ptype: PacketType = PacketType.MESSAGE) -> MeshPacket:
+    def _new_packet(
+        self, recipient_id: bytes, payload: bytes, ptype: PacketType = PacketType.MESSAGE
+    ) -> MeshPacket:
         return MeshPacket(
-            type=ptype, ttl=gatt.DEFAULT_TTL, flags=0, timestamp=0,
-            msg_id=os.urandom(8), sender_id=self.identity.my_id,
-            recipient_id=recipient_id, payload=payload,
+            type=ptype,
+            ttl=gatt.DEFAULT_TTL,
+            flags=0,
+            timestamp=0,
+            msg_id=os.urandom(8),
+            sender_id=self.identity.my_id,
+            recipient_id=recipient_id,
+            payload=payload,
         )
 
     async def send_broadcast(self, payload: bytes) -> None:

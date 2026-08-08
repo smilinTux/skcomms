@@ -62,6 +62,7 @@ async def test_large_envelope_fragments_and_reassembles():
 
 def test_transport_metadata():
     from skcomms.transport import TransportCategory
+
     t = _transport("a@x.y", None)
     assert t.name == "lora"
     assert t.category == TransportCategory.OFFLINE
@@ -73,7 +74,9 @@ def test_budget_smaller_than_mtu_is_rejected():
     bad = AirtimeBudget(max_bytes=framing.LORA_MTU - 1, window_s=3600)
     with pytest.raises(ValueError, match="LoRa MTU"):
         LoRaTransport(
-            identity=MeshIdentity.generate("a@x.y"), interface=None, budget=bad,
+            identity=MeshIdentity.generate("a@x.y"),
+            interface=None,
+            budget=bad,
         )
 
 
@@ -91,6 +94,7 @@ def test_is_available_false_without_running_iface():
 
 def test_identity_id_for_empty_recipient_is_broadcast():
     from skcomms.transports.ble import gatt
+
     t = _transport("a@x.y", None)
     assert t.identity_id_for("") == gatt.BROADCAST_ID
 
@@ -98,6 +102,7 @@ def test_identity_id_for_empty_recipient_is_broadcast():
 @pytest.mark.asyncio
 async def test_health_check_reports_unavailable_without_iface():
     from skcomms.transport import TransportStatus
+
     t = _transport("a@x.y", None)
     h = t.health_check()
     assert h.status == TransportStatus.UNAVAILABLE
@@ -120,8 +125,10 @@ async def test_send_enforces_airtime_budget_on_send_path():
     budget = AirtimeBudget(max_bytes=2000, window_s=1000)
     budget.record(1600, now=0.0)  # only 400 bytes left in window 1 (~2 frames)
     a = LoRaTransport(
-        identity=MeshIdentity.generate("a@x.y"), interface=ia,
-        budget=budget, clock=lambda: clock["t"],
+        identity=MeshIdentity.generate("a@x.y"),
+        interface=ia,
+        budget=budget,
+        clock=lambda: clock["t"],
     )
     b = _transport("b@x.y", ib)
     await a.start()
@@ -158,10 +165,16 @@ def _build_pkt(transport, payload, recipient):
     import os
 
     from skcomms.transports.ble.protocol import FLAG_SIGNED, MeshPacket, PacketType
+
     rid = transport.identity_id_for(recipient)
     return MeshPacket(
-        type=PacketType.MESSAGE, ttl=1, flags=FLAG_SIGNED, timestamp=0,
-        msg_id=os.urandom(8), sender_id=transport.identity.my_id,
-        recipient_id=rid, payload=payload,
+        type=PacketType.MESSAGE,
+        ttl=1,
+        flags=FLAG_SIGNED,
+        timestamp=0,
+        msg_id=os.urandom(8),
+        sender_id=transport.identity.my_id,
+        recipient_id=rid,
+        payload=payload,
         signature=transport.identity.sign(payload),
     )

@@ -222,8 +222,11 @@ class EnvelopeCrypto:
             # key present) and it threw. Returning the envelope here would put
             # the plaintext payload on the wire with only a log line — a silent
             # confidentiality failure. Raise so the caller drops the send.
-            logger.error("Encryption failed for %s — refusing to send plaintext: %s",
-                         envelope.recipient, exc)
+            logger.error(
+                "Encryption failed for %s — refusing to send plaintext: %s",
+                envelope.recipient,
+                exc,
+            )
             raise CryptoError(f"payload encryption failed: {exc}") from exc
 
     def decrypt_payload(self, envelope: MessageEnvelope) -> MessageEnvelope:
@@ -338,8 +341,9 @@ class EnvelopeCrypto:
             # authenticity/integrity failure (and the legacy inbound path never
             # re-verifies it). Raise so the caller drops the send, mirroring the
             # encrypt_payload fail-closed contract.
-            logger.error("Signing failed for %s — refusing to send unsigned: %s",
-                         envelope.recipient, exc)
+            logger.error(
+                "Signing failed for %s — refusing to send unsigned: %s", envelope.recipient, exc
+            )
             raise CryptoError(f"payload signing failed: {exc}") from exc
 
     def verify_signature(
@@ -377,7 +381,6 @@ class EnvelopeCrypto:
         except Exception as exc:
             logger.warning("Signature verification failed: %s", exc)
             return False
-
 
     # ------------------------------------------------------------------
     # PQC Q3 — hybrid post-quantum payload sealing (HNDL fix, opt-in).

@@ -255,7 +255,7 @@ class HttpS2STransport(Transport):
                     if not self._body_confirms_receipt(body):
                         logger.warning(
                             "https-s2s got %d from %s (%s) but body did not "
-                            "confirm receipt ({\"ok\": true}); treating as "
+                            'confirm receipt ({"ok": true}); treating as '
                             "undelivered (opus-delivery guard)",
                             status,
                             recipient,
@@ -360,9 +360,7 @@ class HttpS2STransport(Transport):
 
         return HealthStatus(
             transport_name=self.name,
-            status=(
-                TransportStatus.AVAILABLE if peer_urls else TransportStatus.DEGRADED
-            ),
+            status=(TransportStatus.AVAILABLE if peer_urls else TransportStatus.DEGRADED),
             details={
                 "timeout": self._timeout,
                 "known_inboxes": len(peer_urls),
@@ -429,8 +427,7 @@ class HttpS2STransport(Transport):
         unpinned / unresolvable — never raises.
         """
         try:
-            from skcomms.skfed_resolve import (_realm_of, default_http_get,
-                                               realm_verifier)
+            from skcomms.skfed_resolve import _realm_of, default_http_get, realm_verifier
 
             fqid = recipient
             if "@" not in fqid:
@@ -502,9 +499,7 @@ class HttpS2STransport(Transport):
     # Helpers
     # ──────────────────────────────────────────────────────────────────────
 
-    def _failure(
-        self, envelope_id: str, start: float, status: int, detail: str
-    ) -> SendResult:
+    def _failure(self, envelope_id: str, start: float, status: int, detail: str) -> SendResult:
         """Build a failure SendResult, classifying retryable vs permanent by status.
 
         Args:

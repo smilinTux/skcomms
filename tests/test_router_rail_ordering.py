@@ -34,7 +34,6 @@ from skcomms.transport import (
     TransportStatus,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fakes
 # ---------------------------------------------------------------------------
@@ -126,7 +125,7 @@ def test_peer_advertised_order_is_honored_exactly():
     log: list[str] = []
     # Register in an order that does NOT match either priority or advertised order.
     transports = [
-        FakeTransport("file", priority=1, send_log=log),       # lowest priority number
+        FakeTransport("file", priority=1, send_log=log),  # lowest priority number
         FakeTransport("telegram", priority=2, send_log=log),
         FakeTransport("lora", priority=3, send_log=log),
         FakeTransport("nostr", priority=4, send_log=log),

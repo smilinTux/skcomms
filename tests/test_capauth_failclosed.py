@@ -145,9 +145,7 @@ class _FakeResponse:
 def _patch_remote(monkeypatch, payload) -> None:
     import urllib.request
 
-    monkeypatch.setattr(
-        urllib.request, "urlopen", lambda *a, **k: _FakeResponse(payload)
-    )
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: _FakeResponse(payload))
 
 
 def _signed_token() -> str:

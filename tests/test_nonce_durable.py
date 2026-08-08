@@ -288,9 +288,7 @@ class TestInboxReplayAcrossRestart:
         from skcomms.peers import fingerprint_from_pubkey
 
         tofu.record_fingerprint(JARVIS_FQID, "0" * 40, pubkey=pub)
-        tofu.record_fingerprint(
-            JARVIS_FQID, fingerprint_from_pubkey(pub), pubkey=pub
-        )
+        tofu.record_fingerprint(JARVIS_FQID, fingerprint_from_pubkey(pub), pubkey=pub)
 
         # Isolate HOME: per-recipient routing writes into the recipient
         # agent's canonical comms inbox under ~/.skcapstone.
@@ -325,8 +323,7 @@ class TestInboxReplayAcrossRestart:
             headers={"content-type": "application/octet-stream"},
         )
         assert replay.status_code == 409, (
-            "replay after restart must be rejected, got "
-            f"{replay.status_code}: {replay.text}"
+            "replay after restart must be rejected, got " f"{replay.status_code}: {replay.text}"
         )
 
         # And a genuinely new envelope still flows.

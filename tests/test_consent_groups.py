@@ -6,10 +6,10 @@ moderator review), ``open`` (admitted, still subject to a captcha if one is set)
 Roles owner/moderator/member gate moderation: a moderator can approve a pending
 joiner, deny it, or block-for-all; a plain member cannot.
 """
+
 import pytest
 
-from skcomms.consent_groups import (GroupJoinPolicy, JoinRequest, JoinStatus,
-                                     Role)
+from skcomms.consent_groups import GroupJoinPolicy, JoinRequest, JoinStatus, Role
 
 OWNER = "lumina@chef.skworld"
 MOD = "opus@chef.skworld"
@@ -30,6 +30,7 @@ def _policy(mode, **kw):
 
 # --- mode: invite_only --------------------------------------------------------
 
+
 def test_invite_only_rejects_stranger():
     p = _policy("invite_only")
     req = p.request_join(STRANGER)
@@ -46,6 +47,7 @@ def test_invite_only_admits_invited():
 
 
 # --- mode: knock (member review) ---------------------------------------------
+
 
 def test_knock_queues_for_review():
     p = _policy("knock")
@@ -84,6 +86,7 @@ def test_deny_removes_pending():
 
 # --- role enforcement ---------------------------------------------------------
 
+
 def test_member_cannot_approve():
     p = _policy("knock")
     p.add_member(MEMBER, role=Role.MEMBER)
@@ -109,6 +112,7 @@ def test_member_cannot_block_for_all():
 
 # --- moderator block-for-all --------------------------------------------------
 
+
 def test_moderator_block_for_all():
     p = _policy("knock")
     p.add_member(MOD, role=Role.MODERATOR)
@@ -122,6 +126,7 @@ def test_moderator_block_for_all():
 
 
 # --- mode: open (+ optional captcha) -----------------------------------------
+
 
 def test_open_admits_immediately():
     p = _policy("open")
@@ -145,6 +150,7 @@ def test_open_with_captcha_queues_until_passed():
 
 
 # --- roles + persistence ------------------------------------------------------
+
 
 def test_owner_role_and_membership():
     p = _policy("knock")

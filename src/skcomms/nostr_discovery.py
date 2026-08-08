@@ -102,9 +102,9 @@ def record_signing_bytes(record: dict) -> bytes:
     :meth:`skcomms.skfed_directory.SignedDirectory.signing_bytes`.
     """
     payload = {k: v for k, v in record.items() if k not in (_SIG_FIELD, _SIG_FP_FIELD)}
-    return json.dumps(
-        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")
+    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+        "utf-8"
+    )
 
 
 def sign_record(record: dict, signer) -> dict:
@@ -179,6 +179,7 @@ def _default_store() -> PeerStore:
     peer store and the TOFU pin store together (test isolation + sovereign home).
     """
     return PeerStore(peers_dir=skcomms_home() / PEERS_DIR_NAME)
+
 
 # Parameterised-replaceable event kind (NIP-33 range 30000-39999).
 DIRECTORY_KIND = 30079
@@ -369,8 +370,7 @@ def record_to_peer(record: dict) -> Optional[PeerInfo]:
         return None
     if sig_ok is None and _require_signed():
         logger.warning(
-            "directory record for %s REJECTED: unsigned and strict signing "
-            "(%s) is enabled",
+            "directory record for %s REJECTED: unsigned and strict signing " "(%s) is enabled",
             fqid,
             STRICT_SIGNED_ENV,
         )
@@ -578,13 +578,7 @@ def _node_name() -> str:
 def _self_capauth_pubkey(agent: str) -> Optional[str]:
     """Read the running agent's armored capauth public key, if present."""
     path = (
-        Path.home()
-        / ".skcapstone"
-        / "agents"
-        / str(agent)
-        / "capauth"
-        / "identity"
-        / "public.asc"
+        Path.home() / ".skcapstone" / "agents" / str(agent) / "capauth" / "identity" / "public.asc"
     )
     if path.exists():
         try:
@@ -681,9 +675,7 @@ def announce_self(
         True if the record was published to at least one relay.
     """
     try:
-        record = build_self_record(
-            agent=agent, inbox_url=inbox_url, rails=rails, signer=signer
-        )
+        record = build_self_record(agent=agent, inbox_url=inbox_url, rails=rails, signer=signer)
         if record is None:
             return False
         dir_client = directory or NostrDirectory(relays=relays, secret=secret)
