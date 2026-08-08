@@ -37,6 +37,12 @@ jobs:
         python-version: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          # setuptools-scm derives the version from the git tag, so a
+          # shallow checkout would yield a placeholder like 0.1.dev1 and
+          # break dependency resolution against pinned siblings.
+          fetch-depth: 0
+          fetch-tags: true
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
@@ -59,7 +65,7 @@ jobs:
         run: |
           pip install --no-deps --no-cache-dir \
             "skcapstone @ git+https://github.com/smilinTux/skcapstone@main" \
-            "skcoord @ git+https://github.com/smilinTux/skcoord@master" \
+            "skcoord @ git+https://github.com/smilinTux/skcoord@main" \
             "skcot @ git+https://github.com/smilinTux/skcot@main" \
             "capauth @ git+https://github.com/smilinTux/capauth@main"
       - name: Run pytest (full suite)
@@ -78,6 +84,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # setuptools-scm derives the version from the git tag, so a
+          # shallow checkout would yield a placeholder like 0.1.dev1 and
+          # break dependency resolution against pinned siblings.
+          fetch-depth: 0
+          fetch-tags: true
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -103,7 +115,7 @@ jobs:
         run: |
           pip install --no-deps --no-cache-dir \
             "skcapstone @ git+https://github.com/smilinTux/skcapstone@main" \
-            "skcoord @ git+https://github.com/smilinTux/skcoord@master" \
+            "skcoord @ git+https://github.com/smilinTux/skcoord@main" \
             "skcot @ git+https://github.com/smilinTux/skcot@main" \
             "capauth @ git+https://github.com/smilinTux/capauth@main"
       - name: Assert the PQ backend is really present
