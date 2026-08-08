@@ -51,14 +51,16 @@ jobs:
       # but tests/test_integration.py exercises "integrated" mode and assumed a
       # dev venv where skcapstone happens to be installed. In CI it is not, so
       # those tests errored with ModuleNotFoundError instead of testing anything.
-      # skcoord is named too: skcapstone.coordination is now a re-export shim
-      # over it, and --no-deps means we resolve the graph by hand. --no-deps also
-      # stops this dragging a published skcomms over the checkout under test.
+      # skcoord is named too (skcapstone.coordination is a re-export shim over it),
+      # and skcot, which backs geo_store.SkcotGeoStore and is git-only (not on PyPI,
+      # not declared), so CI could never have exercised the skcot bridge. --no-deps
+      # also stops this dragging a published skcomms over the checkout under test.
       - name: Install skcapstone (optional integration backbone) from source
         run: |
           pip install --no-deps --no-cache-dir \
             "skcapstone @ git+https://github.com/smilinTux/skcapstone@main" \
-            "skcoord @ git+https://github.com/smilinTux/skcoord@master"
+            "skcoord @ git+https://github.com/smilinTux/skcoord@master" \
+            "skcot @ git+https://github.com/smilinTux/skcot@main"
       - name: Run pytest (full suite)
         run: python -m pytest tests/ -q
 
@@ -92,14 +94,16 @@ jobs:
       # but tests/test_integration.py exercises "integrated" mode and assumed a
       # dev venv where skcapstone happens to be installed. In CI it is not, so
       # those tests errored with ModuleNotFoundError instead of testing anything.
-      # skcoord is named too: skcapstone.coordination is now a re-export shim
-      # over it, and --no-deps means we resolve the graph by hand. --no-deps also
-      # stops this dragging a published skcomms over the checkout under test.
+      # skcoord is named too (skcapstone.coordination is a re-export shim over it),
+      # and skcot, which backs geo_store.SkcotGeoStore and is git-only (not on PyPI,
+      # not declared), so CI could never have exercised the skcot bridge. --no-deps
+      # also stops this dragging a published skcomms over the checkout under test.
       - name: Install skcapstone (optional integration backbone) from source
         run: |
           pip install --no-deps --no-cache-dir \
             "skcapstone @ git+https://github.com/smilinTux/skcapstone@main" \
-            "skcoord @ git+https://github.com/smilinTux/skcoord@master"
+            "skcoord @ git+https://github.com/smilinTux/skcoord@master" \
+            "skcot @ git+https://github.com/smilinTux/skcot@main"
       - name: Assert the PQ backend is really present
         # Without this the crypto gates would silently self-skip and the job
         # would report green while proving nothing.
