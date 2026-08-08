@@ -52,8 +52,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # Versions come from constraints.txt (black==26.5.1, ruff==0.15.21),
+      # which already does the pinning correctly. Do NOT re-pin them inline:
+      # naming a different version here makes pip unsolvable against the
+      # constraint file, which fails the job on install before it lints
+      # anything at all.
       - name: Install lint tools
-        run: pip install -c constraints.txt "black==26.5.1" "ruff==0.15.4"
+        run: pip install -c constraints.txt black ruff
       - name: Check formatting
         run: black --check src/ tests/
       - name: Lint
