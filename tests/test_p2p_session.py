@@ -9,6 +9,13 @@ import asyncio
 
 import pytest
 
+# aiortc is the optional `webrtc` extra and is NOT installed in CI (its `av`
+# dependency needs ffmpeg dev headers to build a wheel). Skip rather than fail:
+# these tests reach a real RTCPeerConnection at call time, so without aiortc
+# they were reporting a missing OPTIONAL dependency as a product failure.
+# test_p2p_media.py already guards this way; these three did not.
+pytest.importorskip("aiortc", reason="aiortc not installed (webrtc extra)")
+
 from skcomms.transports.p2p_session import P2PSession
 
 

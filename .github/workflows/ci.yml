@@ -20,7 +20,22 @@ jobs:
       - name: Install dependencies
         # -c constraints.txt pins every dependency to the versions this repo
         # validated, so CI does not silently drift onto newer releases.
-        run: pip install -c constraints.txt -e ".[dev]"
+        run: pip install -c constraints.txt -e ".[crypto,dev,pqc]"
+      # skcomms does NOT depend on skcapstone (that would invert the direction),
+      # but tests/test_integration.py exercises "integrated" mode and assumed a
+      # dev venv where skcapstone happens to be installed. In CI it is not, so
+      # those tests errored with ModuleNotFoundError instead of testing anything.
+      # skcoord is named too (skcapstone.coordination is a re-export shim over it),
+      # and skcot, which backs geo_store.SkcotGeoStore and is git-only (not on PyPI,
+      # not declared), so CI could never have exercised the skcot bridge. --no-deps
+      # also stops this dragging a published skcomms over the checkout under test.
+      - name: Install skcapstone (optional integration backbone) from source
+        run: |
+          pip install --no-deps --no-cache-dir \
+            "skcapstone @ git+https://github.com/smilinTux/skcapstone@main" \
+            "skcoord @ git+https://github.com/smilinTux/skcoord@master" \
+            "skcot @ git+https://github.com/smilinTux/skcot@main" \
+            "capauth @ git+https://github.com/smilinTux/capauth@main"
       - name: Run tests with coverage
         run: python -m pytest tests/ -v --tb=short --cov=skcomms --cov-report=xml --cov-report=term-missing
       - name: Upload coverage
