@@ -29,7 +29,7 @@ jobs:
         # -c constraints.txt pins to the versions this repo validated (inert on
         # the fallback branch, which installs a smaller set).
         run: |
-          pip install -c constraints.txt -e ".[dev]" || { pip install -c constraints.txt -e . && pip install -c constraints.txt pytest pytest-asyncio; }
+          pip install -c constraints.txt -e ".[all,dev]" || { pip install -c constraints.txt -e . && pip install -c constraints.txt pytest pytest-asyncio; }
       # skcomms does NOT depend on skcapstone (that would invert the direction),
       # but tests/test_integration.py exercises "integrated" mode and assumed a
       # dev venv where skcapstone happens to be installed. In CI it is not, so
@@ -43,6 +43,7 @@ jobs:
           pip install --no-deps --no-cache-dir \
             "skcapstone @ git+https://github.com/smilinTux/skcapstone@main" \
             "skcoord @ git+https://github.com/smilinTux/skcoord@master" \
-            "skcot @ git+https://github.com/smilinTux/skcot@main"
+            "skcot @ git+https://github.com/smilinTux/skcot@main" \
+            "capauth @ git+https://github.com/smilinTux/capauth@main"
       - name: Run QA pytest suite
         run: python -m pytest tests/ -q

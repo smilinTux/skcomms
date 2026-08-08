@@ -20,7 +20,7 @@ jobs:
       - name: Install dependencies
         # -c constraints.txt pins every dependency to the versions this repo
         # validated, so CI does not silently drift onto newer releases.
-        run: pip install -c constraints.txt -e ".[dev]"
+        run: pip install -c constraints.txt -e ".[all,dev]"
       # skcomms does NOT depend on skcapstone (that would invert the direction),
       # but tests/test_integration.py exercises "integrated" mode and assumed a
       # dev venv where skcapstone happens to be installed. In CI it is not, so
@@ -34,7 +34,8 @@ jobs:
           pip install --no-deps --no-cache-dir \
             "skcapstone @ git+https://github.com/smilinTux/skcapstone@main" \
             "skcoord @ git+https://github.com/smilinTux/skcoord@master" \
-            "skcot @ git+https://github.com/smilinTux/skcot@main"
+            "skcot @ git+https://github.com/smilinTux/skcot@main" \
+            "capauth @ git+https://github.com/smilinTux/capauth@main"
       - name: Run tests with coverage
         run: python -m pytest tests/ -v --tb=short --cov=skcomms --cov-report=xml --cov-report=term-missing
       - name: Upload coverage

@@ -46,7 +46,7 @@ jobs:
         # validated, so a fresh runner installs exactly what CI last tested.
         run: |
           python -m pip install --upgrade pip
-          pip install -c constraints.txt -e ".[dev]"
+          pip install -c constraints.txt -e ".[all,dev]"
       # skcomms does NOT depend on skcapstone (that would invert the direction),
       # but tests/test_integration.py exercises "integrated" mode and assumed a
       # dev venv where skcapstone happens to be installed. In CI it is not, so
@@ -60,7 +60,8 @@ jobs:
           pip install --no-deps --no-cache-dir \
             "skcapstone @ git+https://github.com/smilinTux/skcapstone@main" \
             "skcoord @ git+https://github.com/smilinTux/skcoord@master" \
-            "skcot @ git+https://github.com/smilinTux/skcot@main"
+            "skcot @ git+https://github.com/smilinTux/skcot@main" \
+            "capauth @ git+https://github.com/smilinTux/capauth@main"
       - name: Run pytest (full suite)
         run: python -m pytest tests/ -q
 
@@ -89,7 +90,7 @@ jobs:
       - name: Install skcomms + dev + pqc extras
         run: |
           python -m pip install --upgrade pip
-          pip install -c constraints.txt -e ".[dev,pqc]"
+          pip install -c constraints.txt -e ".[all,dev,pqc]"
       # skcomms does NOT depend on skcapstone (that would invert the direction),
       # but tests/test_integration.py exercises "integrated" mode and assumed a
       # dev venv where skcapstone happens to be installed. In CI it is not, so
@@ -103,7 +104,8 @@ jobs:
           pip install --no-deps --no-cache-dir \
             "skcapstone @ git+https://github.com/smilinTux/skcapstone@main" \
             "skcoord @ git+https://github.com/smilinTux/skcoord@master" \
-            "skcot @ git+https://github.com/smilinTux/skcot@main"
+            "skcot @ git+https://github.com/smilinTux/skcot@main" \
+            "capauth @ git+https://github.com/smilinTux/capauth@main"
       - name: Assert the PQ backend is really present
         # Without this the crypto gates would silently self-skip and the job
         # would report green while proving nothing.
