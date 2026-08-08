@@ -58,10 +58,10 @@ jobs:
       - name: Install skcapstone (optional integration backbone) from source
         run: |
           pip install --no-deps --no-cache-dir \
-            "skcapstone @ git+https://github.com/smilinTux/skcapstone@main" \
-            "skcoord @ git+https://github.com/smilinTux/skcoord@master" \
-            "skcot @ git+https://github.com/smilinTux/skcot@main" \
-            "capauth @ git+https://github.com/smilinTux/capauth@main"
+            "skcapstone @ git+https://github.com/smilinTux/skcapstone" \
+            "skcoord @ git+https://github.com/smilinTux/skcoord" \
+            "skcot @ git+https://github.com/smilinTux/skcot" \
+            "capauth @ git+https://github.com/smilinTux/capauth"
       - name: Run pytest (full suite)
         run: python -m pytest tests/ -q
 
@@ -102,10 +102,10 @@ jobs:
       - name: Install skcapstone (optional integration backbone) from source
         run: |
           pip install --no-deps --no-cache-dir \
-            "skcapstone @ git+https://github.com/smilinTux/skcapstone@main" \
-            "skcoord @ git+https://github.com/smilinTux/skcoord@master" \
-            "skcot @ git+https://github.com/smilinTux/skcot@main" \
-            "capauth @ git+https://github.com/smilinTux/capauth@main"
+            "skcapstone @ git+https://github.com/smilinTux/skcapstone" \
+            "skcoord @ git+https://github.com/smilinTux/skcoord" \
+            "skcot @ git+https://github.com/smilinTux/skcot" \
+            "capauth @ git+https://github.com/smilinTux/capauth"
       - name: Assert the PQ backend is really present
         # Without this the crypto gates would silently self-skip and the job
         # would report green while proving nothing.
