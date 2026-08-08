@@ -49,3 +49,37 @@ jobs:
           pip install -c constraints.txt -e ".[dev]"
       - name: Run pytest (full suite)
         run: python -m pytest tests/ -q
+
+  # The pqdm/pqdm2 crypto gates are the ONE place a wire-format drift between
+  # this repo and the Dart client (sk-pqc-dart / skworld-app) gets caught, and
+  # they are exactly the tests the `dev`-extras job above cannot run: every
+  # hybrid KEM op needs liboqs, and pqdm.open_multi() swallows a missing backend
+  # into a plain `None` return, so without liboqs the gate cannot fail-loud — it
+  # self-skips. This job installs the `pqc` extra so the gate genuinely runs.
+  #
+  # liboqs-python builds liboqs from source into ~/_oqs on first import when it
+  # cannot find a system copy, so that directory is cached across runs.
+  pqc-interop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Cache the liboqs build
+        uses: actions/cache@v4
+        with:
+          path: ~/_oqs
+          key: liboqs-${{ runner.os }}-${{ hashFiles('constraints.txt') }}
+      - name: Install skcomms + dev + pqc extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c constraints.txt -e ".[dev,pqc]"
+      - name: Assert the PQ backend is really present
+        # Without this the crypto gates would silently self-skip and the job
+        # would report green while proving nothing.
+        run: |
+          python -c "from skcomms import pqkem; assert pqkem.is_available(), 'liboqs missing: the pqdm gates would self-skip'"
+      - name: Run the pqdm / pqdm2 interop gates
+        run: python -m pytest tests/test_pqdm.py tests/test_pqdm2.py tests/test_pqdm2_interop.py -q

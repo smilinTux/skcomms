@@ -9,6 +9,13 @@ this test is self-contained.
 If the pqdm2 wire format drifts between the Python and Dart implementations,
 this test fails: the Dart-sealed bytes will not authenticate under the Python
 ``open_multi`` AAD / slot / wrap layout.
+
+Requires the liboqs backend, same as ``test_pqdm2.py``. Without it
+:func:`pqdm.open_multi` cannot decapsulate and returns ``None`` for every slot
+(it swallows :class:`pqkem.PqKemUnavailable` along with tamper/wrong-key), which
+would read as a wire-format regression rather than a missing optional backend.
+So the module skips instead. The ``pqc`` CI job installs liboqs and DOES run it,
+which is where the Dart<->Python gate is actually enforced.
 """
 
 from __future__ import annotations
@@ -18,7 +25,12 @@ from pathlib import Path
 
 import pytest
 
-from skcomms import pqdm
+from skcomms import pqdm, pqkem
+
+pytestmark = pytest.mark.skipif(
+    not pqkem.is_available(),
+    reason="liboqs / oqs backend unavailable",
+)
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "pqdm2_from_dart.json"
 
