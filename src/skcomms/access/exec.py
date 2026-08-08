@@ -230,7 +230,9 @@ class ExecAccess:
             raise ExecError(f"cwd is not a directory: {resolved}")
         return resolved
 
-    def _normalize_argv(self, cmd: Union[str, Sequence[str]], shell: bool) -> tuple[list[str], str, bool]:
+    def _normalize_argv(
+        self, cmd: Union[str, Sequence[str]], shell: bool
+    ) -> tuple[list[str], str, bool]:
         """Return ``(argv, display, use_shell)`` for a command.
 
         For the argv path (default), ``cmd`` may be a list or a string; a string
@@ -284,9 +286,7 @@ class ExecAccess:
         """
         for rx in self._deny_re:
             if rx.search(display):
-                raise CommandDeniedError(
-                    f"command matches denied pattern {rx.pattern!r}"
-                )
+                raise CommandDeniedError(f"command matches denied pattern {rx.pattern!r}")
 
         binary = os.path.basename(argv[0]).lower()
         if binary in {b.lower() for b in self.config.deny_binaries}:
@@ -295,9 +295,7 @@ class ExecAccess:
         if self.config.allow_binaries:
             allowed = {b.lower() for b in self.config.allow_binaries}
             if binary not in allowed:
-                raise CommandDeniedError(
-                    f"binary {binary!r} not in allowlist {sorted(allowed)}"
-                )
+                raise CommandDeniedError(f"binary {binary!r} not in allowlist {sorted(allowed)}")
 
     # -- audit --------------------------------------------------------------
 
@@ -655,6 +653,7 @@ def register_builtin_exec_tools(registry: Optional[Any] = None) -> list[str]:
     def _adapt(fn):
         def handler(arguments: dict, ctx: Any, _fn=fn):
             return _fn(**(arguments or {}))
+
         return handler
 
     names: list[str] = []

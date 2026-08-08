@@ -38,6 +38,7 @@ and a moderator's queue is exactly ``ReportLog(group_id).list_reports()`` — ne
 the raw message store. ``shadow_block`` is the natural action a moderator takes on
 a reported sender (sec. 4 + sec. 5 compose: report surfaces, shadow-block mutes).
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -102,9 +103,7 @@ class ShadowBlockSet:
 
     def is_shadow_blocked(self, member: str) -> bool:
         """Whether *member* is currently shadow-blocked in this group."""
-        row = self._conn.execute(
-            "SELECT 1 FROM shadow_blocks WHERE fqid=?", (member,)
-        ).fetchone()
+        row = self._conn.execute("SELECT 1 FROM shadow_blocks WHERE fqid=?", (member,)).fetchone()
         return row is not None
 
     def visible_to(self, viewer: str, sender: str) -> bool:
@@ -129,10 +128,7 @@ class ShadowBlockSet:
     def list_shadow_blocked(self) -> list[str]:
         """All currently shadow-blocked fqids in this group (moderator view)."""
         return [
-            r[0]
-            for r in self._conn.execute(
-                "SELECT fqid FROM shadow_blocks ORDER BY blocked_at"
-            )
+            r[0] for r in self._conn.execute("SELECT fqid FROM shadow_blocks ORDER BY blocked_at")
         ]
 
 

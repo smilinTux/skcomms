@@ -183,9 +183,7 @@ class TelegramAdapter(ChannelAdapter):
 
         # --- Identity bindings ---
         # In-memory dict: canonical_key → fqid
-        self._bindings: dict[str, str] = (
-            bindings_store if bindings_store is not None else {}
-        )
+        self._bindings: dict[str, str] = bindings_store if bindings_store is not None else {}
         self._external_bindings = bindings_store is not None
 
         # --- Injectable clients ---
@@ -222,9 +220,7 @@ class TelegramAdapter(ChannelAdapter):
                     f"session_file={self._session_file}"
                 )
             self._me = await self._telethon.get_me()
-            username = getattr(self._me, "username", None) or getattr(
-                self._me, "id", "unknown"
-            )
+            username = getattr(self._me, "username", None) or getattr(self._me, "id", "unknown")
             logger.info("telegram adapter connected as @%s (user session)", username)
         elif self._token:
             # Bot API fallback: only verify the token when an httpx_client_factory
@@ -243,9 +239,7 @@ class TelegramAdapter(ChannelAdapter):
                 except AdapterAuthError:
                     raise
                 except Exception as exc:
-                    raise AdapterConnectError(
-                        f"Telegram Bot API unreachable: {exc}"
-                    ) from exc
+                    raise AdapterConnectError(f"Telegram Bot API unreachable: {exc}") from exc
             else:
                 # Stub mode — no live getMe; set a placeholder username.
                 self._bot_username = "telegram_bot"
@@ -465,19 +459,19 @@ class TelegramAdapter(ChannelAdapter):
             if doc is not None:
                 # MessageMediaDocument — could be voice, audio, or generic file
                 attrs = getattr(doc, "attributes", [])
-                is_voice = any(
-                    hasattr(a, "voice") and getattr(a, "voice", False) for a in attrs
-                )
+                is_voice = any(hasattr(a, "voice") and getattr(a, "voice", False) for a in attrs)
                 is_audio = any(hasattr(a, "voice") for a in attrs)  # DocumentAttributeAudio
                 filename_attr = next(
                     (a for a in attrs if hasattr(a, "file_name")),
                     None,
                 )
-                fname = (
-                    getattr(filename_attr, "file_name", None)
-                    or ("voice.ogg" if is_voice else "file")
+                fname = getattr(filename_attr, "file_name", None) or (
+                    "voice.ogg" if is_voice else "file"
                 )
-                mime = getattr(doc, "mime_type", "application/octet-stream") or "application/octet-stream"
+                mime = (
+                    getattr(doc, "mime_type", "application/octet-stream")
+                    or "application/octet-stream"
+                )
                 size = getattr(doc, "size", 0) or 0
                 if is_voice or is_audio:
                     kind = MessageKind.VOICE
@@ -689,9 +683,7 @@ class TelegramAdapter(ChannelAdapter):
         try:
             if message.kind in (MessageKind.TEXT, MessageKind.STICKER):
                 reply_to = (
-                    int(message.reply_to_platform_id)
-                    if message.reply_to_platform_id
-                    else None
+                    int(message.reply_to_platform_id) if message.reply_to_platform_id else None
                 )
                 sent = await self._telethon.send_message(
                     chat_id,
@@ -718,9 +710,7 @@ class TelegramAdapter(ChannelAdapter):
                 sent = await self._telethon.send_message(chat_id, message.text)
                 return str(getattr(sent, "id", "unknown"))
         except Exception as exc:
-            raise AdapterSendError(
-                f"Telethon send failed for chat {chat_id}: {exc}"
-            ) from exc
+            raise AdapterSendError(f"Telethon send failed for chat {chat_id}: {exc}") from exc
 
     async def _send_bot_api(self, message: ChannelMessage) -> str:
         """
@@ -752,9 +742,7 @@ class TelegramAdapter(ChannelAdapter):
                 result = r.json()["result"]
                 return str(result["message_id"])
         except Exception as exc:
-            raise AdapterSendError(
-                f"Bot API send failed (endpoint={endpoint}): {exc}"
-            ) from exc
+            raise AdapterSendError(f"Bot API send failed (endpoint={endpoint}): {exc}") from exc
 
     # -----------------------------------------------------------------------
     # Identity mapping
@@ -777,9 +765,7 @@ class TelegramAdapter(ChannelAdapter):
         external ``bindings_store`` was injected (test mode).
         """
         self._bindings[platform_id.canonical_key] = fqid
-        logger.info(
-            "bound %s → %s (trust=%s)", platform_id.canonical_key, fqid, trust_level
-        )
+        logger.info("bound %s → %s (trust=%s)", platform_id.canonical_key, fqid, trust_level)
         if not self._external_bindings:
             self._save_bindings()
 

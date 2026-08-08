@@ -28,6 +28,7 @@ This module is **purely additive**: it imports :func:`skcomms.home.skcomms_home`
 and edits nothing in :mod:`skcomms.consent`. The first-contact gate composes the
 two — see the integration note in the module that wires the inbox.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -46,19 +47,19 @@ MODES = ("invite_only", "knock", "open")
 class Role(str, Enum):
     """A member's role within a group (escalating moderation authority)."""
 
-    OWNER = "owner"          #: created the group; full authority
+    OWNER = "owner"  #: created the group; full authority
     MODERATOR = "moderator"  #: delegated: approve/deny/block-for-all
-    MEMBER = "member"        #: ordinary member; no moderation authority
+    MEMBER = "member"  #: ordinary member; no moderation authority
 
 
 class JoinStatus(str, Enum):
     """The status of an fqid with respect to a group."""
 
-    INVITED = "invited"    #: pre-authorized (invite_only) but not yet joined
-    PENDING = "pending"    #: knocking / awaiting captcha — queued for review
-    MEMBER = "member"      #: admitted, full member
-    DENIED = "denied"      #: rejected (un-invited stranger, or denied in review)
-    BLOCKED = "blocked"    #: block-for-all — dropped, may never re-knock
+    INVITED = "invited"  #: pre-authorized (invite_only) but not yet joined
+    PENDING = "pending"  #: knocking / awaiting captcha — queued for review
+    MEMBER = "member"  #: admitted, full member
+    DENIED = "denied"  #: rejected (un-invited stranger, or denied in review)
+    BLOCKED = "blocked"  #: block-for-all — dropped, may never re-knock
 
 
 #: Roles that may moderate (approve / deny / block-for-all).
@@ -180,8 +181,9 @@ class GroupJoinPolicy:
             (JoinStatus.PENDING.value,),
         ).fetchall()
         return [
-            JoinRequest(fqid=r[0], group_id=self.group_id,
-                        status=JoinStatus.PENDING, requested_at=r[1])
+            JoinRequest(
+                fqid=r[0], group_id=self.group_id, status=JoinStatus.PENDING, requested_at=r[1]
+            )
             for r in rows
         ]
 
@@ -205,9 +207,7 @@ class GroupJoinPolicy:
 
     # -- the join path ---------------------------------------------------------
 
-    def request_join(
-        self, fqid: str, *, captcha_answer: Optional[str] = None
-    ) -> JoinRequest:
+    def request_join(self, fqid: str, *, captcha_answer: Optional[str] = None) -> JoinRequest:
         """Attempt to join. Behaviour depends on ``mode`` (see class docstring).
 
         Returns a :class:`JoinRequest` whose ``status`` reflects the outcome:
@@ -277,10 +277,15 @@ class GroupJoinPolicy:
 
     def _req(self, fqid: str, status: JoinStatus) -> JoinRequest:
         row = self._row(fqid)
-        ts = row and self._conn.execute(
-            "SELECT updated_at FROM membership WHERE fqid=?", (fqid,)
-        ).fetchone()[0]
+        ts = (
+            row
+            and self._conn.execute(
+                "SELECT updated_at FROM membership WHERE fqid=?", (fqid,)
+            ).fetchone()[0]
+        )
         return JoinRequest(
-            fqid=fqid, group_id=self.group_id, status=status,
+            fqid=fqid,
+            group_id=self.group_id,
+            status=status,
             requested_at=ts or time.time(),
         )

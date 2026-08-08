@@ -644,8 +644,7 @@ class Router:
         available = [
             t
             for t in self._transports
-            if t.is_available()
-            and not self._is_in_cooldown(t.name)
+            if t.is_available() and not self._is_in_cooldown(t.name)
             # The designated store-and-forward rail is NEVER a direct candidate;
             # it is reserved for the _try_store_forward last-resort fallback.
             and t.name != self._store_forward_transport
@@ -956,9 +955,9 @@ class Router:
             del self._perm_backoff[key]
         overflow = len(self._perm_backoff) - PERM_BACKOFF_MAX_ENTRIES
         if overflow > 0:
-            for key in sorted(
-                self._perm_backoff, key=lambda k: self._perm_backoff[k][1]
-            )[:overflow]:
+            for key in sorted(self._perm_backoff, key=lambda k: self._perm_backoff[k][1])[
+                :overflow
+            ]:
                 del self._perm_backoff[key]
 
     def _in_perm_backoff(self, transport_name: str, recipient: str) -> bool:
@@ -1018,9 +1017,7 @@ class Router:
                 continue
             if getattr(health, "status", None) == TransportStatus.AVAILABLE:
                 self._quarantined.pop(transport.name, None)
-                logger.info(
-                    "Transport '%s' passed re-probe — leaving quarantine", transport.name
-                )
+                logger.info("Transport '%s' passed re-probe — leaving quarantine", transport.name)
 
     @staticmethod
     def _is_http_4xx(error: Optional[str]) -> bool:
@@ -1124,8 +1121,7 @@ class Router:
             envelope_id="",
             latency_ms=0.0,
             error=(
-                f"throttled: outbound rate limit on '{transport.name}' "
-                f"(retry in ~{wait:.1f}s)"
+                f"throttled: outbound rate limit on '{transport.name}' " f"(retry in ~{wait:.1f}s)"
             ),
         )
 
@@ -1197,7 +1193,6 @@ class Router:
 
     def _extract_envelope_id(self, data: bytes) -> Optional[str]:
         """Best-effort extraction of envelope_id from raw bytes for dedup."""
-        import json
 
         try:
             parsed = json.loads(data)

@@ -5,6 +5,7 @@ real direct data channel — proving the poll-loop + de-dup + offer/answer wirin
 that ties MailboxSignaling to P2PSession (the live path is opus↔lumina over the
 signed mailbox; crypto + session are proven separately).
 """
+
 from collections import defaultdict
 
 import pytest
@@ -62,8 +63,8 @@ async def test_connectors_establish_data_channel_over_signaling():
         poll_interval=0.1,
     )
     try:
-        await lumina.start(role="answer")   # poll-only, waits for the offer
-        await opus.start(role="offer")      # creates channel + sends offer
+        await lumina.start(role="answer")  # poll-only, waits for the offer
+        await opus.start(role="offer")  # creates channel + sends offer
         await opus.wait_open(timeout=20)
         await lumina.wait_open(timeout=20)
 

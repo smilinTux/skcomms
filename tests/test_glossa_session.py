@@ -8,8 +8,12 @@ from skcomms.glossa.session import GlossaSession
 
 
 def _desc(fqid, max_level):
-    return CapabilityDescriptor(fqid=fqid, model_tier="large", max_level=max_level,
-                                codebook_version=default_codebook().version)
+    return CapabilityDescriptor(
+        fqid=fqid,
+        model_tier="large",
+        max_level=max_level,
+        codebook_version=default_codebook().version,
+    )
 
 
 def test_two_agents_handshake_and_round_trip_at_l2():
@@ -37,7 +41,7 @@ def test_weaker_peer_caps_the_level_and_still_round_trips():
     b.set_transport(a.receive)
     a.handshake(b.local)
     b.handshake(a.local)
-    assert a.level == codec.L0_ENGLISH    # capped to the weaker peer
+    assert a.level == codec.L0_ENGLISH  # capped to the weaker peer
     got = []
     b.on_message(lambda m: got.append(m))
     a.say(Message(intent="ack"))
@@ -87,12 +91,12 @@ def test_handshaked_peer_routes_corruption_to_error_hook():
     raw, exc = errors[0]
     assert raw == b"\xff\xff\x00garbage"
     assert isinstance(exc, Exception)
-    assert got_msgs == []   # on_message must NOT fire on a decode failure
+    assert got_msgs == []  # on_message must NOT fire on a decode failure
 
 
 def test_pre_handshake_session_tolerates_undecodable_frame():
     cb = default_codebook()
     b = GlossaSession(local=_desc("b@x.y", codec.L2_CODEBOOK), codebook=cb)
     # never handshaked -> _session is None -> tolerate (degenerate one-sided case)
-    b.receive(b"\xff\xff\x00garbage")   # must NOT raise
+    b.receive(b"\xff\xff\x00garbage")  # must NOT raise
     assert any("<undecodable" in line for line in b.audit_log)

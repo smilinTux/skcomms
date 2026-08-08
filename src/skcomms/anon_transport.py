@@ -176,10 +176,7 @@ def anon_enabled(override: Optional[bool] = None) -> bool:
 
 def is_anon_frame(wire: bytes) -> bool:
     """True iff ``wire`` is an anon frame (carries :data:`ANON_MAGIC`)."""
-    return (
-        isinstance(wire, (bytes, bytearray))
-        and bytes(wire[: len(ANON_MAGIC)]) == ANON_MAGIC
-    )
+    return isinstance(wire, (bytes, bytearray)) and bytes(wire[: len(ANON_MAGIC)]) == ANON_MAGIC
 
 
 def read_sender_id(wire: bytes) -> bytes:
@@ -242,9 +239,7 @@ def frame_anon(
         AnonFrameError: invalid ``sender_id``/``secret``/``nonce``.
     """
     if not anon_enabled(enabled):
-        raise AnonDisabledError(
-            "anon framing is OFF — set SKCOMMS_ANON=1 or pass enabled=True"
-        )
+        raise AnonDisabledError("anon framing is OFF — set SKCOMMS_ANON=1 or pass enabled=True")
     if not isinstance(sender_id, (bytes, bytearray)) or len(sender_id) != QUEUE_ID_LEN:
         raise AnonFrameError(f"sender_id must be {QUEUE_ID_LEN} bytes")
     if not isinstance(secret, (bytes, bytearray)) or len(secret) == 0:
@@ -318,9 +313,7 @@ def parse_anon(
 
     if not isinstance(secret, (bytes, bytearray)) or len(secret) == 0:
         raise AnonFrameError("secret must be non-empty bytes")
-    if not verify_tag(
-        bytes(secret), bytes([ver]) + sid + padded_body, nonce, tag
-    ):
+    if not verify_tag(bytes(secret), bytes([ver]) + sid + padded_body, nonce, tag):
         raise AnonAuthError("deniable auth failed (wrong secret or tampered frame)")
 
     try:
@@ -365,8 +358,9 @@ class AnonChannel:
         if not isinstance(secret, (bytes, bytearray)) or len(secret) == 0:
             raise AnonFrameError("secret must be non-empty bytes")
         recipient_id, sender_id = new_queue_pair()
-        return cls(relay=relay, sender_id=sender_id, secret=bytes(secret),
-                   recipient_id=recipient_id)
+        return cls(
+            relay=relay, sender_id=sender_id, secret=bytes(secret), recipient_id=recipient_id
+        )
 
     @classmethod
     def from_address(cls, aqid: str, secret: bytes) -> "AnonChannel":
@@ -378,8 +372,7 @@ class AnonChannel:
         if not isinstance(secret, (bytes, bytearray)) or len(secret) == 0:
             raise AnonFrameError("secret must be non-empty bytes")
         relay, sender_id = decode_aqid(aqid)
-        return cls(relay=relay, sender_id=sender_id, secret=bytes(secret),
-                   recipient_id=None)
+        return cls(relay=relay, sender_id=sender_id, secret=bytes(secret), recipient_id=None)
 
     @property
     def address(self) -> str:
@@ -399,8 +392,12 @@ class AnonChannel:
         Returns the wire bytes; address the transport to :attr:`relay`.
         """
         return frame_anon(
-            payload, self.sender_id, self.secret,
-            nonce=nonce, ladder=ladder, enabled=enabled,
+            payload,
+            self.sender_id,
+            self.secret,
+            nonce=nonce,
+            ladder=ladder,
+            enabled=enabled,
         )
 
     def open(self, wire: bytes) -> bytes:
@@ -409,6 +406,4 @@ class AnonChannel:
         Enforces that the frame's routing id matches this channel's
         ``sender_id`` (rejects a frame for a different queue).
         """
-        return parse_anon(
-            wire, self.secret, expected_sender_id=self.sender_id
-        ).payload
+        return parse_anon(wire, self.secret, expected_sender_id=self.sender_id).payload

@@ -20,8 +20,9 @@ L2_CODEBOOK = 2
 
 def _l0_encode(m: Message) -> bytes:
     # readable AND parseable: "intent :: <json of {a,r,t}>"
-    body = json.dumps({"a": m.args, "r": m.refs, "t": m.text},
-                      sort_keys=True, separators=(",", ":"))
+    body = json.dumps(
+        {"a": m.args, "r": m.refs, "t": m.text}, sort_keys=True, separators=(",", ":")
+    )
     return f"{m.intent} :: {body}".encode()
 
 
@@ -29,8 +30,9 @@ def _l0_decode(raw: bytes) -> Message:
     s = raw.decode()
     intent, _, body = s.partition(" :: ")
     d = json.loads(body) if body else {}
-    return Message(intent=intent, args=dict(d.get("a", {})),
-                   refs=list(d.get("r", [])), text=d.get("t", ""))
+    return Message(
+        intent=intent, args=dict(d.get("a", {})), refs=list(d.get("r", [])), text=d.get("t", "")
+    )
 
 
 def encode(m: Message, level: int, codebook: Codebook | None = None) -> bytes:
@@ -66,6 +68,5 @@ def decode(raw: bytes, level: int, codebook: Codebook | None = None) -> Message:
                 raise ValueError(f"unknown codebook code {head} — codebook version skew")
         else:
             intent = head
-        return Message(intent=intent or "", args=dict(args),
-                       refs=list(refs), text=text)
+        return Message(intent=intent or "", args=dict(args), refs=list(refs), text=text)
     raise ValueError(f"unsupported level {level}")

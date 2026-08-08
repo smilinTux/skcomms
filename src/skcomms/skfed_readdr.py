@@ -182,9 +182,7 @@ def compute_rewrites(
                 continue  # already neutral -> idempotent no-op
             new_url = rewrite_url(url, new_host)
             updates[fld] = new_url
-            changes.append(
-                ReseedChange(fqid=entry.fqid, field=fld, before=url, after=new_url)
-            )
+            changes.append(ReseedChange(fqid=entry.fqid, field=fld, before=url, after=new_url))
 
         new_entries.append(entry.model_copy(update=updates) if updates else entry)
 
@@ -247,9 +245,7 @@ def reseed_neutral_addresses(
         realm=sd.realm, operator=sd.operator, entries=new_entries, signer=signer
     )
     save_directory(signed)
-    return ReseedResult(
-        changes=changes, entries_after=new_entries, signed=signed, dry_run=False
-    )
+    return ReseedResult(changes=changes, entries_after=new_entries, signed=signed, dry_run=False)
 
 
 # ---------------------------------------------------------------------------
@@ -277,8 +273,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--base-domain", default=DEFAULT_BASE_DOMAIN)
     ap.add_argument("--prefix", default=DEFAULT_PREFIX)
     ap.add_argument("--leaky-suffix", default=DEFAULT_LEAKY_SUFFIX)
-    ap.add_argument("--all", action="store_true", help="rewrite ALL hosts, not just leaky *.ts.net")
-    ap.add_argument("--fqid", action="append", default=None, help="limit to these FQID(s); repeatable")
+    ap.add_argument(
+        "--all", action="store_true", help="rewrite ALL hosts, not just leaky *.ts.net"
+    )
+    ap.add_argument(
+        "--fqid", action="append", default=None, help="limit to these FQID(s); repeatable"
+    )
     ap.add_argument("--agent", default=None, help="agent name for the node signer")
     ap.add_argument("--apply", action="store_true", help="APPLY the rewrite (default is dry-run)")
     args = ap.parse_args(argv)

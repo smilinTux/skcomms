@@ -10,6 +10,7 @@ request-management group:
   (:mod:`skcomms.consent_runtime`).
 * ``consent tier <fqid>`` showing ``classify_tier`` + ``friction_for``.
 """
+
 import pytest
 from click.testing import CliRunner
 

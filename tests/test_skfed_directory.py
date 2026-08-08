@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # --- in-process key fixtures (mirror tests/test_api_federation_inbox.py) ----
 
 
@@ -55,7 +54,9 @@ JARVIS_FQID = "jarvis@chef.skworld"
 LUMINA_FQID = "lumina@chef.skworld"
 
 
-def _entry(fqid, inbox="https://node.ts.net/api/v1/inbox", prekey="https://node.ts.net/api/v1/prekey"):
+def _entry(
+    fqid, inbox="https://node.ts.net/api/v1/inbox", prekey="https://node.ts.net/api/v1/prekey"
+):
     from skcomms.skfed_directory import DirectoryEntry
 
     return DirectoryEntry(
@@ -72,9 +73,7 @@ def _build_signed(operator_priv, entries):
     from skcomms.skfed_directory import SignedDirectory
 
     signer = EnvelopeSigner(operator_priv)
-    return SignedDirectory.build(
-        realm=REALM, operator=OPERATOR, entries=entries, signer=signer
-    )
+    return SignedDirectory.build(realm=REALM, operator=OPERATOR, entries=entries, signer=signer)
 
 
 # --- model: build / sign / verify -----------------------------------------

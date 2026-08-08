@@ -8,6 +8,7 @@ side-effecting facade over :class:`skcomms.consent.RequestQueue` /
 process over the same ``SKCOMMS_HOME`` observes every decision (the CLI/daemon
 split-process round-trip).
 """
+
 import pytest
 
 from skcomms import consent_requests as cr
@@ -25,10 +26,12 @@ def _home(tmp_path, monkeypatch):
 def _enqueue(agent, sender, body=b"knock", envelope_id="e1"):
     """Quarantine a first-contact knock the way the inbound gate would."""
     from skcomms.consent import RequestQueue
+
     RequestQueue(agent).enqueue(sender, body, envelope_id=envelope_id)
 
 
 # --- list ---------------------------------------------------------------
+
 
 def test_list_requests_shape_and_enqueue_then_list():
     _enqueue("lumina", O, envelope_id="e1")
@@ -48,6 +51,7 @@ def test_list_requests_empty_when_nothing_queued():
 
 # --- accept -------------------------------------------------------------
 
+
 def test_accept_promotes_to_known_and_clears_queue():
     _enqueue("lumina", O, envelope_id="e1")
     cr.accept_request("lumina", O)
@@ -57,12 +61,14 @@ def test_accept_promotes_to_known_and_clears_queue():
 
 # --- decline / block ----------------------------------------------------
 
+
 def test_decline_clears_queue_without_blocking():
     _enqueue("lumina", O, envelope_id="e1")
     cr.decline_request("lumina", O)
     assert cr.list_requests("lumina") == []
     # plain decline does not block — a future knock is not pre-dropped
     from skcomms.consent import ContactStore
+
     assert not ContactStore("lumina").is_blocked(O)
 
 
@@ -71,16 +77,19 @@ def test_decline_with_block_blocks_sender():
     cr.decline_request("lumina", J, block=True)
     assert cr.list_requests("lumina") == []
     from skcomms.consent import ContactStore
+
     assert ContactStore("lumina").is_blocked(J)
 
 
 def test_block_sender_blocks_directly():
     cr.block_sender("lumina", J)
     from skcomms.consent import ContactStore
+
     assert ContactStore("lumina").is_blocked(J)
 
 
 # --- list_known ---------------------------------------------------------
+
 
 def test_list_known_reflects_accepts():
     assert cr.list_known("lumina") == []
@@ -91,9 +100,11 @@ def test_list_known_reflects_accepts():
 
 # --- unblock ------------------------------------------------------------
 
+
 def test_unblock_removes_block():
     cr.block_sender("lumina", J)
     from skcomms.consent import ContactStore
+
     assert ContactStore("lumina").is_blocked(J)
     cr.unblock("lumina", J)
     assert not ContactStore("lumina").is_blocked(J)
@@ -105,10 +116,12 @@ def test_unblock_noop_when_not_blocked():
     # idempotent / safe on an unknown sender
     cr.unblock("lumina", O)
     from skcomms.consent import ContactStore
+
     assert not ContactStore("lumina").is_blocked(O)
 
 
 # --- persistence / split-process round-trip -----------------------------
+
 
 def test_round_trips_via_fresh_stores(tmp_path, monkeypatch):
     monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
@@ -119,6 +132,7 @@ def test_round_trips_via_fresh_stores(tmp_path, monkeypatch):
     # nothing is cached in-process, the SQLite stores are the source of truth.
     assert cr.list_known("lumina") == [O]
     from skcomms.consent import ContactStore
+
     assert ContactStore("lumina").is_blocked(J)
     assert cr.list_requests("lumina") == []
 

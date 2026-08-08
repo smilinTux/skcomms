@@ -11,6 +11,7 @@ Design: ``docs/skfed-consent-design.md``. This is P1; per-contact capability
 tokens (P2), sender-auth tiering + ban-feeds (P3) and group consent (P4) layer on
 top of the same store.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -26,9 +27,9 @@ from .home import skcomms_home
 class ConsentDecision(str, Enum):
     """What the gate decides for an incoming envelope."""
 
-    DELIVER = "deliver"        #: known/accepted contact (or tailnet-mode member)
+    DELIVER = "deliver"  #: known/accepted contact (or tailnet-mode member)
     QUARANTINE = "quarantine"  #: unknown first-contact → request queue
-    DROP = "drop"              #: blocked sender → discard silently
+    DROP = "drop"  #: blocked sender → discard silently
 
 
 def _consent_dir(agent: str) -> Path:
@@ -141,9 +142,7 @@ class RequestQueue:
     def enqueue(self, sender: str, body: bytes, *, envelope_id: str) -> bool:
         """Queue a first-contact message. Returns False if the per-sender cap is hit."""
         with self._conn() as c:
-            n = c.execute(
-                "SELECT COUNT(*) FROM requests WHERE sender=?", (sender,)
-            ).fetchone()[0]
+            n = c.execute("SELECT COUNT(*) FROM requests WHERE sender=?", (sender,)).fetchone()[0]
             if n >= self.cap:
                 return False
             c.execute(
@@ -170,8 +169,9 @@ class RequestQueue:
         with self._conn() as c:
             c.execute("DELETE FROM requests WHERE sender=?", (sender,))
 
-    def decline_request(self, sender: str, *, store: Optional[ContactStore] = None,
-                        block: bool = False) -> None:
+    def decline_request(
+        self, sender: str, *, store: Optional[ContactStore] = None, block: bool = False
+    ) -> None:
         """Drop *sender*'s queued knocks; optionally block the sender."""
         if block and store is not None:
             store.block(sender)

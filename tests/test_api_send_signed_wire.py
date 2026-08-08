@@ -23,7 +23,11 @@ from skcomms.crypto import EnvelopeCrypto
 from skcomms.envelope import SignedEnvelope
 from skcomms.router import Router
 from skcomms.transport import (
-    HealthStatus, SendResult, Transport, TransportCategory, TransportStatus,
+    HealthStatus,
+    SendResult,
+    Transport,
+    TransportCategory,
+    TransportStatus,
 )
 
 JARVIS_FQID = "jarvis@chef.skworld"
@@ -33,9 +37,13 @@ LUMINA_FQID = "lumina@chef.skworld"
 def _gen_key(uid: str):
     import pgpy
     from pgpy.constants import (
-        CompressionAlgorithm, HashAlgorithm, KeyFlags,
-        PubKeyAlgorithm, SymmetricKeyAlgorithm,
+        CompressionAlgorithm,
+        HashAlgorithm,
+        KeyFlags,
+        PubKeyAlgorithm,
+        SymmetricKeyAlgorithm,
     )
+
     key = pgpy.PGPKey.new(PubKeyAlgorithm.RSAEncryptOrSign, 1024)
     key.add_uid(
         pgpy.PGPUID.new(uid),
@@ -62,13 +70,21 @@ class CaptureTransport(Transport):
     def __init__(self):
         self.sent: list[tuple[str, bytes]] = []
 
-    def configure(self, c): pass
-    def is_available(self): return True
+    def configure(self, c):
+        pass
+
+    def is_available(self):
+        return True
+
     def send(self, envelope_bytes, recipient):
         self.sent.append((recipient, envelope_bytes))
-        return SendResult(success=True, transport_name=self.name,
-                          envelope_id="", latency_ms=0.0, error=None)
-    def receive(self): return []
+        return SendResult(
+            success=True, transport_name=self.name, envelope_id="", latency_ms=0.0, error=None
+        )
+
+    def receive(self):
+        return []
+
     def health_check(self):
         return HealthStatus(transport_name=self.name, status=TransportStatus.AVAILABLE)
 
@@ -90,13 +106,14 @@ def api_env(tmp_path, monkeypatch, jarvis_keys):
     api._fed_rate_limiter = None
 
     priv, pub, fp = jarvis_keys
-    monkeypatch.setattr(identity_mod, "resolve_self_identity",
-                        lambda *a, **k: {"agent": "jarvis", "fqid": JARVIS_FQID,
-                                         "fingerprint": fp})
+    monkeypatch.setattr(
+        identity_mod,
+        "resolve_self_identity",
+        lambda *a, **k: {"agent": "jarvis", "fqid": JARVIS_FQID, "fingerprint": fp},
+    )
 
     rail = CaptureTransport()
-    comm = SKComms(router=Router(transports=[rail]),
-                   crypto=EnvelopeCrypto(priv, "", fp))
+    comm = SKComms(router=Router(transports=[rail]), crypto=EnvelopeCrypto(priv, "", fp))
     monkeypatch.setattr(api, "get_skcomms", lambda: comm)
 
     # Pin jarvis's pubkey (TOFU) so the inbox verifier trusts the sender.
@@ -217,8 +234,11 @@ def test_presence_heartbeat_broadcast_emits_signed_envelopes(api_env, monkeypatc
 
     # Keep the heartbeat-file phase off the real filesystem.
     class _StubPublisher:
-        def __init__(self, *a, **k): pass
-        def publish(self): return "stub-heartbeat-path"
+        def __init__(self, *a, **k):
+            pass
+
+        def publish(self):
+            return "stub-heartbeat-path"
 
     monkeypatch.setattr(api, "HeartbeatPublisher", _StubPublisher)
 

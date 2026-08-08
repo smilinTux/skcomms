@@ -35,16 +35,19 @@ from skcomms.access.routing import (
 from skcomms.discovery import PeerInfo, PeerStore, PeerTransport
 from skcomms.signing import EnvelopeSigner
 
-
 # --- key helpers (same pattern as test_access_server.py) -------------------
 
 
 def _gen_key(uid: str):
     import pgpy
     from pgpy.constants import (
-        CompressionAlgorithm, HashAlgorithm, KeyFlags,
-        PubKeyAlgorithm, SymmetricKeyAlgorithm,
+        CompressionAlgorithm,
+        HashAlgorithm,
+        KeyFlags,
+        PubKeyAlgorithm,
+        SymmetricKeyAlgorithm,
     )
+
     key = pgpy.PGPKey.new(PubKeyAlgorithm.RSAEncryptOrSign, 1024)
     key.add_uid(
         pgpy.PGPUID.new(uid),
@@ -160,7 +163,8 @@ def test_routed_read_local_no_network(resolver, monkeypatch, tmp_path):
 
     monkeypatch.setattr(routing.files_mod, "file_read", _local_read)
     monkeypatch.setattr(
-        routing, "call_remote",
+        routing,
+        "call_remote",
         lambda *a, **k: called.__setitem__("remote", called["remote"] + 1),
     )
 
@@ -184,7 +188,8 @@ def test_remote_call_signs_and_posts(resolver, caller_keys, monkeypatch):
     monkeypatch.setattr(routing, "_load_signer", lambda agent: EnvelopeSigner(priv))
     # Make self-identity deterministic (no capauth install needed).
     monkeypatch.setattr(
-        routing, "resolve_self_identity",
+        routing,
+        "resolve_self_identity",
         lambda agent=None: {"agent": "lumina", "fqid": "lumina@chef.skworld"},
     )
 
@@ -215,21 +220,29 @@ def test_remote_call_accepted_by_peer_gate(resolver, caller_keys, monkeypatch):
     priv, pub = caller_keys
     monkeypatch.setattr(routing, "_load_signer", lambda agent: EnvelopeSigner(priv))
     monkeypatch.setattr(
-        routing, "resolve_self_identity",
+        routing,
+        "resolve_self_identity",
         lambda agent=None: {"agent": "lumina", "fqid": "lumina@chef.skworld"},
     )
 
     # A peer-side server that grants the caller read scope + a dummy file_read.
     peer_cfg = AccessConfig(
-        node_name=".41", port=9386,
+        node_name=".41",
+        port=9386,
         scope_grants={"lumina@chef.skworld": {Scope.READ}},
     )
     peer_reg = AccessRegistry()
-    srv = AccessServer(config=peer_cfg, registry=peer_reg, peer_store=PeerStore(peers_dir=resolver.peer_store.peers_dir))
+    srv = AccessServer(
+        config=peer_cfg,
+        registry=peer_reg,
+        peer_store=PeerStore(peers_dir=resolver.peer_store.peers_dir),
+    )
     srv.trust_key("lumina@chef.skworld", pub)
     srv.registry.register(
-        "file_read", lambda args, ctx: {"path": args["path"], "served_by": ".41"},
-        Scope.READ, replace=True,
+        "file_read",
+        lambda args, ctx: {"path": args["path"], "served_by": ".41"},
+        Scope.READ,
+        replace=True,
     )
 
     captured = {}
@@ -239,9 +252,7 @@ def test_remote_call_accepted_by_peer_gate(resolver, caller_keys, monkeypatch):
         signed_obj = json.loads(signed_bytes.decode("utf-8"))
         inner = json.loads(signed_obj["envelope"]["body"])
         # Run it through the REAL server gate, just like the /tool endpoint.
-        result = asyncio.run(
-            srv.call_tool(signed_obj, inner["tool"], inner.get("arguments", {}))
-        )
+        result = asyncio.run(srv.call_tool(signed_obj, inner["tool"], inner.get("arguments", {})))
         # Mirror _post_tool's unwrap of the {"ok","result"} HTTP envelope.
         return result
 
@@ -275,11 +286,13 @@ def test_fetch_located_routes_by_node(resolver, monkeypatch):
 def test_fetch_located_local_hit_no_network(resolver, monkeypatch):
     calls = {"local": 0, "remote": 0}
     monkeypatch.setattr(
-        routing.files_mod, "file_read",
+        routing.files_mod,
+        "file_read",
         lambda path: calls.__setitem__("local", calls["local"] + 1) or {"path": path},
     )
     monkeypatch.setattr(
-        routing, "call_remote",
+        routing,
+        "call_remote",
         lambda *a, **k: calls.__setitem__("remote", calls["remote"] + 1),
     )
     # local node id -> stays local
@@ -303,7 +316,8 @@ def test_remote_http_error(resolver, caller_keys, monkeypatch):
     priv, _pub = caller_keys
     monkeypatch.setattr(routing, "_load_signer", lambda agent: EnvelopeSigner(priv))
     monkeypatch.setattr(
-        routing, "resolve_self_identity",
+        routing,
+        "resolve_self_identity",
         lambda agent=None: {"agent": "lumina", "fqid": "lumina@chef.skworld"},
     )
 

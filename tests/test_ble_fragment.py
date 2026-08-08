@@ -13,8 +13,13 @@ from skcomms.transports.ble.protocol import (
 
 def _msg(payload):
     return MeshPacket(
-        type=PacketType.MESSAGE, ttl=7, flags=0, timestamp=1,
-        msg_id=b"\x09" * 8, sender_id=b"\xaa" * 8, recipient_id=b"\xbb" * 8,
+        type=PacketType.MESSAGE,
+        ttl=7,
+        flags=0,
+        timestamp=1,
+        msg_id=b"\x09" * 8,
+        sender_id=b"\xaa" * 8,
+        recipient_id=b"\xbb" * 8,
         payload=payload,
     )
 
@@ -55,9 +60,14 @@ def test_reassembler_ignores_unrelated_fragment_ids():
 
 def _frag_pkt(payload):
     return MeshPacket(
-        type=PacketType.FRAGMENT_START, ttl=7, flags=FLAG_FRAGMENTED,
-        timestamp=1, msg_id=b"\x09" * 8, sender_id=b"\xaa" * 8,
-        recipient_id=b"\xbb" * 8, payload=payload,
+        type=PacketType.FRAGMENT_START,
+        ttl=7,
+        flags=FLAG_FRAGMENTED,
+        timestamp=1,
+        msg_id=b"\x09" * 8,
+        sender_id=b"\xaa" * 8,
+        recipient_id=b"\xbb" * 8,
+        payload=payload,
     )
 
 

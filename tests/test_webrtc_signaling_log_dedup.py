@@ -36,9 +36,9 @@ def test_first_failure_warns_then_debug(caplog):
 def test_recovery_logs_once_and_rearms(caplog):
     t = WebRTCTransport(agent_fingerprint="DEADBEEFCAFE1234")
     with caplog.at_level(logging.DEBUG, logger=LOGGER):
-        t._log_signaling_failure(ConnectionRefusedError("down"), 2.0)   # WARN
-        t._note_signaling_recovered()                                    # INFO
-        t._log_signaling_failure(ConnectionRefusedError("down"), 2.0)   # WARN again
+        t._log_signaling_failure(ConnectionRefusedError("down"), 2.0)  # WARN
+        t._note_signaling_recovered()  # INFO
+        t._log_signaling_failure(ConnectionRefusedError("down"), 2.0)  # WARN again
 
     warns = _levels(caplog, "Signaling connection error")
     recovered = [r for r in caplog.records if "recover" in r.getMessage().lower()]

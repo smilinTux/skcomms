@@ -4,6 +4,7 @@ Proves "both together" (sub-project B) — the offerer attaches an audio track, 
 negotiated SDP carries an audio m-line, and the answerer's on_track fires. Uses a
 minimal silent audio track so real SRTP media flows over aiortc loopback.
 """
+
 import asyncio
 import fractions
 
@@ -51,6 +52,7 @@ async def test_p2p_data_plus_audio():
     def make_send(target: str):
         async def _send(kind: str, payload: dict) -> None:
             await sessions[target].handle_signal(kind, payload)
+
         return _send
 
     got_track = asyncio.Event()

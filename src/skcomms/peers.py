@@ -72,19 +72,13 @@ def _validate_fqid(fqid: str) -> tuple[str, str, str]:
         ValueError: If *fqid* is not a well-formed ``a@o.r`` handle.
     """
     if not isinstance(fqid, str) or "@" not in fqid:
-        raise ValueError(
-            f"invalid fqid: {fqid!r} (expected <agent>@<operator>.<realm>)"
-        )
+        raise ValueError(f"invalid fqid: {fqid!r} (expected <agent>@<operator>.<realm>)")
     agent, rest = fqid.split("@", 1)
     if not agent or "." not in rest:
-        raise ValueError(
-            f"invalid fqid: {fqid!r} (expected <agent>@<operator>.<realm>)"
-        )
+        raise ValueError(f"invalid fqid: {fqid!r} (expected <agent>@<operator>.<realm>)")
     operator, realm = rest.split(".", 1)
     if not operator or not realm:
-        raise ValueError(
-            f"invalid fqid: {fqid!r} (expected <agent>@<operator>.<realm>)"
-        )
+        raise ValueError(f"invalid fqid: {fqid!r} (expected <agent>@<operator>.<realm>)")
     return agent, operator, realm
 
 

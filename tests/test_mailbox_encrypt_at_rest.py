@@ -80,11 +80,13 @@ def signing_patch(lumina_keys):
         "fqid": "lumina@chef.skworld",
         "fingerprint": EnvelopeSigner(priv, "").fingerprint,
     }
-    with patch("skcomms.mailbox.resolve_self_identity", return_value=ident), patch(
-        "skcomms.mailbox._load_signer", return_value=EnvelopeSigner(priv, "")
-    ), patch("skcomms.mailbox._load_verifier_key", return_value=pub), patch(
-        "skcomms.mailbox._load_recipient_key", return_value=pub
-    ), patch("skcomms.mailbox._load_private_armor", return_value=priv):
+    with (
+        patch("skcomms.mailbox.resolve_self_identity", return_value=ident),
+        patch("skcomms.mailbox._load_signer", return_value=EnvelopeSigner(priv, "")),
+        patch("skcomms.mailbox._load_verifier_key", return_value=pub),
+        patch("skcomms.mailbox._load_recipient_key", return_value=pub),
+        patch("skcomms.mailbox._load_private_armor", return_value=priv),
+    ):
         yield priv, pub
 
 
@@ -100,10 +102,11 @@ def signing_patch_real_recipient_lookup(lumina_keys):
         "fqid": "lumina@chef.skworld",
         "fingerprint": EnvelopeSigner(priv, "").fingerprint,
     }
-    with patch("skcomms.mailbox.resolve_self_identity", return_value=ident), patch(
-        "skcomms.mailbox._load_signer", return_value=EnvelopeSigner(priv, "")
-    ), patch("skcomms.mailbox._load_verifier_key", return_value=pub), patch(
-        "skcomms.mailbox._load_private_armor", return_value=priv
+    with (
+        patch("skcomms.mailbox.resolve_self_identity", return_value=ident),
+        patch("skcomms.mailbox._load_signer", return_value=EnvelopeSigner(priv, "")),
+        patch("skcomms.mailbox._load_verifier_key", return_value=pub),
+        patch("skcomms.mailbox._load_private_armor", return_value=priv),
     ):
         yield priv, pub
 
@@ -172,9 +175,7 @@ class TestFailClosed:
 
 
 class TestIdempotency:
-    def test_already_sealed_pqdm_body_not_double_encrypted(
-        self, cluster_env, signing_patch
-    ):
+    def test_already_sealed_pqdm_body_not_double_encrypted(self, cluster_env, signing_patch):
         from skcomms.home import scaffold
         from skcomms.mailbox import send_message
         from skcomms.mailbox import _is_already_sealed  # noqa: F401 (must exist)
@@ -424,9 +425,7 @@ class TestPlaintextEscapeHatchWarns:
         with caplog.at_level(logging.WARNING, logger="skcomms.mailbox"):
             send_message("opus@chef.skworld", SECRET)
 
-        assert not any(
-            "SKCOMMS_MAILBOX_OUTBOX_PLAINTEXT" in rec.message for rec in caplog.records
-        )
+        assert not any("SKCOMMS_MAILBOX_OUTBOX_PLAINTEXT" in rec.message for rec in caplog.records)
 
 
 class TestResealLegacyPlaintextOutbox:
@@ -445,9 +444,7 @@ class TestResealLegacyPlaintextOutbox:
         monkeypatch.delenv("SKCOMMS_MAILBOX_OUTBOX_PLAINTEXT")
         return Path(result["outbox_path"])
 
-    def test_sweep_reseals_legacy_plaintext_record(
-        self, cluster_env, signing_patch, monkeypatch
-    ):
+    def test_sweep_reseals_legacy_plaintext_record(self, cluster_env, signing_patch, monkeypatch):
         import os
 
         from skcomms.mailbox import read_outbox, reseal_outbox_plaintext
@@ -474,9 +471,7 @@ class TestResealLegacyPlaintextOutbox:
         assert env.body == SECRET
         assert verification.valid, verification.reason
 
-    def test_sweep_purges_when_no_key_resolves(
-        self, cluster_env, signing_patch, monkeypatch
-    ):
+    def test_sweep_purges_when_no_key_resolves(self, cluster_env, signing_patch, monkeypatch):
         from skcomms.mailbox import reseal_outbox_plaintext
 
         record = self._write_legacy_plaintext_record(monkeypatch)
@@ -502,9 +497,7 @@ class TestResealLegacyPlaintextOutbox:
         assert counts == {"resealed": 0, "purged": 0}
         assert Path(result["outbox_path"]).read_bytes() == sealed_before
 
-    def test_sweep_noops_while_escape_hatch_active(
-        self, cluster_env, signing_patch, monkeypatch
-    ):
+    def test_sweep_noops_while_escape_hatch_active(self, cluster_env, signing_patch, monkeypatch):
         from skcomms.mailbox import reseal_outbox_plaintext
 
         record = self._write_legacy_plaintext_record(monkeypatch)

@@ -49,8 +49,8 @@ class MeshPacket:
     ttl: int
     flags: int
     timestamp: int
-    msg_id: bytes        # 8 bytes
-    sender_id: bytes     # 8 bytes
+    msg_id: bytes  # 8 bytes
+    sender_id: bytes  # 8 bytes
     recipient_id: bytes  # 8 bytes
     payload: bytes
     signature: bytes | None = None  # 64 bytes when FLAG_SIGNED
@@ -64,13 +64,23 @@ def encode(p: MeshPacket) -> bytes:
         raise ValueError("FLAG_SIGNED set but signature is missing")
     if p.signature is not None and len(p.signature) != 64:
         raise ValueError("signature must be 64 bytes")
-    for name, val in (("msg_id", p.msg_id), ("sender_id", p.sender_id),
-                      ("recipient_id", p.recipient_id)):
+    for name, val in (
+        ("msg_id", p.msg_id),
+        ("sender_id", p.sender_id),
+        ("recipient_id", p.recipient_id),
+    ):
         if len(val) != 8:
             raise ValueError(f"{name} must be 8 bytes")
     head = _HEADER.pack(
-        gatt.PROTOCOL_VERSION, int(p.type), p.ttl & 0xFF, p.flags & 0xFF,
-        p.timestamp, p.msg_id, p.sender_id, p.recipient_id, len(p.payload),
+        gatt.PROTOCOL_VERSION,
+        int(p.type),
+        p.ttl & 0xFF,
+        p.flags & 0xFF,
+        p.timestamp,
+        p.msg_id,
+        p.sender_id,
+        p.recipient_id,
+        len(p.payload),
     )
     body = head + p.payload
     if p.flags & FLAG_SIGNED:
@@ -81,24 +91,31 @@ def encode(p: MeshPacket) -> bytes:
 def decode(raw: bytes) -> MeshPacket:
     if len(raw) < HEADER_SIZE:
         raise ValueError("packet shorter than header")
-    (ver, typ, ttl, flags, ts, msg_id, sender_id, recipient_id,
-     plen) = _HEADER.unpack(raw[:HEADER_SIZE])
+    ver, typ, ttl, flags, ts, msg_id, sender_id, recipient_id, plen = _HEADER.unpack(
+        raw[:HEADER_SIZE]
+    )
     if ver != gatt.PROTOCOL_VERSION:
         raise ValueError(f"unsupported protocol version {ver}")
     off = HEADER_SIZE
-    payload = raw[off:off + plen]
+    payload = raw[off : off + plen]
     if len(payload) != plen:
         raise ValueError("payload truncated")
     off += plen
     sig = None
     if flags & FLAG_SIGNED:
-        sig = raw[off:off + 64]
+        sig = raw[off : off + 64]
         if len(sig) != 64:
             raise ValueError("signature truncated")
     return MeshPacket(
-        type=PacketType(typ), ttl=ttl, flags=flags, timestamp=ts,
-        msg_id=msg_id, sender_id=sender_id, recipient_id=recipient_id,
-        payload=payload, signature=sig,
+        type=PacketType(typ),
+        ttl=ttl,
+        flags=flags,
+        timestamp=ts,
+        msg_id=msg_id,
+        sender_id=sender_id,
+        recipient_id=recipient_id,
+        payload=payload,
+        signature=sig,
     )
 
 
@@ -128,13 +145,14 @@ def unpad(padded: bytes) -> bytes:
     if len(padded) < 2:
         raise ValueError("padded data too short")
     (true_len,) = struct.unpack(">H", padded[:2])
-    body = padded[2:2 + true_len]
+    body = padded[2 : 2 + true_len]
     if len(body) != true_len:
         raise ValueError("padded length prefix exceeds data")
     return body
 
 
 # --- Fragmentation -----------------------------------------------------------
+
 
 def fragment(p: MeshPacket, *, mtu: int) -> list[bytes]:
     """Encode `p`; if it fits in `mtu`, return [bytes]. Otherwise split the
@@ -151,7 +169,7 @@ def fragment(p: MeshPacket, *, mtu: int) -> list[bytes]:
     chunk_room = mtu - HEADER_SIZE - 4
     if chunk_room <= 0:
         raise ValueError("mtu too small to fragment")
-    chunks = [whole[i:i + chunk_room] for i in range(0, len(whole), chunk_room)]
+    chunks = [whole[i : i + chunk_room] for i in range(0, len(whole), chunk_room)]
     total = len(chunks)
     out: list[bytes] = []
     for idx, chunk in enumerate(chunks):
@@ -163,8 +181,13 @@ def fragment(p: MeshPacket, *, mtu: int) -> list[bytes]:
             ftype = PacketType.FRAGMENT_CONTINUE
         meta = struct.pack(">HH", idx, total) + chunk
         frag = MeshPacket(
-            type=ftype, ttl=p.ttl, flags=FLAG_FRAGMENTED, timestamp=p.timestamp,
-            msg_id=p.msg_id, sender_id=p.sender_id, recipient_id=p.recipient_id,
+            type=ftype,
+            ttl=p.ttl,
+            flags=FLAG_FRAGMENTED,
+            timestamp=p.timestamp,
+            msg_id=p.msg_id,
+            sender_id=p.sender_id,
+            recipient_id=p.recipient_id,
             payload=meta,
         )
         out.append(encode(frag))

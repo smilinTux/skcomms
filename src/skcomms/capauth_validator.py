@@ -83,6 +83,7 @@ def _find_pubkey_by_fingerprint(
                 return str(key)
     return None
 
+
 logger = logging.getLogger("skcomms.capauth_validator")
 
 # PGP fingerprint: 40 hex characters
@@ -140,7 +141,9 @@ def _reject_reason_if_key_unusable(pub_key, signer_keyids) -> Optional[str]:
             if signer_keyids and keyid not in signer_keyids:
                 continue
             for _rev in subkey.revocation_signatures:
-                return f"signing subkey {keyid} of key {fingerprint} carries a revocation signature"
+                return (
+                    f"signing subkey {keyid} of key {fingerprint} carries a revocation signature"
+                )
             if signer_keyids and keyid in signer_keyids and subkey.is_expired:
                 return f"signing subkey {keyid} of key {fingerprint} is expired"
     except Exception as exc:  # noqa: BLE001 - cannot determine usability: fail closed
@@ -159,6 +162,7 @@ def _signer_keyids(sig) -> set:
         return {sig.signer}
     except Exception:  # noqa: BLE001
         return set()
+
 
 # Replay-prevention window: tokens older than this (or future-dated beyond
 # this) are rejected.
@@ -436,14 +440,10 @@ class CapAuthValidator:
         if armor:
             try:
                 key, _ = pgpy.PGPKey.from_blob(armor)
-                logger.debug(
-                    "CapAuth: loaded key for %s from agent/peers store", fingerprint
-                )
+                logger.debug("CapAuth: loaded key for %s from agent/peers store", fingerprint)
                 return key
             except Exception as exc:
-                logger.debug(
-                    "CapAuth: parse failed for agent/peers key %s: %s", fingerprint, exc
-                )
+                logger.debug("CapAuth: parse failed for agent/peers key %s: %s", fingerprint, exc)
 
         # 3. System GPG keyring
         try:

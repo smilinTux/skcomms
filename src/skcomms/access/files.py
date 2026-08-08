@@ -268,8 +268,10 @@ class FileAccess:
             # Glob rules — match against basename and the full path.
             for pat in self.config.deny_globs:
                 pl = pat.lower()
-                if fnmatch.fnmatch(name, pl) or fnmatch.fnmatch(low, pl) or fnmatch.fnmatch(
-                    low, "*/" + pl
+                if (
+                    fnmatch.fnmatch(name, pl)
+                    or fnmatch.fnmatch(low, pl)
+                    or fnmatch.fnmatch(low, "*/" + pl)
                 ):
                     return f"matches secrets pattern {pat!r}"
         return None
@@ -358,9 +360,7 @@ class FileAccess:
             raise AccessError(f"not a regular file: {resolved}")
         size = resolved.stat().st_size
         if size > self.config.max_bytes:
-            raise FileTooLargeError(
-                f"file is {size} bytes, exceeds cap {self.config.max_bytes}"
-            )
+            raise FileTooLargeError(f"file is {size} bytes, exceeds cap {self.config.max_bytes}")
         raw = resolved.read_bytes()
         sha = hashlib.sha256(raw).hexdigest()
         try:
@@ -662,7 +662,9 @@ TOOL_SPECS: list[dict[str, Any]] = [
         ),
         "inputSchema": {
             "type": "object",
-            "properties": {"path": {"type": "string", "description": "Absolute path under an exposed root"}},
+            "properties": {
+                "path": {"type": "string", "description": "Absolute path under an exposed root"}
+            },
             "required": ["path"],
         },
     },
@@ -805,7 +807,9 @@ def register(server: Any, access: Optional[FileAccess] = None) -> list[str]:
             except (AttributeError, TypeError):  # pragma: no cover
                 logger.warning("register(): cannot attach tools to server %r", server)
                 break
-        bucket.append({"name": name, "fn": fn, "scope": scope, "description": desc, "input_schema": schema})
+        bucket.append(
+            {"name": name, "fn": fn, "scope": scope, "description": desc, "input_schema": schema}
+        )
         registered.append(name)
 
     logger.info("access.files.register attached %d tools: %s", len(registered), registered)

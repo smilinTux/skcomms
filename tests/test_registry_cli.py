@@ -97,9 +97,7 @@ class TestRegistryInspectCLI:
         _write_realm(home, pub)
         from skcomms.cli import main
 
-        result = CliRunner().invoke(
-            main, ["registry", "resolve", PEER_FQID, "--json-out"]
-        )
+        result = CliRunner().invoke(main, ["registry", "resolve", PEER_FQID, "--json-out"])
         assert result.exit_code == 0, result.output
         rec = json.loads(result.output)
         assert rec["fqid"] == PEER_FQID
@@ -138,9 +136,7 @@ class TestPeersAddViaRegistryCLI:
         _write_realm(home, pub)  # only opus is in the realm file
         from skcomms.cli import main
 
-        result = CliRunner().invoke(
-            main, ["peers", "add", "ghost@nowhere.void", "--via-registry"]
-        )
+        result = CliRunner().invoke(main, ["peers", "add", "ghost@nowhere.void", "--via-registry"])
         assert result.exit_code != 0
         assert "resolve" in result.output.lower()
 

@@ -86,8 +86,7 @@ class TestLegacyKey:
         assert old.version == new.version == "3.1.4"
         assert old.default_mode == new.default_mode == RoutingMode.BROADCAST
         assert old.encrypt is new.encrypt is False
-        assert (old.transports["file"].priority
-                == new.transports["file"].priority == 5)
+        assert old.transports["file"].priority == new.transports["file"].priority == 5
 
     def test_skcomms_wins_when_both_keys_present(self, tmp_path):
         """If both keys exist, ``skcomms:`` takes precedence (``or`` short-circuit)."""

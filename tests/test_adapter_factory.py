@@ -37,8 +37,8 @@ def test_registry_builds_only_enabled_with_tokens(monkeypatch):
     cfg = {
         "adapters": {
             "fake": {"enabled": True, "adapter_name": "fake-A"},
-            "discord": {"enabled": True, "bot_token": ""},      # no token → SKIP
-            "slack": {"enabled": False, "bot_token": "x"},      # disabled → SKIP
+            "discord": {"enabled": True, "bot_token": ""},  # no token → SKIP
+            "slack": {"enabled": False, "bot_token": "x"},  # disabled → SKIP
         }
     }
     reg, built, skipped = build_registry_from_config(cfg)

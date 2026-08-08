@@ -37,11 +37,15 @@ class LoRaTransport(Transport):
     priority = 60  # below the BLE SMP transport; above pure-internet fallbacks
     category = TransportCategory.OFFLINE
 
-    def __init__(self, *, identity: MeshIdentity,
-                 interface: LoRaMeshInterface | None,
-                 node_map: NodeMap | None = None,
-                 budget: AirtimeBudget | None = None,
-                 clock: Callable[[], float] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        identity: MeshIdentity,
+        interface: LoRaMeshInterface | None,
+        node_map: NodeMap | None = None,
+        budget: AirtimeBudget | None = None,
+        clock: Callable[[], float] | None = None,
+    ) -> None:
         self.identity = identity
         self.iface = interface
         self.nodes = node_map or NodeMap()
@@ -54,7 +58,8 @@ class LoRaTransport(Transport):
         # one-frame-per-window) while still capping sustained airtime.
         if budget is None:
             budget = AirtimeBudget(
-                max_bytes=max(framing.LORA_MTU, 10_000), window_s=3600.0,
+                max_bytes=max(framing.LORA_MTU, 10_000),
+                window_s=3600.0,
             )
         if budget.max_bytes < framing.LORA_MTU:
             raise ValueError(
@@ -80,9 +85,14 @@ class LoRaTransport(Transport):
     async def send_async(self, envelope_bytes: bytes, *, recipient: str) -> None:
         rid = self.identity_id_for(recipient)
         pkt = MeshPacket(
-            type=PacketType.MESSAGE, ttl=1, flags=FLAG_SIGNED, timestamp=0,
-            msg_id=os.urandom(8), sender_id=self.identity.my_id,
-            recipient_id=rid, payload=envelope_bytes,
+            type=PacketType.MESSAGE,
+            ttl=1,
+            flags=FLAG_SIGNED,
+            timestamp=0,
+            msg_id=os.urandom(8),
+            sender_id=self.identity.my_id,
+            recipient_id=rid,
+            payload=envelope_bytes,
             signature=self.identity.sign(envelope_bytes),
         )
         dest = self.nodes.node_for(recipient)
@@ -105,6 +115,7 @@ class LoRaTransport(Transport):
 
     def identity_id_for(self, recipient: str):
         from skcomms.transports.ble.identity import id_hash
+
         return id_hash(recipient) if recipient else gatt.BROADCAST_ID
 
     def _on_frame(self, data: bytes, src: str) -> None:
@@ -113,7 +124,9 @@ class LoRaTransport(Transport):
             return
         # deliver payload (signature carried; verification wired in L4 once the
         # sender's Ed25519 pubkey is resolvable from pairing).
-        self._inbox.append(pkt.payload)  # TODO(L4): verify pkt.signature via sender Ed25519 pubkey (from NodeMap/pairing) before delivering; drop unverifiable
+        self._inbox.append(
+            pkt.payload
+        )  # TODO(L4): verify pkt.signature via sender Ed25519 pubkey (from NodeMap/pairing) before delivering; drop unverifiable
 
     def receive(self) -> list[bytes]:
         out, self._inbox = self._inbox, []
@@ -138,8 +151,7 @@ class LoRaTransport(Transport):
 
     def health_check(self) -> HealthStatus:
         info = self.iface.info() if self.iface is not None else {}
-        status = (TransportStatus.AVAILABLE if self.is_available()
-                  else TransportStatus.UNAVAILABLE)
+        status = TransportStatus.AVAILABLE if self.is_available() else TransportStatus.UNAVAILABLE
         return HealthStatus(
             transport_name=self.name,
             status=status,

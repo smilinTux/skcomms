@@ -49,8 +49,9 @@ class MeshIdentity:
 
     @classmethod
     def generate(cls, fqid: str) -> "MeshIdentity":
-        return cls(fqid=fqid, _ed_priv=Ed25519PrivateKey.generate(),
-                   _x_priv=X25519PrivateKey.generate())
+        return cls(
+            fqid=fqid, _ed_priv=Ed25519PrivateKey.generate(), _x_priv=X25519PrivateKey.generate()
+        )
 
     @property
     def ed25519_pub(self) -> bytes:
@@ -69,8 +70,7 @@ class MeshIdentity:
         return id_hash(self.fqid)
 
     def noise_static_private_bytes(self) -> bytes:
-        return self._x_priv.private_bytes(
-            Encoding.Raw, PrivateFormat.Raw, NoEncryption())
+        return self._x_priv.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
 
     def sign(self, data: bytes) -> bytes:
         return self._ed_priv.sign(data)

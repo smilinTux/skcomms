@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # --- in-process key fixtures (mirror tests/test_skfed_directory.py) ---------
 
 

@@ -32,21 +32,32 @@ from skcomms.outbox import PersistentOutbox, classify_envelope_json
 from skcomms.router import Router
 from skcomms.signing import EnvelopeVerifier
 from skcomms.transport import (
-    HealthStatus, SendResult, Transport, TransportCategory, TransportStatus,
+    HealthStatus,
+    SendResult,
+    Transport,
+    TransportCategory,
+    TransportStatus,
 )
 
 
 def _gen_key(uid):
     import pgpy
     from pgpy.constants import (
-        CompressionAlgorithm, HashAlgorithm, KeyFlags,
-        PubKeyAlgorithm, SymmetricKeyAlgorithm,
+        CompressionAlgorithm,
+        HashAlgorithm,
+        KeyFlags,
+        PubKeyAlgorithm,
+        SymmetricKeyAlgorithm,
     )
+
     k = pgpy.PGPKey.new(PubKeyAlgorithm.RSAEncryptOrSign, 1024)
-    k.add_uid(pgpy.PGPUID.new(uid),
-              usage={KeyFlags.Sign, KeyFlags.EncryptCommunications},
-              hashes=[HashAlgorithm.SHA256], ciphers=[SymmetricKeyAlgorithm.AES256],
-              compression=[CompressionAlgorithm.ZLIB])
+    k.add_uid(
+        pgpy.PGPUID.new(uid),
+        usage={KeyFlags.Sign, KeyFlags.EncryptCommunications},
+        hashes=[HashAlgorithm.SHA256],
+        ciphers=[SymmetricKeyAlgorithm.AES256],
+        compression=[CompressionAlgorithm.ZLIB],
+    )
     return str(k), str(k.pubkey), str(k.fingerprint).replace(" ", "")
 
 
@@ -60,14 +71,25 @@ class CaptureTransport(Transport):
         self._succeed = succeed
         self.sent: list[tuple[str, bytes]] = []
 
-    def configure(self, c): pass
-    def is_available(self): return True
+    def configure(self, c):
+        pass
+
+    def is_available(self):
+        return True
+
     def send(self, envelope_bytes, recipient):
         self.sent.append((recipient, envelope_bytes))
-        return SendResult(success=self._succeed, transport_name=self.name,
-                          envelope_id="", latency_ms=0.0,
-                          error=None if self._succeed else "rail down")
-    def receive(self): return []
+        return SendResult(
+            success=self._succeed,
+            transport_name=self.name,
+            envelope_id="",
+            latency_ms=0.0,
+            error=None if self._succeed else "rail down",
+        )
+
+    def receive(self):
+        return []
+
     def health_check(self):
         return HealthStatus(transport_name=self.name, status=TransportStatus.AVAILABLE)
 
@@ -76,9 +98,11 @@ class CaptureTransport(Transport):
 def keyed_comm(monkeypatch, tmp_path):
     """An SKComms with a real in-process signing key and a capture rail."""
     priv, pub, fp = _gen_key("jarvis <jarvis@chef.skworld>")
-    monkeypatch.setattr(identity_mod, "resolve_self_identity",
-                        lambda *a, **k: {"agent": "jarvis", "fqid": "jarvis@chef.skworld",
-                                         "fingerprint": fp})
+    monkeypatch.setattr(
+        identity_mod,
+        "resolve_self_identity",
+        lambda *a, **k: {"agent": "jarvis", "fqid": "jarvis@chef.skworld", "fingerprint": fp},
+    )
     t = CaptureTransport()
     comm = SKComms(router=Router(transports=[t]), crypto=EnvelopeCrypto(priv, "", fp))
     comm._outbox = PersistentOutbox(outbox_dir=tmp_path / "outbox", router=comm._router)
@@ -107,7 +131,8 @@ def test_plain_send_emits_signed_envelope_wire(keyed_comm):
     assert signed.envelope.to_fqid == "lumina@chef.skworld"
     assert signed.envelope.body == "hello over the primary rail"
     assert signed.envelope.nonce
-    v = EnvelopeVerifier(); v.add_key("jarvis@chef.skworld", pub)
+    v = EnvelopeVerifier()
+    v.add_key("jarvis@chef.skworld", pub)
     assert v.verify(signed).valid is True
 
     # Delivery report keeps the legacy envelope_id (= Envelope v1 id).
@@ -118,8 +143,14 @@ def test_plain_send_metadata_rides_in_headers_and_round_trips(keyed_comm):
     """Legacy payload metadata survives the signed wire and converts back."""
     comm, t, _pub = keyed_comm
 
-    comm.send("lumina@chef.skworld", "typed", message_type=MessageType.COMMAND,
-              thread_id="th-1", in_reply_to="orig-1", urgency=Urgency.HIGH)
+    comm.send(
+        "lumina@chef.skworld",
+        "typed",
+        message_type=MessageType.COMMAND,
+        thread_id="th-1",
+        in_reply_to="orig-1",
+        urgency=Urgency.HIGH,
+    )
 
     signed = SignedEnvelope.from_bytes(t.sent[0][1])
     headers = signed.envelope.headers
@@ -144,8 +175,7 @@ def test_plain_send_heartbeat_is_signed(keyed_comm):
     """The presence-heartbeat kind of send also emits SignedEnvelope bytes."""
     comm, t, _pub = keyed_comm
 
-    comm.send("lumina", "status:online", message_type=MessageType.HEARTBEAT,
-              urgency=Urgency.LOW)
+    comm.send("lumina", "status:online", message_type=MessageType.HEARTBEAT, urgency=Urgency.LOW)
 
     signed = SignedEnvelope.from_bytes(t.sent[0][1])
     assert signed.is_signed
@@ -157,9 +187,11 @@ def test_plain_send_heartbeat_is_signed(keyed_comm):
 def test_plain_send_failure_enqueues_signed_wire_to_outbox(monkeypatch, tmp_path):
     """A failed signed send queues the SIGNED wire shape (outbox owns retry)."""
     priv, _pub, fp = _gen_key("jarvis <jarvis@chef.skworld>")
-    monkeypatch.setattr(identity_mod, "resolve_self_identity",
-                        lambda *a, **k: {"agent": "jarvis", "fqid": "jarvis@chef.skworld",
-                                         "fingerprint": fp})
+    monkeypatch.setattr(
+        identity_mod,
+        "resolve_self_identity",
+        lambda *a, **k: {"agent": "jarvis", "fqid": "jarvis@chef.skworld", "fingerprint": fp},
+    )
     t = CaptureTransport(succeed=False)
     comm = SKComms(router=Router(transports=[t]), crypto=EnvelopeCrypto(priv, "", fp))
     comm._outbox = PersistentOutbox(outbox_dir=tmp_path / "outbox", router=comm._router)
@@ -177,10 +209,8 @@ def test_plain_send_failure_enqueues_signed_wire_to_outbox(monkeypatch, tmp_path
 
 def test_keyless_send_falls_back_to_legacy_and_skips_https_s2s(monkeypatch, tmp_path):
     """Without a signing key the send stays unsigned AND stays off https-s2s."""
-    monkeypatch.setattr(identity_mod, "resolve_self_identity",
-                        lambda *a, **k: {"agent": "solo"})
-    monkeypatch.setattr(EnvelopeCrypto, "from_capauth",
-                        classmethod(lambda cls, *a, **k: None))
+    monkeypatch.setattr(identity_mod, "resolve_self_identity", lambda *a, **k: {"agent": "solo"})
+    monkeypatch.setattr(EnvelopeCrypto, "from_capauth", classmethod(lambda cls, *a, **k: None))
 
     s2s = CaptureTransport(name="https-s2s", priority=1)
     file_rail = CaptureTransport(name="file", priority=5)
@@ -190,9 +220,9 @@ def test_keyless_send_falls_back_to_legacy_and_skips_https_s2s(monkeypatch, tmp_
     report = comm.send("lumina", "unsigned local note")
 
     assert report.delivered is True
-    assert s2s.sent == []                       # signed-only rail never offered
+    assert s2s.sent == []  # signed-only rail never offered
     _recipient, wire = file_rail.sent[0]
-    legacy = MessageEnvelope.from_bytes(wire)   # legacy wire shape preserved
+    legacy = MessageEnvelope.from_bytes(wire)  # legacy wire shape preserved
     assert legacy.payload.content == "unsigned local note"
 
 
@@ -204,10 +234,8 @@ def test_keyless_send_failure_enqueues_once_to_outbox(monkeypatch, tmp_path):
     JSONL). The PersistentOutbox is now the single queue of record, so a single
     failed send must produce exactly one pending entry.
     """
-    monkeypatch.setattr(identity_mod, "resolve_self_identity",
-                        lambda *a, **k: {"agent": "solo"})
-    monkeypatch.setattr(EnvelopeCrypto, "from_capauth",
-                        classmethod(lambda cls, *a, **k: None))
+    monkeypatch.setattr(identity_mod, "resolve_self_identity", lambda *a, **k: {"agent": "solo"})
+    monkeypatch.setattr(EnvelopeCrypto, "from_capauth", classmethod(lambda cls, *a, **k: None))
 
     file_rail = CaptureTransport(name="file", priority=5, succeed=False)
     comm = SKComms(router=Router(transports=[file_rail]), crypto=None)
@@ -230,14 +258,15 @@ def test_receive_parses_signed_wire_from_local_rails(monkeypatch, tmp_path):
     from skcomms.transports.file import create_transport as make_file
 
     priv, _pub, fp = _gen_key("solo <solo@chef.skworld>")
-    monkeypatch.setattr(identity_mod, "resolve_self_identity",
-                        lambda *a, **k: {"agent": "solo", "fqid": "solo@chef.skworld",
-                                         "fingerprint": fp})
+    monkeypatch.setattr(
+        identity_mod,
+        "resolve_self_identity",
+        lambda *a, **k: {"agent": "solo", "fqid": "solo@chef.skworld", "fingerprint": fp},
+    )
 
     # One shared drop dir: what send writes is exactly what receive reads.
     drop = tmp_path / "drop"
-    ft = make_file(priority=1, outbox_path=str(drop), inbox_path=str(drop),
-                   archive=False)
+    ft = make_file(priority=1, outbox_path=str(drop), inbox_path=str(drop), archive=False)
     comm = SKComms(router=Router(transports=[ft]), crypto=EnvelopeCrypto(priv, "", fp))
     comm._outbox = PersistentOutbox(outbox_dir=tmp_path / "outbox", router=comm._router)
 

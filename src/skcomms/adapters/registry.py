@@ -207,9 +207,7 @@ class AdapterRegistry:
                     try:
                         await set_presence(agent_fqid, status)
                     except Exception:
-                        logger.debug(
-                            "presence update skipped on %s", adapter.adapter_name
-                        )
+                        logger.debug("presence update skipped on %s", adapter.adapter_name)
 
     # -----------------------------------------------------------------------
     # Health
@@ -269,9 +267,7 @@ class AdapterRegistry:
             msg.kind = MessageKind.TEXT
 
         if len(msg.text.encode()) > caps.max_text_bytes:
-            trimmed = msg.text.encode()[: caps.max_text_bytes - 20].decode(
-                errors="ignore"
-            )
+            trimmed = msg.text.encode()[: caps.max_text_bytes - 20].decode(errors="ignore")
             msg.text = trimmed + " … [truncated]"
 
         return msg

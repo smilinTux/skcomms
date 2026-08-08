@@ -355,9 +355,7 @@ def test_end_to_end_signed_ack_verifies_with_real_pgp(tmp_path):
     assert signed_ack.payload.signature
 
     # Sender alice: gate on, knows bob's public key.
-    alice_cfg = SKCommsConfig(
-        identity=IdentityConfig(name="alice"), ack_verify_signature=True
-    )
+    alice_cfg = SKCommsConfig(identity=IdentityConfig(name="alice"), ack_verify_signature=True)
     alice, _ = _make_comm(
         alice_cfg,
         crypto=EnvelopeCrypto(priv, "", fp),

@@ -130,8 +130,13 @@ def test_geo_units_store_is_shared_feed_point(tmp_path, monkeypatch):
 
     # Feed AFTER the app is built: the endpoint must see live upserts.
     gs.get_geo_store().upsert(
-        {"uid": "PURE", "callsign": "PURE", "cot_type": "a-f-G-U-C",
-         "lat": 40.7614, "lon": -73.9776}
+        {
+            "uid": "PURE",
+            "callsign": "PURE",
+            "cot_type": "a-f-G-U-C",
+            "lat": 40.7614,
+            "lon": -73.9776,
+        }
     )
     resp = client.get("/api/v1/geo/units")
     assert resp.status_code == 200

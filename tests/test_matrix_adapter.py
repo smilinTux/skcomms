@@ -177,9 +177,7 @@ class FakeMatrixClient:
 
     def set_sync_room(self, room_id: str, events: list[dict]) -> None:
         """Pre-load events for a room into the sync response."""
-        self._sync_rooms[room_id] = {
-            "timeline": {"events": events}
-        }
+        self._sync_rooms[room_id] = {"timeline": {"events": events}}
 
 
 # ---------------------------------------------------------------------------
@@ -284,24 +282,22 @@ def _media_event(
 def test_fake_client_satisfies_protocol():
     """FakeMatrixClient is a structural subtype of MatrixClientProtocol."""
     client = FakeMatrixClient()
-    assert isinstance(client, MatrixClientProtocol), (
-        "FakeMatrixClient does not satisfy MatrixClientProtocol. "
-        "Missing methods: "
-        + str(
-            [
-                m
-                for m in (
-                    "is_connected",
-                    "whoami",
-                    "sync",
-                    "send_message",
-                    "drain_events",
-                    "connect",
-                    "disconnect",
-                )
-                if not hasattr(client, m)
-            ]
-        )
+    assert isinstance(
+        client, MatrixClientProtocol
+    ), "FakeMatrixClient does not satisfy MatrixClientProtocol. " "Missing methods: " + str(
+        [
+            m
+            for m in (
+                "is_connected",
+                "whoami",
+                "sync",
+                "send_message",
+                "drain_events",
+                "connect",
+                "disconnect",
+            )
+            if not hasattr(client, m)
+        ]
     )
 
 
@@ -584,11 +580,7 @@ class TestNormalize:
         adapter = self._adapter()
         event = _text_event(
             body="reply to something",
-            extra_content={
-                "m.relates_to": {
-                    "m.in_reply_to": {"event_id": "$PARENT_001"}
-                }
-            },
+            extra_content={"m.relates_to": {"m.in_reply_to": {"event_id": "$PARENT_001"}}},
         )
         msg = adapter._normalize(event)
         assert msg is not None
@@ -1072,7 +1064,7 @@ class TestCapabilities:
         assert caps.voice_notes is True
         assert caps.video is True
         assert caps.reactions is True
-        assert caps.threads is False     # MSC3440 not universally deployed yet
+        assert caps.threads is False  # MSC3440 not universally deployed yet
         assert caps.read_receipts is True
         assert caps.typing_hint is True
         assert caps.max_text_bytes == 65536

@@ -27,6 +27,7 @@ the shared primitive, it deletes the blocked row directly from the same
 ``contacts.db`` the store owns, reusing :func:`skcomms.consent._consent_dir` for the
 path so it stays bound to the store's layout.
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -139,9 +140,7 @@ def unblock(agent: str, sender: str) -> dict:
     ContactStore(agent)
     db = _consent_dir(agent) / "contacts.db"
     with sqlite3.connect(str(db)) as c:
-        c.execute(
-            "DELETE FROM contacts WHERE fqid=? AND state='blocked'", (sender,)
-        )
+        c.execute("DELETE FROM contacts WHERE fqid=? AND state='blocked'", (sender,))
     return {"agent": agent, "sender": sender, "result": "unblocked"}
 
 

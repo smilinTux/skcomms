@@ -1,4 +1,5 @@
 """`skcomms consent` CLI — operator request management (gate-5 surface)."""
+
 import pytest
 from click.testing import CliRunner
 

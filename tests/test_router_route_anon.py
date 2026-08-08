@@ -98,7 +98,7 @@ def test_route_anon_gate_off_raises_and_emits_nothing():
     chan = AnonChannel.create(RELAY, SECRET)
     with pytest.raises(AnonDisabledError):
         r.route_anon(b"hello", chan.address, SECRET)  # no enabled=, env unset
-    assert log == []          # nothing put on the wire
+    assert log == []  # nothing put on the wire
     assert t.sent == []
 
 
@@ -114,7 +114,7 @@ def test_route_signed_byte_identical_even_with_anon_env_on(monkeypatch):
     assert report.delivered is True
     recipient, wire = t.sent[0]
     assert recipient == "lumina@chef.skworld"
-    assert wire == signed.to_bytes()            # verbatim — anon never leaks in
+    assert wire == signed.to_bytes()  # verbatim — anon never leaks in
 
 
 # ---------------------------------------------------------------------------
@@ -131,13 +131,14 @@ def test_route_anon_frames_to_relay_no_identity():
     assert report.delivered is True
     assert log == ["nostr"]
     recipient, wire = t.sent[0]
-    assert recipient == RELAY                    # routed to the relay, not an fqid
-    assert is_anon_frame(wire)                    # an anon frame on the wire
+    assert recipient == RELAY  # routed to the relay, not an fqid
+    assert is_anon_frame(wire)  # an anon frame on the wire
     # No identity material as a wire FIELD: the only relay-readable routing token
     # is the opaque 16-byte sender_id (structural — random tag/body bytes may of
     # course coincidentally contain any byte value).
-    assert chan.sender_id in wire                 # relay routes on the opaque id
+    assert chan.sender_id in wire  # relay routes on the opaque id
     from skcomms.anon_transport import read_sender_id
+
     assert read_sender_id(wire) == chan.sender_id
 
 
@@ -147,7 +148,7 @@ def test_route_anon_env_gate_on(monkeypatch):
     t = FakeTransport("nostr", 1, log)
     r = Router(transports=[t])
     chan = AnonChannel.create(RELAY, SECRET)
-    report = r.route_anon(b"x", chan.address, SECRET)   # gated ON via env only
+    report = r.route_anon(b"x", chan.address, SECRET)  # gated ON via env only
     assert report.delivered is True
     assert log == ["nostr"]
 
@@ -156,8 +157,8 @@ def test_route_anon_roundtrip_through_router():
     log: list[str] = []
     t = FakeTransport("nostr", 1, log)
     r = Router(transports=[t])
-    chan = AnonChannel.create(RELAY, SECRET)            # recipient mints the queue
-    payload = b"already-pqdm-sealed-ciphertext"         # confidentiality composed upstream
+    chan = AnonChannel.create(RELAY, SECRET)  # recipient mints the queue
+    payload = b"already-pqdm-sealed-ciphertext"  # confidentiality composed upstream
     r.route_anon(payload, chan.address, SECRET, enabled=True)
     _recipient, wire = t.sent[0]
     # Recipient side parses + deniably-authenticates the inbound frame.
@@ -172,8 +173,9 @@ def test_route_anon_honors_preferred_rail_order():
     b = FakeTransport("nostr", 2, log)
     r = Router(transports=[a, b])
     chan = AnonChannel.create(RELAY, SECRET)
-    r.route_anon(b"x", chan.address, SECRET, enabled=True,
-                 preferred_transports=["nostr", "https-s2s"])
+    r.route_anon(
+        b"x", chan.address, SECRET, enabled=True, preferred_transports=["nostr", "https-s2s"]
+    )
     assert log[0] == "nostr"
 
 

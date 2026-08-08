@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # --- in-process key fixtures (mirror tests/test_skfed_directory.py) ---------
 
 
@@ -130,7 +129,9 @@ def test_reseed_rewrites_leaky_urls_and_resigns(tmp_path, monkeypatch, operator_
     from skcomms import skfed_readdr as rd
     from skcomms.signing import EnvelopeVerifier
 
-    sfd.save_directory(_seed_directory(priv, [_leaky_entry(LUMINA_FQID), _leaky_entry(JARVIS_FQID)]))
+    sfd.save_directory(
+        _seed_directory(priv, [_leaky_entry(LUMINA_FQID), _leaky_entry(JARVIS_FQID)])
+    )
 
     result = rd.reseed_neutral_addresses(signer=_signer(priv), dry_run=False)
 
@@ -229,11 +230,11 @@ def test_fqid_filter_limits_scope(tmp_path, monkeypatch, operator_keys):
     from skcomms import skfed_directory as sfd
     from skcomms import skfed_readdr as rd
 
-    sfd.save_directory(_seed_directory(priv, [_leaky_entry(LUMINA_FQID), _leaky_entry(JARVIS_FQID)]))
-
-    result = rd.reseed_neutral_addresses(
-        signer=_signer(priv), dry_run=False, fqids=[LUMINA_FQID]
+    sfd.save_directory(
+        _seed_directory(priv, [_leaky_entry(LUMINA_FQID), _leaky_entry(JARVIS_FQID)])
     )
+
+    result = rd.reseed_neutral_addresses(signer=_signer(priv), dry_run=False, fqids=[LUMINA_FQID])
     assert {c.fqid for c in result.changes} == {LUMINA_FQID}
     # jarvis still leaky (out of scope of the filter).
     loaded = sfd.load_directory()

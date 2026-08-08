@@ -26,14 +26,18 @@ from skcomms.envelope import Envelope
 def test_past_created_at_plus_short_ttl_is_expired_on_receiver():
     past = (datetime.now(timezone.utc) - timedelta(seconds=600)).isoformat()
     env = Envelope(
-        from_fqid="jarvis@chef.skworld", to_fqid="lumina@chef.skworld",
-        content_type="application/cot+xml", body="<event/>",
+        from_fqid="jarvis@chef.skworld",
+        to_fqid="lumina@chef.skworld",
+        content_type="application/cot+xml",
+        body="<event/>",
         headers={WIRE_HEADER_TTL: "120", WIRE_HEADER_ACK_REQUESTED: "0"},
         created_at=past,
     )
     msg = envelope_v1_to_message(env)
     # created_at is taken from the wire, not now().
-    assert msg.metadata.created_at.astimezone(timezone.utc) == datetime.fromisoformat(past).astimezone(timezone.utc)
+    assert msg.metadata.created_at.astimezone(timezone.utc) == datetime.fromisoformat(
+        past
+    ).astimezone(timezone.utc)
     # 600s old, 120s TTL → expired.
     assert msg.is_expired is True
 
@@ -41,8 +45,10 @@ def test_past_created_at_plus_short_ttl_is_expired_on_receiver():
 def test_fresh_created_at_short_ttl_not_expired():
     now = datetime.now(timezone.utc).isoformat()
     env = Envelope(
-        from_fqid="jarvis@chef.skworld", to_fqid="lumina@chef.skworld",
-        content_type="application/cot+xml", body="<event/>",
+        from_fqid="jarvis@chef.skworld",
+        to_fqid="lumina@chef.skworld",
+        content_type="application/cot+xml",
+        body="<event/>",
         headers={WIRE_HEADER_TTL: "120"},
         created_at=now,
     )

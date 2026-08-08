@@ -105,8 +105,11 @@ def test_routed_roundtrip_through_wrapper():
     pub, priv = _keypair()
     signed = _signed(to_fqid="bob@chef.skworld", body="sensitive body bytes")
     wire = wrap_signed(
-        signed, dest_hybrid_pub=pub, next_hop="relay-1.skworld.io",
-        enabled=True, flags=["urgent", "e2e"],
+        signed,
+        dest_hybrid_pub=pub,
+        next_hop="relay-1.skworld.io",
+        enabled=True,
+        flags=["urgent", "e2e"],
     )
     assert is_pqrouted(wire)
     assert wire != signed.to_bytes()
@@ -128,7 +131,10 @@ def test_relay_reads_only_next_hop():
     pub, priv = _keypair()
     signed = _signed(to_fqid="SECRET-bob@chef.skworld", body="SECRET-BODY")
     wire = wrap_signed(
-        signed, dest_hybrid_pub=pub, next_hop="relay-1.skworld.io", enabled=True,
+        signed,
+        dest_hybrid_pub=pub,
+        next_hop="relay-1.skworld.io",
+        enabled=True,
     )
 
     # Relay (blob, no dest key) reads the next hop to forward...
@@ -180,8 +186,7 @@ class _FakeTransport:
         from skcomms.transport import SendResult
 
         self.sent.append((recipient, envelope_bytes))
-        return SendResult(success=True, transport_name=self.name,
-                          envelope_id="", latency_ms=0.0)
+        return SendResult(success=True, transport_name=self.name, envelope_id="", latency_ms=0.0)
 
     def receive(self):
         return []
@@ -210,8 +215,8 @@ def test_router_route_signed_default_unchanged(monkeypatch, _isolate_retry_queue
     report = Router(transports=[t]).route_signed(signed)
     assert report.delivered is True
     recipient, wire = t.sent[0]
-    assert recipient == "bob@chef.skworld"        # routed by inner to_fqid
-    assert wire == signed.to_bytes()              # verbatim bytes
+    assert recipient == "bob@chef.skworld"  # routed by inner to_fqid
+    assert wire == signed.to_bytes()  # verbatim bytes
 
 
 def test_router_route_signed_pqroute_seals_and_routes_to_next_hop(_isolate_retry_queue):
@@ -223,8 +228,11 @@ def test_router_route_signed_pqroute_seals_and_routes_to_next_hop(_isolate_retry
     t = _FakeTransport()
     signed = _signed(to_fqid="SECRET-bob@chef.skworld", body="SECRET-BODY")
     report = Router(transports=[t]).route_signed(
-        signed, pqroute=True, dest_hybrid_pub=pub,
-        next_hop="relay-1.skworld.io", pqroute_flags=["urgent"],
+        signed,
+        pqroute=True,
+        dest_hybrid_pub=pub,
+        next_hop="relay-1.skworld.io",
+        pqroute_flags=["urgent"],
     )
     assert report.delivered is True
     recipient, wire = t.sent[0]

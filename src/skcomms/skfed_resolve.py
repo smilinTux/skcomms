@@ -140,7 +140,7 @@ def resolve_realm_directory(
         for rec in txt:
             rec = rec.strip().strip('"')
             if rec.startswith("url="):
-                return rec[len("url="):].strip().rstrip("/")
+                return rec[len("url=") :].strip().rstrip("/")
 
     # 3. Config bootstrap (realms.yml).
     url = _realms_config().get(realm)
@@ -218,6 +218,8 @@ def realm_verifier(realm: str, operator_label: Optional[str] = None):
 
 from .ssrf import (  # noqa: F401 (re-exported for compat)
     ALLOWED_SCHEMES as _ALLOWED_SCHEMES,
+)
+from .ssrf import (
     SSRFPolicy,
     _ip_is_public,
     guarded_get,

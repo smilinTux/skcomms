@@ -14,6 +14,7 @@ gate gives *groups* the same protection by composing the already-built primitive
 Clean gate API: ``join_decision(group_id, fqid)`` / ``admit(group_id, fqid, ...)`` /
 ``visible(group_id, viewer, sender)``.
 """
+
 import re
 
 import pytest
@@ -53,6 +54,7 @@ def _solve(prompt: str) -> str:
 
 # --- invite_only: stranger rejected ------------------------------------------
 
+
 def test_invite_only_rejects_stranger():
     g = _gate()
     g.configure_group(GID, mode="invite_only", owner=OWNER)
@@ -72,6 +74,7 @@ def test_invite_only_admits_invited():
 
 
 # --- knock: queue -> moderator-approve -> admit ------------------------------
+
 
 def test_knock_queues_then_moderator_admits():
     g = _gate()
@@ -98,6 +101,7 @@ def test_knock_plain_member_cannot_admit():
 
 
 # --- captcha-gated join (open mode, captcha required) ------------------------
+
 
 def test_captcha_gated_join_admits_only_on_verify():
     g = _gate()
@@ -132,6 +136,7 @@ def test_open_without_captcha_admits_immediately():
 
 # --- shadow-block: hidden from others, visible to self -----------------------
 
+
 def test_shadow_block_hidden_from_others_visible_to_self():
     g = _gate()
     g.configure_group(GID, mode="open", owner=OWNER)
@@ -165,6 +170,7 @@ def test_shadow_block_requires_moderator():
 
 # --- consent-gated reporting -------------------------------------------------
 
+
 def test_report_files_minimal_record():
     g = _gate()
     g.configure_group(GID, mode="open", owner=OWNER)
@@ -178,6 +184,7 @@ def test_report_files_minimal_record():
 
 
 # --- SECURITY: captcha seed must not be computable from public inputs --------
+
 
 def test_captcha_seed_not_derivable_from_public_inputs():
     """An attacker who knows only PUBLIC inputs (group_id + fqid) must NOT be
@@ -227,6 +234,7 @@ def test_per_group_secret_persists_and_verify_still_works():
 
 
 # --- SECURITY (coord 193a2605): unpredictable per-issue challenge ------------
+
 
 def test_seed_never_surfaced_on_join_result():
     """The derivation seed is answer-equivalent (derive_challenge(seed) yields
@@ -304,6 +312,7 @@ def test_caller_supplied_seed_not_used_verbatim():
 
 # --- SECURITY: ban-gate must fail closed independent of mode -----------------
 
+
 def test_banned_fqid_rejected_on_captcha_admit_path():
     """A block-for-all'd FQID must be rejected at admit BEFORE any captcha
     verification — the open/captcha path must not fail open on a ban.
@@ -333,6 +342,7 @@ def test_banned_fqid_rejected_on_moderator_admit_path():
 
 
 # --- persistence: a fresh gate re-reads admitted state -----------------------
+
 
 def test_membership_persists_across_gate_handles():
     g = _gate()

@@ -64,9 +64,7 @@ def test_scoped_agent_default_transports_use_resolver(monkeypatch, tmp_path):
     monkeypatch.setenv("SKAGENT", "lumina")
 
     peers_dir = tmp_path / "peers"
-    peer = import_peer_bundle(
-        _bundle_without_transports(), peers_dir=peers_dir, gpg_import=False
-    )
+    peer = import_peer_bundle(_bundle_without_transports(), peers_dir=peers_dir, gpg_import=False)
 
     expected_comms = home / "agents" / "lumina" / "comms"
 
@@ -122,9 +120,7 @@ def test_bundle_supplied_transports_are_preserved(monkeypatch, tmp_path):
     fallback only fires when the bundle is transport-less)."""
     monkeypatch.setenv("SKAGENT", "lumina")
     bundle = _bundle_without_transports()
-    bundle["transports"] = [
-        {"transport": "nostr", "settings": {"relay": "wss://relay.example"}}
-    ]
+    bundle["transports"] = [{"transport": "nostr", "settings": {"relay": "wss://relay.example"}}]
 
     peer = import_peer_bundle(bundle, peers_dir=tmp_path / "peers", gpg_import=False)
 

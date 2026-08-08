@@ -146,9 +146,7 @@ class TestPrivateKeyPresentFastProbe:
         from skcomms.trustbackup import private_key_present
 
         _populate(iso, with_private=False)
-        agent_cap = (
-            iso["home"] / ".skcapstone" / "agents" / "testagent" / "capauth" / "identity"
-        )
+        agent_cap = iso["home"] / ".skcapstone" / "agents" / "testagent" / "capauth" / "identity"
         agent_cap.mkdir(parents=True, exist_ok=True)
         (agent_cap / "private.asc").write_text(PRIV)
         assert private_key_present() is True
@@ -310,11 +308,7 @@ class TestRestoreBackup:
         fresh = self._wipe(tmp_path, monkeypatch)
         assert not archive.with_name(archive.name + ".tmp").exists()
         restore_backup(archive)
-        leftovers = [
-            p
-            for root in (fresh["home"], fresh["skhome"])
-            for p in root.rglob("*.tmp*")
-        ]
+        leftovers = [p for root in (fresh["home"], fresh["skhome"]) for p in root.rglob("*.tmp*")]
         assert leftovers == []
 
     def test_corrupted_payload_rejected_whole(self, iso, tmp_path, monkeypatch):
@@ -445,9 +439,7 @@ class TestSigningCapauthDirResolution:
         from skcomms.core import resolve_signing_capauth_dir
 
         _populate(iso)  # operator key at ~/.capauth
-        empty = (
-            iso["home"] / ".skcapstone" / "agents" / "testagent" / "capauth" / "identity"
-        )
+        empty = iso["home"] / ".skcapstone" / "agents" / "testagent" / "capauth" / "identity"
         empty.mkdir(parents=True, exist_ok=True)  # dir exists, holds NO key
         assert resolve_signing_capauth_dir("testagent") is None
 
@@ -460,9 +452,7 @@ class TestSigningCapauthDirResolution:
         (cap / "identity" / "private.asc").write_text(PRIV)
         assert resolve_signing_capauth_dir("testagent") == cap
 
-    def test_gate_and_crypto_agree_on_operator_key_with_empty_agent_dir(
-        self, iso, monkeypatch
-    ):
+    def test_gate_and_crypto_agree_on_operator_key_with_empty_agent_dir(self, iso, monkeypatch):
         """The exact reviewed configuration: operator key present, empty
         per-agent dir. The gate passes AND crypto resolves (no dead crypto
         behind a green gate)."""
@@ -477,9 +467,7 @@ class TestSigningCapauthDirResolution:
         monkeypatch.setattr(pq_provider, "default_provider", lambda: None)
 
         _populate(iso)
-        empty = (
-            iso["home"] / ".skcapstone" / "agents" / "testagent" / "capauth" / "identity"
-        )
+        empty = iso["home"] / ".skcapstone" / "agents" / "testagent" / "capauth" / "identity"
         empty.mkdir(parents=True, exist_ok=True)
 
         assert identity_check()["private_key_present"] is True

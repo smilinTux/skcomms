@@ -33,8 +33,16 @@ from skcomms.transport import (
 
 
 class FakeTransport(Transport):
-    def __init__(self, name, priority, send_log, *, succeed=True, available=True,
-                 category=TransportCategory.REALTIME):
+    def __init__(
+        self,
+        name,
+        priority,
+        send_log,
+        *,
+        succeed=True,
+        available=True,
+        category=TransportCategory.REALTIME,
+    ):
         self.name = name
         self.priority = priority
         self.category = category

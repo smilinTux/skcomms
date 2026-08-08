@@ -1,4 +1,5 @@
 """P7 integration — register_builtin_tools wires A3 knowledge + A4 file tools into the A2 registry."""
+
 from __future__ import annotations
 import asyncio
 from skcomms.access import register_builtin_tools, AccessRegistry
@@ -8,8 +9,16 @@ def test_registers_all_ten_tools():
     reg = AccessRegistry()
     names = register_builtin_tools(registry=reg)
     assert set(names) == {
-        "pg_search", "pg_locate", "graph_query", "corpus_stats",
-        "file_read", "file_write", "file_patch", "file_list", "file_stat", "list_roots",
+        "pg_search",
+        "pg_locate",
+        "graph_query",
+        "corpus_stats",
+        "file_read",
+        "file_write",
+        "file_patch",
+        "file_list",
+        "file_stat",
+        "list_roots",
     }
     assert len(reg.names()) == 10
 
@@ -28,7 +37,7 @@ def test_adapter_invokes_direct_arg_callable(tmp_path):
     reg = AccessRegistry()
     register_builtin_tools(registry=reg)
     tool = reg.get("list_roots")
-    out = asyncio.run(tool.invoke({}, None))   # fresh loop; no shared-loop pollution
+    out = asyncio.run(tool.invoke({}, None))  # fresh loop; no shared-loop pollution
     assert isinstance(out, list)
 
 

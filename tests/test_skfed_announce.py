@@ -119,8 +119,11 @@ def test_inbox_url_from_env_overrides_base(monkeypatch):
     monkeypatch.setenv("SKFED_INBOX_URL", "https://envinbox/api/v1/inbox")
     pub = _CapturingPublisher()
     sa.announce_self(
-        "jarvis", fqid=JARVIS_FQID, base="https://node.ts.net",
-        publisher=pub, base_resolver=lambda: None,
+        "jarvis",
+        fqid=JARVIS_FQID,
+        base="https://node.ts.net",
+        publisher=pub,
+        base_resolver=lambda: None,
     )
     call = pub.calls[0]
     assert call["inbox_url"] == "https://envinbox/api/v1/inbox"
@@ -133,7 +136,9 @@ def test_uses_injected_base_resolver_when_no_base():
 
     pub = _CapturingPublisher()
     sa.announce_self(
-        "jarvis", fqid=JARVIS_FQID, publisher=pub,
+        "jarvis",
+        fqid=JARVIS_FQID,
+        publisher=pub,
         base_resolver=lambda: "https://resolved.ts.net",
     )
     call = pub.calls[0]
@@ -174,9 +179,13 @@ def test_caps_and_did_forwarded():
 
     pub = _CapturingPublisher()
     sa.announce_self(
-        "jarvis", fqid=JARVIS_FQID, base="https://n.ts.net",
-        did="did:skfed:jarvis", caps=["dm", "files"],
-        publisher=pub, base_resolver=lambda: None,
+        "jarvis",
+        fqid=JARVIS_FQID,
+        base="https://n.ts.net",
+        did="did:skfed:jarvis",
+        caps=["dm", "files"],
+        publisher=pub,
+        base_resolver=lambda: None,
     )
     call = pub.calls[0]
     assert call["did"] == "did:skfed:jarvis"
@@ -244,7 +253,8 @@ def test_refresh_all_accepts_plain_agent_names(monkeypatch):
     from skcomms import skfed_announce as sa
 
     monkeypatch.setattr(
-        sa, "resolve_self_identity",
+        sa,
+        "resolve_self_identity",
         lambda agent=None: {"fqid": f"{agent}@chef.skworld"},
     )
     pub = _CapturingPublisher()

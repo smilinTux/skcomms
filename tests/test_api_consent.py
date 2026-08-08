@@ -19,7 +19,6 @@ import importlib
 import pytest
 from fastapi.testclient import TestClient
 
-
 SELF_AGENT = "lumina"
 SENDER = "jarvis@chef.skworld"
 

@@ -29,6 +29,7 @@ This is purely additive — it shares the ``consent/<agent>/`` directory with
 ``RequestQueue.accept_request`` (promote to known) the node also calls
 :meth:`TokenStore.issue`; on block it calls :meth:`TokenStore.revoke`.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -133,9 +134,7 @@ class TokenStore:
 
     def _is_valid_contact(self, contact_fqid: str) -> bool:
         with self._conn() as c:
-            row = c.execute(
-                "SELECT 1 FROM tokens WHERE fqid=?", (contact_fqid,)
-            ).fetchone()
+            row = c.execute("SELECT 1 FROM tokens WHERE fqid=?", (contact_fqid,)).fetchone()
         return row is not None
 
     # -- public API -------------------------------------------------------

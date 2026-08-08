@@ -350,9 +350,7 @@ class TestPullSecurity:
         assert puller.pull() == []
         assert delivered == []
 
-    def test_stale_envelope_rejected(
-        self, relay, recipient_secret, recipient_pubkey, alice_keys
-    ):
+    def test_stale_envelope_rejected(self, relay, recipient_secret, recipient_pubkey, alice_keys):
         from datetime import datetime, timedelta, timezone
 
         priv, pub = alice_keys
@@ -388,8 +386,7 @@ class _DeadRail:
     def send(self, envelope_bytes, recipient):
         from skcomms.transport import SendResult
 
-        return SendResult(success=False, transport_name=self.name, envelope_id="",
-                          error="dead")
+        return SendResult(success=False, transport_name=self.name, envelope_id="", error="dead")
 
     def receive(self):
         return []
@@ -441,15 +438,16 @@ class TestRouterWiring:
         store.add(PeerInfo(name="lumina", fqid=TO_FQID, nostr_pubkey=recipient_pubkey))
 
         sf_rail = sf.StoreForwardTransport(store=store, publish=relay.publish)
-        router = Router(
-            transports=[sf_rail], store_forward_transport=sf.STORE_FORWARD_RAIL
-        )
+        router = Router(transports=[sf_rail], store_forward_transport=sf.STORE_FORWARD_RAIL)
 
         candidates = router._select_transports(
             router._default_mode,
             __import__("skcomms.models", fromlist=["MessageEnvelope"]).MessageEnvelope(
-                sender="x", recipient=TO_FQID,
-                payload=__import__("skcomms.models", fromlist=["MessagePayload"]).MessagePayload(content=""),
+                sender="x",
+                recipient=TO_FQID,
+                payload=__import__("skcomms.models", fromlist=["MessagePayload"]).MessagePayload(
+                    content=""
+                ),
             ),
         )
         assert sf_rail not in candidates  # never a direct candidate
@@ -522,8 +520,7 @@ class TestPullRailFailsClosed:
             thread = sf.start_pull_loop(recipient_secret=recipient_secret, relays=[])
         assert thread is None
         assert any(
-            "NOT started" in rec.message and rec.levelno >= logging.ERROR
-            for rec in caplog.records
+            "NOT started" in rec.message and rec.levelno >= logging.ERROR for rec in caplog.records
         )
 
     def test_core_wiring_does_not_start_pull_loop_when_store_broken(
@@ -545,8 +542,7 @@ class TestPullRailFailsClosed:
             engine._init_store_forward()
         assert engine._sf_pull_thread is None
         assert any(
-            "NOT started" in rec.message and rec.levelno >= logging.ERROR
-            for rec in caplog.records
+            "NOT started" in rec.message and rec.levelno >= logging.ERROR for rec in caplog.records
         )
         # Outbound S&F rail registration is unaffected by the receive-side gate.
         assert any(t.name == sf.STORE_FORWARD_RAIL for t in engine._router.transports)

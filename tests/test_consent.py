@@ -4,10 +4,10 @@ Discoverability != delivery: an unknown first-contact is quarantined (no notify,
 capped), a known/accepted contact is delivered, a blocked sender is dropped, and a
 tailnet-mode node treats every (already network-authenticated) sender as delivered.
 """
+
 import pytest
 
-from skcomms.consent import (ConsentDecision, ConsentGate, ContactStore,
-                             RequestQueue)
+from skcomms.consent import ConsentDecision, ConsentGate, ContactStore, RequestQueue
 
 L = "lumina@chef.skworld"
 O = "opus@chef.skworld"

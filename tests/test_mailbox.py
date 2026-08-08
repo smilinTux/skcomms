@@ -71,11 +71,13 @@ def signing_patch(lumina_keys):
         "fqid": "lumina@chef.skworld",
         "fingerprint": EnvelopeSigner(priv, "").fingerprint,
     }
-    with patch("skcomms.mailbox.resolve_self_identity", return_value=ident), patch(
-        "skcomms.mailbox._load_signer", return_value=EnvelopeSigner(priv, "")
-    ), patch("skcomms.mailbox._load_verifier_key", return_value=pub), patch(
-        "skcomms.mailbox._load_recipient_key", return_value=pub
-    ), patch("skcomms.mailbox._load_private_armor", return_value=priv):
+    with (
+        patch("skcomms.mailbox.resolve_self_identity", return_value=ident),
+        patch("skcomms.mailbox._load_signer", return_value=EnvelopeSigner(priv, "")),
+        patch("skcomms.mailbox._load_verifier_key", return_value=pub),
+        patch("skcomms.mailbox._load_recipient_key", return_value=pub),
+        patch("skcomms.mailbox._load_private_armor", return_value=priv),
+    ):
         yield priv, pub
 
 
@@ -85,9 +87,7 @@ def signing_patch(lumina_keys):
 
 
 class TestSend:
-    def test_writes_signed_envelope_to_outbox_and_peer_inbox(
-        self, cluster_env, signing_patch
-    ):
+    def test_writes_signed_envelope_to_outbox_and_peer_inbox(self, cluster_env, signing_patch):
         from skcomms.home import scaffold
         from skcomms.mailbox import send_message
 

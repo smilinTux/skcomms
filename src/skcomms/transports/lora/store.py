@@ -72,7 +72,8 @@ class ForwardQueue:
                 log.warning(
                     "dropping frame of %d bytes: exceeds per-window airtime "
                     "budget (max_bytes=%d) and can never be sent",
-                    len(frame), self._budget.max_bytes,
+                    len(frame),
+                    self._budget.max_bytes,
                 )
                 self._q.popleft()
                 continue

@@ -219,9 +219,7 @@ class AckTracker:
             try:
                 authenticated = bool(self._sender_verifier(ack_envelope))
             except Exception as exc:
-                logger.warning(
-                    "ACK sender verification errored for %s: %s", original_id[:8], exc
-                )
+                logger.warning("ACK sender verification errored for %s: %s", original_id[:8], exc)
                 authenticated = False
             if not authenticated:
                 logger.warning(

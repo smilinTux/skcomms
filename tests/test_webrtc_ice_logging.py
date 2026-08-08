@@ -52,7 +52,7 @@ def test_summarize_srflx_extracts_only_safe_fields():
 
 def test_summarize_handles_prefix_and_missing_prefix():
     assert summarize_ice_candidate(HOST)["type"] == "host"
-    assert summarize_ice_candidate(HOST[len("candidate:"):])["type"] == "host"
+    assert summarize_ice_candidate(HOST[len("candidate:") :])["type"] == "host"
 
 
 def test_summarize_relay_and_protocol_lowercased():

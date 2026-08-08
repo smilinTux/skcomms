@@ -56,7 +56,11 @@ JARVIS_DEV = "JARVDEV-1111111-JARVDEV-2222222-JARVDEV-3333333-JARVDEV-4444444"
 
 PEERS = {
     "opus@casey.douno": {"syncthing_device_id": OPUS_DEV, "fingerprint": "AAAA", "added_at": "x"},
-    "jarvis@rick.morty": {"syncthing_device_id": JARVIS_DEV, "fingerprint": "BBBB", "added_at": "y"},
+    "jarvis@rick.morty": {
+        "syncthing_device_id": JARVIS_DEV,
+        "fingerprint": "BBBB",
+        "added_at": "y",
+    },
 }
 
 
@@ -364,9 +368,7 @@ def test_health_fresh_outbox_is_ok(tmp_path):
 
 def test_health_fail_when_no_peers_declared(tmp_path):
     rest = FakeRest(config={"devices": [], "folders": []}, connections={"connections": {}})
-    report = check_share_health(
-        rest=rest, home=tmp_path, peers={}, realm=REALM, operator=OPERATOR
-    )
+    report = check_share_health(rest=rest, home=tmp_path, peers={}, realm=REALM, operator=OPERATOR)
     assert report.status == RailStatus.FAIL
     assert _find(report, "peers_declared").status == RailStatus.FAIL
 

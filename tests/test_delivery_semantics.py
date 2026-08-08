@@ -103,9 +103,7 @@ def test_delivery_report_queued_only_vs_confirmed():
     assert only_queued.queued_only is True
     assert only_queued.confirmed is False
 
-    got_confirmed = DeliveryReport(
-        envelope_id="e1", delivered=True, attempts=[queued, confirmed]
-    )
+    got_confirmed = DeliveryReport(envelope_id="e1", delivered=True, attempts=[queued, confirmed])
     assert got_confirmed.queued_only is False
     assert got_confirmed.confirmed is True
 

@@ -10,6 +10,7 @@ ban-feed publisher's key into a :class:`~skcomms.consent_banfeeds.FeedSubscripti
 Keys are generated in-process via pgpy (no live CapAuth), mirroring
 ``tests/test_consent_banfeeds.py``.
 """
+
 import json
 
 import pytest

@@ -21,7 +21,6 @@ from skcomms.outbox_migrate import (
     migrate_retry_queue_jsonl,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers / fixtures
 # ---------------------------------------------------------------------------
@@ -79,9 +78,7 @@ def test_classify_envelope_v1():
 
 
 def test_classify_legacy():
-    legacy = MessageEnvelope(
-        sender="a", recipient="b", payload=MessagePayload(content="hi")
-    )
+    legacy = MessageEnvelope(sender="a", recipient="b", payload=MessagePayload(content="hi"))
     assert classify_envelope_json(legacy.model_dump_json()) == "legacy"
 
 
@@ -238,10 +235,7 @@ def test_migrate_retry_queue_jsonl_drains_both_schemas(tmp_path):
     assert summary == {"migrated": 2, "skipped": 0}
     # Both entries landed on the outbox (single queue of record), no loss.
     assert outbox.pending_count == 2
-    bodies = {
-        json.loads(e.envelope_json)["payload"]["content"]
-        for e in outbox.list_pending()
-    }
+    bodies = {json.loads(e.envelope_json)["payload"]["content"] for e in outbox.list_pending()}
     assert bodies == {"core body", "router body"}
     # The drained JSONL file is removed once fully migrated.
     assert not jsonl.exists()

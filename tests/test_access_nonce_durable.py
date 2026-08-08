@@ -36,16 +36,19 @@ from skcomms.access import (
     Scope,
 )
 
-
 # --- helpers (same pattern as test_access_server.py) ------------------------
 
 
 def _gen_key(uid: str):
     import pgpy
     from pgpy.constants import (
-        CompressionAlgorithm, HashAlgorithm, KeyFlags,
-        PubKeyAlgorithm, SymmetricKeyAlgorithm,
+        CompressionAlgorithm,
+        HashAlgorithm,
+        KeyFlags,
+        PubKeyAlgorithm,
+        SymmetricKeyAlgorithm,
     )
+
     key = pgpy.PGPKey.new(PubKeyAlgorithm.RSAEncryptOrSign, 1024)
     key.add_uid(
         pgpy.PGPUID.new(uid),
@@ -196,9 +199,7 @@ class TestReplayAcrossRestart:
         with pytest.raises(AccessAuthError):
             reborn.authenticate(token)
         # A genuinely fresh call still passes.
-        assert reborn.authenticate(_signed_token(caller_keys)).identity == (
-            "lumina@chef.skworld"
-        )
+        assert reborn.authenticate(_signed_token(caller_keys)).identity == ("lumina@chef.skworld")
 
     def test_memory_mode_still_replays_after_restart(self, home, caller_keys, monkeypatch):
         """Documents WHY memory mode is opt-in only: restart forgets nonces."""

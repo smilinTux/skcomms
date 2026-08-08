@@ -16,9 +16,9 @@ def test_unknown_concept_returns_none():
 def test_version_is_stable_hash_of_contents():
     a = Codebook({"coord.claim": 1, "status.report": 2})
     b = Codebook({"status.report": 2, "coord.claim": 1})  # same mapping, diff order
-    assert a.version == b.version          # order-independent
+    assert a.version == b.version  # order-independent
     c = Codebook({"coord.claim": 1})
-    assert a.version != c.version          # different mapping → different version
+    assert a.version != c.version  # different mapping → different version
 
 
 def test_default_codebook_has_seed_vocab():
@@ -26,4 +26,4 @@ def test_default_codebook_has_seed_vocab():
     # seeded from real SK vocabulary (coord/itil/gtd/status intents)
     assert cb.code_for("coord.claim") is not None
     assert cb.code_for("status.report") is not None
-    assert len(cb.version) == 12           # short hex version tag
+    assert len(cb.version) == 12  # short hex version tag

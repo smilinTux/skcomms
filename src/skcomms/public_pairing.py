@@ -132,9 +132,7 @@ def resolve_funnel_base(
     return resolved.rstrip("/") if resolved else None
 
 
-def funnel_enabled(
-    base: Optional[str] = None, *, resolver: Optional[BaseResolver] = None
-) -> bool:
+def funnel_enabled(base: Optional[str] = None, *, resolver: Optional[BaseResolver] = None) -> bool:
     """True iff a public Funnel base URL is configured (feature is ON)."""
     return resolve_funnel_base(base, resolver=resolver) is not None
 

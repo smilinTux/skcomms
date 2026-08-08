@@ -19,7 +19,6 @@ import importlib
 
 import pytest
 
-
 SELF_AGENT = "lumina"
 SENDER = "jarvis@chef.skworld"
 

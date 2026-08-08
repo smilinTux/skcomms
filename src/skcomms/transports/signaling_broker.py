@@ -73,12 +73,14 @@ class BrokerSignaling:
                     continue  # welcome / peer_joined / peer_left / cancel_ice — ignore
                 data = msg.get("data") or {}
                 self._n += 1
-                self._recv.append({
-                    "from_fqid": self._fp_to_fqid(msg.get("from", "")),
-                    "kind": data.get("kind"),
-                    "payload": data.get("payload"),
-                    "id": f"broker-{self._n}",
-                })
+                self._recv.append(
+                    {
+                        "from_fqid": self._fp_to_fqid(msg.get("from", "")),
+                        "kind": data.get("kind"),
+                        "payload": data.get("payload"),
+                        "id": f"broker-{self._n}",
+                    }
+                )
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — a closed socket just ends the reader
@@ -87,11 +89,15 @@ class BrokerSignaling:
 
     async def send_signal(self, to_fqid: str, kind: str, payload: dict) -> dict:
         to_fp = self._fqid_to_fp(to_fqid)
-        await self._ws.send(json.dumps({
-            "type": "signal",
-            "to": to_fp,
-            "data": {"kind": kind, "payload": payload},
-        }))
+        await self._ws.send(
+            json.dumps(
+                {
+                    "type": "signal",
+                    "to": to_fp,
+                    "data": {"kind": kind, "payload": payload},
+                }
+            )
+        )
         return {"id": f"sent-{to_fp[:8]}-{kind}"}
 
     def poll_signals(self) -> list:

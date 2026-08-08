@@ -430,7 +430,9 @@ def _boom_client():
 # ---------------------------------------------------------------------------
 
 
-def _signed_record(priv: str, pub: str, fqid="lumina@chef.skworld", node="noroc2027", ts=1_750_000_000):
+def _signed_record(
+    priv: str, pub: str, fqid="lumina@chef.skworld", node="noroc2027", ts=1_750_000_000
+):
     """Build a CapAuth-signed directory record for *fqid* using armored *priv*/*pub*."""
     from skcomms.nostr_discovery import sign_record
     from skcomms.signing import EnvelopeSigner
@@ -568,13 +570,15 @@ class TestSignedReplication:
 
         priv, pub = keypair_a
         monkeypatch.setattr(
-            nd, "resolve_self_identity",
+            nd,
+            "resolve_self_identity",
             lambda *a, **k: {"fqid": "lumina@chef.skworld", "agent": "lumina"},
         )
         monkeypatch.setattr(nd, "_self_capauth_pubkey", lambda agent: pub)
 
-        rec = nd.build_self_record(inbox_url="https://noroc2027/api/v1/inbox",
-                                   signer=EnvelopeSigner(priv))
+        rec = nd.build_self_record(
+            inbox_url="https://noroc2027/api/v1/inbox", signer=EnvelopeSigner(priv)
+        )
         assert rec is not None
         assert rec.get("sig")
         assert nd.verify_record_signature(rec) is True

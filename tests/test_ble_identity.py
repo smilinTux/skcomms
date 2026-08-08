@@ -25,8 +25,10 @@ def test_generate_yields_distinct_keypairs():
 
 def test_fingerprint_is_sha256_of_noise_static_pub_hex():
     ident = MeshIdentity.generate("z@x.y")
-    assert fingerprint_of(ident.noise_static_pub) == \
-        hashlib.sha256(ident.noise_static_pub).hexdigest()
+    assert (
+        fingerprint_of(ident.noise_static_pub)
+        == hashlib.sha256(ident.noise_static_pub).hexdigest()
+    )
     assert ident.fingerprint == fingerprint_of(ident.noise_static_pub)
 
 

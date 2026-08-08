@@ -5,7 +5,7 @@ Python (bleak), Flutter (flutter_blue_plus), and any future driver interoperate.
 """
 
 # SK-mesh GATT profile (custom 128-bit UUIDs, lowercase canonical form).
-SERVICE_UUID = "534b4d45-5348-0000-8000-00805f9b34fb"   # "SKME SH" namespaced
+SERVICE_UUID = "534b4d45-5348-0000-8000-00805f9b34fb"  # "SKME SH" namespaced
 MESH_CHAR_UUID = "534b4d45-5348-0001-8000-00805f9b34fb"  # write + notify
 
 # Protocol constants (see spec §4).

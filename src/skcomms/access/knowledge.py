@@ -42,9 +42,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_DSN = os.environ.get(
     "SKMEMORY_PG_DSN", "postgresql://postgres:skmemory@localhost:5432/skmemory"
 )
-DEFAULT_EMBED_URL = os.environ.get(
-    "SKMEMORY_EMBED_URL", "http://192.168.0.100:11434/api/embed"
-)
+DEFAULT_EMBED_URL = os.environ.get("SKMEMORY_EMBED_URL", "http://192.168.0.100:11434/api/embed")
 DEFAULT_EMBED_MODEL = os.environ.get("SKMEMORY_EMBED_MODEL", "mxbai-embed-large")
 DEFAULT_GRAPH = os.environ.get("SKMEMORY_AGE_GRAPH", "lumina_knowledge")
 
@@ -251,9 +249,7 @@ def record_ingest_location(
         except OSError:
             sha = None
 
-    record_file_location(
-        abs_path, node=node, doc_id=doc_id, mtime=mtime, sha=sha, conn=conn
-    )
+    record_file_location(abs_path, node=node, doc_id=doc_id, mtime=mtime, sha=sha, conn=conn)
     return True
 
 
@@ -286,8 +282,15 @@ def pg_locate(query_or_doc_id: Any, *, limit: int = 10, conn: Any = None) -> lis
             cur.execute("SELECT source FROM docs WHERE id = %s", (doc_id,))
             src = cur.fetchone()
             if src and src[0]:
-                return [{"node": LOCAL_NODE, "path": src[0], "doc_id": doc_id,
-                         "mtime": None, "sha": None}]
+                return [
+                    {
+                        "node": LOCAL_NODE,
+                        "path": src[0],
+                        "doc_id": doc_id,
+                        "mtime": None,
+                        "sha": None,
+                    }
+                ]
             return []
         # text path-substring search
         q = str(query_or_doc_id)
@@ -307,8 +310,7 @@ def pg_locate(query_or_doc_id: Any, *, limit: int = 10, conn: Any = None) -> lis
             (f"%{q}%", limit),
         )
         return [
-            {"node": LOCAL_NODE, "path": r[0], "doc_id": r[1],
-             "mtime": None, "sha": None}
+            {"node": LOCAL_NODE, "path": r[0], "doc_id": r[1], "mtime": None, "sha": None}
             for r in cur.fetchall()
             if r[0]
         ]
@@ -421,10 +423,8 @@ def graph_query(
         return []
     try:
         with conn.cursor() as cur:
-            cur.execute('LOAD \'age\'; SET search_path = ag_catalog, "$user", public;')
-            cur.execute(
-                f"SELECT * FROM cypher('{graph}', $cy${cypher}$cy$) AS ({col_decl});"
-            )
+            cur.execute("LOAD 'age'; SET search_path = ag_catalog, \"$user\", public;")
+            cur.execute(f"SELECT * FROM cypher('{graph}', $cy${cypher}$cy$) AS ({col_decl});")
             return cur.fetchall()
     except Exception as e:  # noqa: BLE001 - graph is best-effort
         logger.warning("graph_query failed (graph=%s): %s", graph, e)

@@ -22,6 +22,7 @@ and the introduction check before calling :func:`classify_tier`. This keeps gate
 a pure decision function the orchestrator can compose with the request queue
 (gate 5), greylist and capability-token (gate 4) modules.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -37,9 +38,9 @@ class SenderTier(str, Enum):
     policy turns.
     """
 
-    SOVEREIGN = "sovereign"      #: capauth/DID signature verified → trusted realm
-    INTRODUCED = "introduced"    #: vouched / contact-of-a-contact (web-of-trust)
-    ANONYMOUS = "anonymous"      #: unauthenticated unknown → strictest gate
+    SOVEREIGN = "sovereign"  #: capauth/DID signature verified → trusted realm
+    INTRODUCED = "introduced"  #: vouched / contact-of-a-contact (web-of-trust)
+    ANONYMOUS = "anonymous"  #: unauthenticated unknown → strictest gate
 
 
 @dataclass(frozen=True)
@@ -67,21 +68,13 @@ class FrictionPolicy:
 # Safe built-in defaults — monotone in strictness (sovereign softest, anonymous
 # strictest) on every axis. POLICY: tune per node via the ``overrides`` arg.
 _DEFAULT_FRICTION: dict[SenderTier, FrictionPolicy] = {
-    SenderTier.SOVEREIGN: FrictionPolicy(
-        greylist=False, rate_per_day=1000, require_token=False
-    ),
-    SenderTier.INTRODUCED: FrictionPolicy(
-        greylist=False, rate_per_day=50, require_token=False
-    ),
-    SenderTier.ANONYMOUS: FrictionPolicy(
-        greylist=True, rate_per_day=3, require_token=True
-    ),
+    SenderTier.SOVEREIGN: FrictionPolicy(greylist=False, rate_per_day=1000, require_token=False),
+    SenderTier.INTRODUCED: FrictionPolicy(greylist=False, rate_per_day=50, require_token=False),
+    SenderTier.ANONYMOUS: FrictionPolicy(greylist=True, rate_per_day=3, require_token=True),
 }
 
 
-def classify_tier(
-    fqid: str, *, verified: bool = False, introduced: bool = False
-) -> SenderTier:
+def classify_tier(fqid: str, *, verified: bool = False, introduced: bool = False) -> SenderTier:
     """Classify a sender into a :class:`SenderTier` from authentication signals.
 
     Pure protocol logic — no policy numbers, no state. The caller runs the actual

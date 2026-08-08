@@ -26,7 +26,6 @@ from skcomms.access.exec import (
 from skcomms.access.files import FileAccess, FileAccessConfig, PathDeniedError
 from skcomms.access.registry import AccessRegistry, Scope
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -160,9 +159,7 @@ def test_timeout_kills_child_processes(ea):
 
 
 def test_output_cap_truncates(fa, audit):
-    ea = ExecAccess(
-        ExecAccessConfig(file_access=fa, audit_log=str(audit), max_output=64)
-    )
+    ea = ExecAccess(ExecAccessConfig(file_access=fa, audit_log=str(audit), max_output=64))
     res = ea.run([sys.executable, "-c", "print('A' * 5000)"])
     assert res["truncated"] is True
     assert len(res["stdout"]) <= 64
@@ -239,9 +236,7 @@ def test_shell_refused_by_default(ea):
 
 
 def test_shell_allowed_when_enabled(fa, audit):
-    ea = ExecAccess(
-        ExecAccessConfig(file_access=fa, audit_log=str(audit), allow_shell=True)
-    )
+    ea = ExecAccess(ExecAccessConfig(file_access=fa, audit_log=str(audit), allow_shell=True))
     res = ea.run("echo shelled", shell=True)
     assert res["exit_code"] == 0
     assert "shelled" in res["stdout"]

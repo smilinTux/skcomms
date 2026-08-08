@@ -542,7 +542,10 @@ def _get_local_transports() -> list[dict]:
 
 
 def _default_peers_dir() -> Path:
-    return Path(os.environ.get("SKCOMMS_HOME", str(Path.home() / ".skcapstone" / "skcomms"))) / "peers"
+    return (
+        Path(os.environ.get("SKCOMMS_HOME", str(Path.home() / ".skcapstone" / "skcomms")))
+        / "peers"
+    )
 
 
 def _safe_filename(name: str) -> str:

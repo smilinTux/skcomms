@@ -25,8 +25,10 @@ class MeshtasticInterface(LoRaMeshInterface):
         import meshtastic.serial_interface as si
         import meshtastic.tcp_interface as ti
         from pubsub import pub
-        self._iface = (ti.TCPInterface(self.tcp_host) if self.tcp_host
-                       else si.SerialInterface(self.device))
+
+        self._iface = (
+            ti.TCPInterface(self.tcp_host) if self.tcp_host else si.SerialInterface(self.device)
+        )
         pub.subscribe(self._on_meshtastic_receive, "meshtastic.receive.data")
         self.running = True
 
@@ -38,8 +40,7 @@ class MeshtasticInterface(LoRaMeshInterface):
     async def send_frame(self, data: bytes, *, dest: str | None) -> None:
         if self._iface is None:
             raise RuntimeError("interface not started")
-        self._iface.sendData(data, destinationId=dest or "^all",
-                             portNum=framing.SK_PORTNUM)
+        self._iface.sendData(data, destinationId=dest or "^all", portNum=framing.SK_PORTNUM)
 
     def on_receive(self, cb: ReceiveCb) -> None:
         self._cb = cb
@@ -48,8 +49,10 @@ class MeshtasticInterface(LoRaMeshInterface):
         if not packet:
             return
         decoded = packet.get("decoded", {})
-        if decoded.get("portnum") != framing.SK_PORTNUM and \
-           decoded.get("portnum") != "PRIVATE_APP":
+        if (
+            decoded.get("portnum") != framing.SK_PORTNUM
+            and decoded.get("portnum") != "PRIVATE_APP"
+        ):
             return
         payload = decoded.get("payload")
         src = str(packet.get("fromId") or packet.get("from") or "")
@@ -57,5 +60,9 @@ class MeshtasticInterface(LoRaMeshInterface):
             self._cb(bytes(payload), src)
 
     def info(self) -> dict:
-        return {"backend": "meshtastic", "device": self.device,
-                "tcp_host": self.tcp_host, "running": self.running}
+        return {
+            "backend": "meshtastic",
+            "device": self.device,
+            "tcp_host": self.tcp_host,
+            "running": self.running,
+        }

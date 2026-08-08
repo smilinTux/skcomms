@@ -221,7 +221,9 @@ class _DiscordPyClientWrapper:
             if ref is not None and getattr(ref, "message_id", None) is not None:
                 payload["message_reference"] = {
                     "message_id": str(ref.message_id),
-                    "channel_id": str(ref.channel_id) if ref.channel_id else str(message.channel.id),
+                    "channel_id": (
+                        str(ref.channel_id) if ref.channel_id else str(message.channel.id)
+                    ),
                 }
             self._event_queue.append(payload)
 
@@ -382,9 +384,7 @@ class DiscordAdapter(ChannelAdapter):
         self._bot_username: Optional[str] = None
 
         # --- Identity bindings ---
-        self._bindings: dict[str, str] = (
-            bindings_store if bindings_store is not None else {}
-        )
+        self._bindings: dict[str, str] = bindings_store if bindings_store is not None else {}
         self._external_bindings = bindings_store is not None
 
         # --- Injectable client ---
@@ -409,14 +409,11 @@ class DiscordAdapter(ChannelAdapter):
             try:
                 me = await self._client.login()
             except Exception as exc:
-                raise AdapterConnectError(
-                    f"Discord login failed: {exc}"
-                ) from exc
+                raise AdapterConnectError(f"Discord login failed: {exc}") from exc
 
             if not me.get("id"):
                 raise AdapterAuthError(
-                    "Discord login did not return a valid user object — "
-                    "check the bot token."
+                    "Discord login did not return a valid user object — " "check the bot token."
                 )
 
             self._bot_user_id = me.get("id")
@@ -484,12 +481,12 @@ class DiscordAdapter(ChannelAdapter):
             text=True,
             files=True,
             images=True,
-            voice_notes=False,   # Discord has voice channels but not voice messages (bots)
+            voice_notes=False,  # Discord has voice channels but not voice messages (bots)
             video=False,
             reactions=True,
-            threads=True,        # Discord threads + reply chains
+            threads=True,  # Discord threads + reply chains
             read_receipts=False,
-            typing_hint=True,    # triggerTypingIndicator endpoint
+            typing_hint=True,  # triggerTypingIndicator endpoint
             max_text_bytes=2000,  # Discord message limit = 2 000 chars
         )
 
@@ -556,9 +553,7 @@ class DiscordAdapter(ChannelAdapter):
         author = event.get("author", {})
         # Drop bot/webhook messages to avoid self-echo
         if author.get("bot", False) or author.get("webhook_id"):
-            logger.debug(
-                "discord: dropping bot/webhook message from %s", author.get("id")
-            )
+            logger.debug("discord: dropping bot/webhook message from %s", author.get("id"))
             return None
 
         user_id = author.get("id") or event.get("user_id", "unknown")
@@ -649,8 +644,7 @@ class DiscordAdapter(ChannelAdapter):
         """
         if self._client is None:
             raise AdapterSendError(
-                "DiscordAdapter.send() requires a connected client. "
-                "Call connect() first."
+                "DiscordAdapter.send() requires a connected client. " "Call connect() first."
             )
 
         channel_id = message.room_id
@@ -685,16 +679,12 @@ class DiscordAdapter(ChannelAdapter):
 
             msg_id = result.get("id")
             if not msg_id:
-                raise AdapterSendError(
-                    f"Discord API error: response missing 'id': {result}"
-                )
+                raise AdapterSendError(f"Discord API error: response missing 'id': {result}")
             return str(msg_id)
         except AdapterSendError:
             raise
         except Exception as exc:
-            raise AdapterSendError(
-                f"Discord send failed for channel {channel_id}: {exc}"
-            ) from exc
+            raise AdapterSendError(f"Discord send failed for channel {channel_id}: {exc}") from exc
 
     # -----------------------------------------------------------------------
     # Identity mapping
@@ -717,9 +707,7 @@ class DiscordAdapter(ChannelAdapter):
         external ``bindings_store`` was injected (test mode).
         """
         self._bindings[platform_id.canonical_key] = fqid
-        logger.info(
-            "bound %s → %s (trust=%s)", platform_id.canonical_key, fqid, trust_level
-        )
+        logger.info("bound %s → %s (trust=%s)", platform_id.canonical_key, fqid, trust_level)
         if not self._external_bindings:
             self._save_bindings()
 

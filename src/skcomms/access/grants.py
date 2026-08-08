@@ -254,7 +254,9 @@ def build_parser() -> argparse.ArgumentParser:
         description="Manage sk-access RBAC scope grants (grants.yml).",
     )
     p.add_argument(
-        "--file", type=Path, default=None,
+        "--file",
+        type=Path,
+        default=None,
         help=f"grants.yml path (default: {_GRANTS_PATH})",
     )
     sub = p.add_subparsers(dest="cmd", required=True)

@@ -77,8 +77,9 @@ class RemoteAccessError(RoutingError):
         detail: The peer's error detail (``detail`` field) or transport error.
     """
 
-    def __init__(self, message: str, *, status: Optional[int] = None,
-                 detail: Optional[str] = None) -> None:
+    def __init__(
+        self, message: str, *, status: Optional[int] = None, detail: Optional[str] = None
+    ) -> None:
         super().__init__(message)
         self.status = status
         self.detail = detail
@@ -375,7 +376,9 @@ def _extract_detail(exc) -> str:
         raw = exc.read()
         parsed = json.loads(raw)
         if isinstance(parsed, dict):
-            return str(parsed.get("detail") or parsed.get("error") or raw.decode("utf-8", "replace"))
+            return str(
+                parsed.get("detail") or parsed.get("error") or raw.decode("utf-8", "replace")
+            )
         return str(parsed)
     except Exception:  # pragma: no cover - best-effort
         return str(exc)
@@ -449,9 +452,7 @@ def _route_or_local(
     res = resolver or NodeResolver()
     if res.is_local(node):
         return local_fn(**arguments)
-    return call_remote(
-        node, tool, arguments, resolver=res, timeout=timeout, agent=agent
-    )
+    return call_remote(node, tool, arguments, resolver=res, timeout=timeout, agent=agent)
 
 
 def routed_file_read(
@@ -464,8 +465,13 @@ def routed_file_read(
 ) -> dict[str, Any]:
     """Read a file from ``node`` (or locally if ``node`` is None/self)."""
     return _route_or_local(
-        node, "file_read", {"path": path}, files_mod.file_read,
-        resolver=resolver, timeout=timeout, agent=agent,
+        node,
+        "file_read",
+        {"path": path},
+        files_mod.file_read,
+        resolver=resolver,
+        timeout=timeout,
+        agent=agent,
     )
 
 
@@ -480,13 +486,18 @@ def routed_file_write(
     agent: Optional[str] = None,
 ) -> dict[str, Any]:
     """Write a file on ``node`` (or locally). Routed call requires write scope."""
+
     def _local(path, content, encoding="utf-8"):
         return files_mod.file_write(path, content, encoding=encoding)
 
     return _route_or_local(
-        node, "file_write",
-        {"path": path, "content": content, "encoding": encoding}, _local,
-        resolver=resolver, timeout=timeout, agent=agent,
+        node,
+        "file_write",
+        {"path": path, "content": content, "encoding": encoding},
+        _local,
+        resolver=resolver,
+        timeout=timeout,
+        agent=agent,
     )
 
 
@@ -501,8 +512,13 @@ def routed_file_patch(
 ) -> dict[str, Any]:
     """Apply a unified diff to a file on ``node`` (or locally)."""
     return _route_or_local(
-        node, "file_patch", {"path": path, "unified_diff": unified_diff},
-        files_mod.file_patch, resolver=resolver, timeout=timeout, agent=agent,
+        node,
+        "file_patch",
+        {"path": path, "unified_diff": unified_diff},
+        files_mod.file_patch,
+        resolver=resolver,
+        timeout=timeout,
+        agent=agent,
     )
 
 
@@ -516,8 +532,13 @@ def routed_file_list(
 ) -> list[dict[str, Any]]:
     """List a directory on ``node`` (or locally)."""
     return _route_or_local(
-        node, "file_list", {"dir": dir}, files_mod.file_list,
-        resolver=resolver, timeout=timeout, agent=agent,
+        node,
+        "file_list",
+        {"dir": dir},
+        files_mod.file_list,
+        resolver=resolver,
+        timeout=timeout,
+        agent=agent,
     )
 
 
@@ -531,8 +552,13 @@ def routed_file_stat(
 ) -> dict[str, Any]:
     """Stat a file/dir on ``node`` (or locally)."""
     return _route_or_local(
-        node, "file_stat", {"path": path}, files_mod.file_stat,
-        resolver=resolver, timeout=timeout, agent=agent,
+        node,
+        "file_stat",
+        {"path": path},
+        files_mod.file_stat,
+        resolver=resolver,
+        timeout=timeout,
+        agent=agent,
     )
 
 
@@ -545,8 +571,13 @@ def routed_list_roots(
 ) -> list[str]:
     """List the exposed roots on ``node`` (or locally)."""
     return _route_or_local(
-        node, "list_roots", {}, files_mod.list_roots,
-        resolver=resolver, timeout=timeout, agent=agent,
+        node,
+        "list_roots",
+        {},
+        files_mod.list_roots,
+        resolver=resolver,
+        timeout=timeout,
+        agent=agent,
     )
 
 
@@ -577,6 +608,4 @@ def fetch_located(
     if not path:
         raise RoutingError(f"located hit has no path: {hit!r}")
     node = hit.get("node")
-    return routed_file_read(
-        path, node, resolver=resolver, timeout=timeout, agent=agent
-    )
+    return routed_file_read(path, node, resolver=resolver, timeout=timeout, agent=agent)

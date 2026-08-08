@@ -249,9 +249,7 @@ class _ExplodingTransport:
 
 
 class TestRunHousekeepingPass:
-    def test_aggregates_across_transports_with_configured_retention(
-        self, tmp_path, monkeypatch
-    ):
+    def test_aggregates_across_transports_with_configured_retention(self, tmp_path, monkeypatch):
         monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
         t1 = _FakePrunableTransport(outbox_result=3, archive_result=2)
         t2 = _FakePrunableTransport(outbox_result=1, archive_result=0)
@@ -376,9 +374,7 @@ class TestLifespanHousekeepingWiring:
 
         monkeypatch.setattr(api, "SignalingBroker", lambda *a, **k: object())
         monkeypatch.setattr(api, "CapAuthValidator", lambda *a, **k: object())
-        monkeypatch.setattr(
-            "skcomms.config.load_adapters_block", lambda *a, **k: {"adapters": {}}
-        )
+        monkeypatch.setattr("skcomms.config.load_adapters_block", lambda *a, **k: {"adapters": {}})
         yield
 
     async def test_daemon_lifespan_periodically_calls_prune_outbox(self, monkeypatch):
@@ -404,9 +400,7 @@ class TestLifespanHousekeepingWiring:
         import skcomms.api as api
 
         transport = _FakePrunableTransport()
-        stub = self._StubSKComms(
-            [transport], HousekeepingConfig(enabled=False, interval_s=0.01)
-        )
+        stub = self._StubSKComms([transport], HousekeepingConfig(enabled=False, interval_s=0.01))
         monkeypatch.setattr(api.SKComms, "from_config", classmethod(lambda cls: stub))
 
         async with api.lifespan(api.app):

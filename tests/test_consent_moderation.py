@@ -9,6 +9,7 @@ Two moderation primitives the design draws from the strongest primary sources:
   only** (message id + reporter + reason — never content); unreported messages
   leave **no record at all**.
 """
+
 import pytest
 
 from skcomms.consent_moderation import Report, ReportLog, ShadowBlockSet
@@ -26,6 +27,7 @@ def _home(tmp_path, monkeypatch):
 
 
 # --- shadow-block -------------------------------------------------------------
+
 
 def test_shadow_blocked_hidden_from_others():
     sb = ShadowBlockSet(GID)
@@ -80,6 +82,7 @@ def test_shadow_block_scoped_per_group():
 
 
 # --- consent-gated reporting (MlsGov) -----------------------------------------
+
 
 def test_report_stored_minimal():
     log = ReportLog(GID)

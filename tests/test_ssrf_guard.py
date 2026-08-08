@@ -97,10 +97,7 @@ def _fake_getaddrinfo(*answers: str):
     import socket as _socket
 
     def _gai(host, port, *a, **k):
-        return [
-            (_socket.AF_INET, _socket.SOCK_STREAM, 6, "", (ip, port or 443))
-            for ip in answers
-        ]
+        return [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", (ip, port or 443)) for ip in answers]
 
     return _gai
 
@@ -256,9 +253,7 @@ class TestGuardedFetch:
 
         monkeypatch.setattr(ssrf.socket, "getaddrinfo", _gai)
 
-        with guarded_urlopen(
-            f"http://rebind.example:{port}/ok", policy=LOOPBACK_OK
-        ) as resp:
+        with guarded_urlopen(f"http://rebind.example:{port}/ok", policy=LOOPBACK_OK) as resp:
             assert resp.read() == b"hello"
             # The request carried the ORIGINAL hostname to the pinned socket.
             assert resp.headers["X-Seen-Host"] == f"rebind.example:{port}"
@@ -272,10 +267,7 @@ class TestGuardedFetch:
             guarded_get(f"{_base(http_server)}/redirect-meta", policy=LOOPBACK_OK)
 
     def test_redirect_to_an_allowed_target_is_followed(self, http_server):
-        assert (
-            guarded_get(f"{_base(http_server)}/redirect-ok", policy=LOOPBACK_OK)
-            == b"hello"
-        )
+        assert guarded_get(f"{_base(http_server)}/redirect-ok", policy=LOOPBACK_OK) == b"hello"
 
     def test_redirect_loops_are_capped(self, http_server):
         with pytest.raises(SSRFBlockedError, match="too many redirects"):
@@ -367,9 +359,7 @@ class TestHttpS2SDirectorySSRF:
             "inbox_url_for",
             lambda fqid, **kw: "https://inbox.evilrealm.example/api/v1/inbox",
         )
-        monkeypatch.setattr(
-            ssrf.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34")
-        )
+        monkeypatch.setattr(ssrf.socket, "getaddrinfo", _fake_getaddrinfo("93.184.216.34"))
 
         t = HttpS2STransport()
         url = t._inbox_url_from_directory("evil@boss.evilrealm")

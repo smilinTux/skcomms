@@ -218,9 +218,7 @@ class RegistryConfig(BaseModel):
     """
 
     enabled: list[str] = Field(default_factory=lambda: ["syncthing-shared"])
-    order: list[str] = Field(
-        default_factory=lambda: ["syncthing-shared", "https", "tailscale"]
-    )
+    order: list[str] = Field(default_factory=lambda: ["syncthing-shared", "https", "tailscale"])
     https_url_template: str = "https://registry.{realm}/peers.json"
     tailscale_host_template: str = "skcomms-{agent}-{operator}"
     tailscale_tag: str = "tag:skcomms"

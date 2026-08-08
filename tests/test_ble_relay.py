@@ -4,8 +4,13 @@ from skcomms.transports.ble.relay import RelayDecision, RelayEngine
 
 def _pkt(ttl=7, msg_id=b"\x01" * 8, recipient=b"\xbb" * 8):
     return MeshPacket(
-        type=PacketType.MESSAGE, ttl=ttl, flags=0, timestamp=1,
-        msg_id=msg_id, sender_id=b"\xaa" * 8, recipient_id=recipient,
+        type=PacketType.MESSAGE,
+        ttl=ttl,
+        flags=0,
+        timestamp=1,
+        msg_id=msg_id,
+        sender_id=b"\xaa" * 8,
+        recipient_id=recipient,
         payload=b"hi",
     )
 

@@ -8,15 +8,19 @@ from skcomms.glossa.session import GlossaSession
 
 def _desc(fqid):
     lex = default_macro_lexicon()
-    return CapabilityDescriptor(fqid=fqid, model_tier="large",
-                                max_level=codec.L1_SCHEMA,
-                                codebook_version=default_codebook().version,
-                                lexicon_version=lex.version)
+    return CapabilityDescriptor(
+        fqid=fqid,
+        model_tier="large",
+        max_level=codec.L1_SCHEMA,
+        codebook_version=default_codebook().version,
+        lexicon_version=lex.version,
+    )
 
 
 def test_session_exposes_macro_prompt_block():
-    s = GlossaSession(local=_desc("a@x.y"), codebook=default_codebook(),
-                      lexicon=default_macro_lexicon())
+    s = GlossaSession(
+        local=_desc("a@x.y"), codebook=default_codebook(), lexicon=default_macro_lexicon()
+    )
     block = s.macro_prompt_block()
     assert "GTD-sweep" in block
 

@@ -101,7 +101,7 @@ def test_random_pad_differs_run_to_run():
     # padding region (after prefix+body) must not be identical run-to-run...
     assert a != b
     # ...and must not be all zeros
-    pad_region = a[_LEN_PREFIX + len(data):]
+    pad_region = a[_LEN_PREFIX + len(data) :]
     assert pad_region != bytes(len(pad_region))
 
 

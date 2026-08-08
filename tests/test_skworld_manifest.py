@@ -41,15 +41,9 @@ def test_auth_facet_declares_audience():
 
 
 def test_health_is_origin_relative():
-    assert (
-        skcomms_module_manifest("http://host:9384/")["health"]
-        == "http://host:9384/health"
-    )
+    assert skcomms_module_manifest("http://host:9384/")["health"] == "http://host:9384/health"
     # No trailing-slash base yields the same (no double/missing slash).
-    assert (
-        skcomms_module_manifest("http://host:9384")["health"]
-        == "http://host:9384/health"
-    )
+    assert skcomms_module_manifest("http://host:9384")["health"] == "http://host:9384/health"
 
 
 def test_operator_facet_matches_the_skcomms_adapter_contract():
@@ -88,9 +82,7 @@ def test_operator_standard_actions_are_the_probe_standard_actions():
     from skcomms import operator_probe
 
     standard = [
-        a["name"]
-        for a in operator_probe._ACTIONS
-        if a.get("standard") and a.get("reversible")
+        a["name"] for a in operator_probe._ACTIONS if a.get("standard") and a.get("reversible")
     ]
     op = skcomms_module_manifest("http://host/")["operator"]
     assert op["proposedStandardActions"] == standard == ["restart_service"]

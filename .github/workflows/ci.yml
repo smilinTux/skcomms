@@ -53,7 +53,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install lint tools
-        run: pip install -c constraints.txt black ruff
+        run: pip install -c constraints.txt "black==26.5.1" "ruff==0.15.4"
       - name: Check formatting
         run: black --check src/ tests/
       - name: Lint

@@ -928,9 +928,7 @@ class WebRTCTransport(Transport):
         @pc.on("icegatheringstatechange")
         def _on_ice_gathering_state_change():
             gstate = pc.iceGatheringState
-            logger.debug(
-                "WebRTC: ICE gathering-state with %s: %s", peer_id[:8], gstate
-            )
+            logger.debug("WebRTC: ICE gathering-state with %s: %s", peer_id[:8], gstate)
             if gstate == "complete":
                 logger.info("WebRTC: ICE gathering complete for %s", peer_id[:8])
 

@@ -25,8 +25,9 @@ def to_english(m: Message) -> str:
     return " ".join(parts)
 
 
-def to_human(m: Message, lang: str = "en",
-             translate: Callable[[str, str], str] | None = None) -> str:
+def to_human(
+    m: Message, lang: str = "en", translate: Callable[[str, str], str] | None = None
+) -> str:
     """Render the audit gloss in `lang`. en = the English renderer; other languages
     go through an injected `translate(text, lang)` seam (a model call in production,
     a fake in tests). Falls back to English if no translator — the audit must never

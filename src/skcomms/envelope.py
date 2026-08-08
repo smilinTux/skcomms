@@ -107,9 +107,9 @@ class Envelope(BaseModel):
         data = self.model_dump(mode="json")
         if data.get("consent_token") is None:
             data.pop("consent_token", None)
-        return json.dumps(
-            data, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-        ).encode("utf-8")
+        return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+            "utf-8"
+        )
 
     def to_dict(self) -> dict:
         """Serialize to a plain JSON-safe dict."""
@@ -129,9 +129,7 @@ class Envelope(BaseModel):
         """Deserialize an envelope from UTF-8 JSON bytes."""
         return cls.model_validate_json(data)
 
-    def is_known_content_type(
-        self, registry: frozenset[str] = KNOWN_CONTENT_TYPES
-    ) -> bool:
+    def is_known_content_type(self, registry: frozenset[str] = KNOWN_CONTENT_TYPES) -> bool:
         """Whether ``content_type`` has a recognized rich view."""
         return self.content_type in registry
 

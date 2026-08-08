@@ -28,7 +28,7 @@ def _mk_device():
 def _decode_token(tok: str):
     """Split a ``pqdm2:`` token into (header_dict, slots_bytes, body_bytes)."""
     assert tok.startswith(pqdm.PQDM2_PREFIX)
-    rest = tok[len(pqdm.PQDM2_PREFIX):]
+    rest = tok[len(pqdm.PQDM2_PREFIX) :]
     h_b64, slots_b64, body_b64 = rest.split(".")
     header = json.loads(base64.b64decode(h_b64))
     slots = base64.b64decode(slots_b64)
@@ -45,7 +45,7 @@ def _iter_slots(slots: bytes):
         kid_len = slots[off]
         start = off
         off += 1
-        kid = slots[off:off + kid_len].decode()
+        kid = slots[off : off + kid_len].decode()
         off += kid_len
         off += encap_len + wrapped_len
         yield kid, slots[start:off]
@@ -55,9 +55,7 @@ def _remove_slot_and_kid(tok: str, drop_kid: str) -> str:
     """Strip one recipient: drop its slot AND its kid from the header."""
     header, slots, body = _decode_token(tok)
     header["kids"] = [k for k in header["kids"] if k != drop_kid]
-    kept = b"".join(
-        raw for kid, raw in _iter_slots(slots) if kid != drop_kid
-    )
+    kept = b"".join(raw for kid, raw in _iter_slots(slots) if kid != drop_kid)
     h_b64 = base64.b64encode(
         json.dumps(header, sort_keys=True, separators=(",", ":")).encode()
     ).decode()
@@ -80,10 +78,18 @@ def test_two_devices_each_open_their_slot():
     ]
     tok = pqdm.seal_multi(b"hello", recips, sender="lumina", recipient_id="chef")
     assert tok.startswith("pqdm2:")
-    assert pqdm.open_multi(tok, my_key_id=a_pub[:16], my_private_hex=a_priv,
-                           sender="lumina", recipient_id="chef") == b"hello"
-    assert pqdm.open_multi(tok, my_key_id=b_pub[:16], my_private_hex=b_priv,
-                           sender="lumina", recipient_id="chef") == b"hello"
+    assert (
+        pqdm.open_multi(
+            tok, my_key_id=a_pub[:16], my_private_hex=a_priv, sender="lumina", recipient_id="chef"
+        )
+        == b"hello"
+    )
+    assert (
+        pqdm.open_multi(
+            tok, my_key_id=b_pub[:16], my_private_hex=b_priv, sender="lumina", recipient_id="chef"
+        )
+        == b"hello"
+    )
 
 
 def test_non_recipient_gets_none():
@@ -92,17 +98,35 @@ def test_non_recipient_gets_none():
     recips = [{"key_id": a_pub[:16], "hybrid_public_hex": a_pub}]
     tok = pqdm.seal_multi(b"secret", recips, sender="lumina", recipient_id="chef")
     # a device whose key_id is not in the header has no slot
-    assert pqdm.open_multi(tok, my_key_id="deadbeefdeadbeef", my_private_hex=c_priv,
-                           sender="lumina", recipient_id="chef") is None
+    assert (
+        pqdm.open_multi(
+            tok,
+            my_key_id="deadbeefdeadbeef",
+            my_private_hex=c_priv,
+            sender="lumina",
+            recipient_id="chef",
+        )
+        is None
+    )
 
 
 def test_slot_strip_is_rejected():
     a_pub, a_priv = _mk_device()
     b_pub, _ = _mk_device()
-    recips = [{"key_id": a_pub[:16], "hybrid_public_hex": a_pub},
-              {"key_id": b_pub[:16], "hybrid_public_hex": b_pub}]
+    recips = [
+        {"key_id": a_pub[:16], "hybrid_public_hex": a_pub},
+        {"key_id": b_pub[:16], "hybrid_public_hex": b_pub},
+    ]
     tok = pqdm.seal_multi(b"hi", recips, sender="lumina", recipient_id="chef")
     tampered = _remove_slot_and_kid(tok, b_pub[:16])  # helper in the test
     # AAD includes sha256(kids); removing a kid breaks the body open
-    assert pqdm.open_multi(tampered, my_key_id=a_pub[:16], my_private_hex=a_priv,
-                           sender="lumina", recipient_id="chef") is None
+    assert (
+        pqdm.open_multi(
+            tampered,
+            my_key_id=a_pub[:16],
+            my_private_hex=a_priv,
+            sender="lumina",
+            recipient_id="chef",
+        )
+        is None
+    )

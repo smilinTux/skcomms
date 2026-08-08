@@ -214,24 +214,22 @@ def _text_event(
 def test_fake_client_satisfies_protocol():
     """FakeSlackClient is a structural subtype of SlackClientProtocol."""
     client = FakeSlackClient()
-    assert isinstance(client, SlackClientProtocol), (
-        "FakeSlackClient does not satisfy SlackClientProtocol. "
-        "Missing methods: "
-        + str(
-            [
-                m
-                for m in (
-                    "is_connected",
-                    "auth_test",
-                    "post_message",
-                    "upload_file",
-                    "drain_events",
-                    "connect",
-                    "disconnect",
-                )
-                if not hasattr(client, m)
-            ]
-        )
+    assert isinstance(
+        client, SlackClientProtocol
+    ), "FakeSlackClient does not satisfy SlackClientProtocol. " "Missing methods: " + str(
+        [
+            m
+            for m in (
+                "is_connected",
+                "auth_test",
+                "post_message",
+                "upload_file",
+                "drain_events",
+                "connect",
+                "disconnect",
+            )
+            if not hasattr(client, m)
+        ]
     )
 
 

@@ -66,9 +66,7 @@ oqs_required = pytest.mark.skipif(
     not pqkem.is_available(),
     reason="liboqs/oqs unavailable — PQ tests skipped (combiner/registry still run)",
 )
-vector_required = pytest.mark.skipif(
-    _VECTOR is None, reason="sk_pqc cross-impl vector not found"
-)
+vector_required = pytest.mark.skipif(_VECTOR is None, reason="sk_pqc cross-impl vector not found")
 
 
 # ---------------------------------------------------------------------------
@@ -93,10 +91,7 @@ def test_cross_impl_vector_matches_sk_pqc():
 
     derived = hybrid_decap(ct, priv)  # default info = sk_pqc/x25519-mlkem768/v1
     assert derived.hex() == expected
-    assert (
-        derived.hex()
-        == "f11627140207d95e0b743245f5c6381e08c30dc61cc84abf03a822c888ce21fc"
-    )
+    assert derived.hex() == "f11627140207d95e0b743245f5c6381e08c30dc61cc84abf03a822c888ce21fc"
 
 
 @oqs_required
@@ -152,8 +147,7 @@ def test_combiner_rfc5869_a1_kat():
     info = bytes.fromhex("f0f1f2f3f4f5f6f7f8f9")
     okm = HKDF(algorithm=hashes.SHA256(), length=42, salt=salt, info=info).derive(ikm)
     assert okm.hex() == (
-        "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4"
-        "c5bf34007208d5b887185865"
+        "3cb25f25faacd57a90434f64d0362f2a2d2d0a90cf1a5a4c5db02d56ecc4" "c5bf34007208d5b887185865"
     )
 
 

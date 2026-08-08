@@ -38,6 +38,7 @@ shared :func:`skcomms.home.skcomms_home` and edits nothing in ``api.py`` /
 ``cli.py`` / ``consent*.py``. Like the 1:1 gate it stays opt-in — a group
 implementation only reaches for it when consent is switched on.
 """
+
 from __future__ import annotations
 
 import secrets
@@ -351,7 +352,10 @@ class GroupConsentGate:
                 return GroupJoinResult(group_id, fqid, JoinStatus.MEMBER)
             # Wrong / expired answer → remain queued.
             return GroupJoinResult(
-                group_id, fqid, JoinStatus.PENDING, captcha_required=True,
+                group_id,
+                fqid,
+                JoinStatus.PENDING,
+                captcha_required=True,
                 challenge_id=challenge_id,
             )
 
@@ -409,9 +413,7 @@ class GroupConsentGate:
         self._policy(group_id)._require_moderator(by)  # noqa: SLF001
         self._shadowset(group_id).unblock(member)
 
-    def report(
-        self, group_id: str, *, message_id: str, reporter: str, reason: str
-    ) -> Report:
+    def report(self, group_id: str, *, message_id: str, reporter: str, reason: str) -> Report:
         """File a consent-gated abuse report (metadata only, never content)."""
         return self._reportlog(group_id).file_report(message_id, reporter, reason)
 

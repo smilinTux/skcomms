@@ -85,17 +85,18 @@ def test_registry_active_suites_are_never_hybrid_or_pq():
             # Allowed: verified primitive, not yet wired into envelope/group.
             assert suite.status == SuiteStatus.HYBRID_PQ
             continue
-        assert suite.status in (SuiteStatus.CLASSICAL, SuiteStatus.SYMMETRIC), (
-            f"{suite.suite_id} is active but status={suite.status}"
-        )
+        assert suite.status in (
+            SuiteStatus.CLASSICAL,
+            SuiteStatus.SYMMETRIC,
+        ), f"{suite.suite_id} is active but status={suite.status}"
 
 
 def test_registry_has_planned_inactive_hybrid_suites():
     hybrid = get_suite("x25519-mlkem768-v2")
     assert hybrid is not None
     assert hybrid.status == SuiteStatus.HYBRID_PQ
-    assert hybrid.active is False          # planned, not live
-    assert hybrid.is_quantum_resistant     # would be QR once active
+    assert hybrid.active is False  # planned, not live
+    assert hybrid.is_quantum_resistant  # would be QR once active
     assert "FIPS 203" in hybrid.fips_refs
     assert hybrid.replaces == "rsa-pgp-wrap-v1"
 
@@ -104,8 +105,13 @@ def test_registry_shape_and_serialization():
     for suite in all_suites():
         d = suite.to_dict()
         assert set(d) >= {
-            "suite_id", "kind", "status", "primitives",
-            "fips_refs", "active", "quantum_resistant",
+            "suite_id",
+            "kind",
+            "status",
+            "primitives",
+            "fips_refs",
+            "active",
+            "quantum_resistant",
         }
         assert d["quantum_resistant"] == suite.is_quantum_resistant
 

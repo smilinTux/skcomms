@@ -74,6 +74,7 @@ def _get_sdk() -> Any:
             _sdk = None
     return _sdk
 
+
 #: severity → logging method name (native fallback)
 _LOG_METHOD = {
     "info": "info",

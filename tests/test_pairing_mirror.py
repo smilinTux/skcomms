@@ -4,6 +4,7 @@ Best-effort dual-write. These tests confirm the mirror creates a capauth TOFU
 device, is fail-safe (a capauth error can never break accept_pairing), and is
 gated OFF by SKCOMMS_PAIRING_KERNEL=0.
 """
+
 import pytest
 
 from skcomms.peers import fingerprint_from_pubkey
@@ -14,12 +15,22 @@ import skcomms.pairing_mirror as PM
 def _gen_pubkey():
     import pgpy
     from pgpy.constants import (
-        PubKeyAlgorithm, KeyFlags, HashAlgorithm, SymmetricKeyAlgorithm, CompressionAlgorithm,
+        PubKeyAlgorithm,
+        KeyFlags,
+        HashAlgorithm,
+        SymmetricKeyAlgorithm,
+        CompressionAlgorithm,
     )
+
     k = pgpy.PGPKey.new(PubKeyAlgorithm.RSAEncryptOrSign, 2048)
     uid = pgpy.PGPUID.new("t", email="t@x")
-    k.add_uid(uid, usage={KeyFlags.Sign}, hashes=[HashAlgorithm.SHA256],
-              ciphers=[SymmetricKeyAlgorithm.AES256], compression=[CompressionAlgorithm.ZLIB])
+    k.add_uid(
+        uid,
+        usage={KeyFlags.Sign},
+        hashes=[HashAlgorithm.SHA256],
+        ciphers=[SymmetricKeyAlgorithm.AES256],
+        compression=[CompressionAlgorithm.ZLIB],
+    )
     return str(k.pubkey)
 
 
@@ -30,9 +41,13 @@ def test_accept_mirrors_peer_into_capauth(tmp_path, monkeypatch):
 
     monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "skcomms"))
     monkeypatch.setenv("SKCOMMS_PAIRING_KERNEL_BASE", str(tmp_path / "capauth"))
-    pub = _gen_pubkey(); fp = fingerprint_from_pubkey(pub)
-    uri = to_skp_uri(PairingBundle(fqid="opus@chef.skworld", fingerprint=fp,
-                                   syncthing_device_id="DEV-2", pubkey=pub))
+    pub = _gen_pubkey()
+    fp = fingerprint_from_pubkey(pub)
+    uri = to_skp_uri(
+        PairingBundle(
+            fqid="opus@chef.skworld", fingerprint=fp, syncthing_device_id="DEV-2", pubkey=pub
+        )
+    )
     rec = accept_pairing(uri)
     assert rec["fqid"] == "opus@chef.skworld"
 
@@ -76,12 +91,17 @@ def test_accept_still_succeeds_when_mirror_raises(tmp_path, monkeypatch):
         raise RuntimeError("capauth down")
 
     monkeypatch.setattr("capauth.pairing.enroll_device", _boom)
-    pub = _gen_pubkey(); fp = fingerprint_from_pubkey(pub)
-    uri = to_skp_uri(PairingBundle(fqid="opus@chef.skworld", fingerprint=fp,
-                                   syncthing_device_id="DEV-2", pubkey=pub))
+    pub = _gen_pubkey()
+    fp = fingerprint_from_pubkey(pub)
+    uri = to_skp_uri(
+        PairingBundle(
+            fqid="opus@chef.skworld", fingerprint=fp, syncthing_device_id="DEV-2", pubkey=pub
+        )
+    )
     rec = accept_pairing(uri)
     assert rec["fqid"] == "opus@chef.skworld"
     from skcomms.peers import list_peers
+
     assert "opus@chef.skworld" in list_peers()
 
 
@@ -110,9 +130,13 @@ def test_remove_mirrors_revocation_into_capauth(tmp_path, monkeypatch):
     monkeypatch.setenv("SKCOMMS_PAIRING_KERNEL_BASE", str(tmp_path / "capauth"))
     base = str(tmp_path / "capauth")
 
-    pub = _gen_pubkey(); fp = fingerprint_from_pubkey(pub)
-    uri = to_skp_uri(PairingBundle(fqid="opus@chef.skworld", fingerprint=fp,
-                                   syncthing_device_id="DEV-2", pubkey=pub))
+    pub = _gen_pubkey()
+    fp = fingerprint_from_pubkey(pub)
+    uri = to_skp_uri(
+        PairingBundle(
+            fqid="opus@chef.skworld", fingerprint=fp, syncthing_device_id="DEV-2", pubkey=pub
+        )
+    )
     accept_pairing(uri)
     devs = list_devices(subject="opus@chef.skworld", base_dir=base)
     assert len(devs) == 1 and not devs[0].revoked
@@ -146,9 +170,13 @@ def test_remove_still_succeeds_when_mirror_raises(tmp_path, monkeypatch):
     monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "skcomms"))
     monkeypatch.setenv("SKCOMMS_PAIRING_KERNEL_BASE", str(tmp_path / "capauth"))
 
-    pub = _gen_pubkey(); fp = fingerprint_from_pubkey(pub)
-    uri = to_skp_uri(PairingBundle(fqid="opus@chef.skworld", fingerprint=fp,
-                                   syncthing_device_id="DEV-2", pubkey=pub))
+    pub = _gen_pubkey()
+    fp = fingerprint_from_pubkey(pub)
+    uri = to_skp_uri(
+        PairingBundle(
+            fqid="opus@chef.skworld", fingerprint=fp, syncthing_device_id="DEV-2", pubkey=pub
+        )
+    )
     accept_pairing(uri)
     assert "opus@chef.skworld" in list_peers()
 
@@ -181,8 +209,7 @@ def test_remove_unknown_peer_is_noop(tmp_path, monkeypatch):
     monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "skcomms"))
     monkeypatch.setenv("SKCOMMS_PAIRING_KERNEL_BASE", str(tmp_path / "capauth"))
     assert remove_peer("ghost@chef.skworld") is False
-    assert list_devices(subject="ghost@chef.skworld",
-                        base_dir=str(tmp_path / "capauth")) == []
+    assert list_devices(subject="ghost@chef.skworld", base_dir=str(tmp_path / "capauth")) == []
 
 
 def test_revocation_kernel_disabled_writes_nothing(tmp_path, monkeypatch):
@@ -280,6 +307,4 @@ def test_public_pairing_kernel_disabled_writes_nothing(tmp_path, monkeypatch):
         self_bundle_provider=lambda: None,
     )
     assert res["paired"]["fqid"] == "opus@chef.skworld"
-    assert list_devices(
-        subject="opus@chef.skworld", base_dir=str(tmp_path / "capauth")
-    ) == []
+    assert list_devices(subject="opus@chef.skworld", base_dir=str(tmp_path / "capauth")) == []

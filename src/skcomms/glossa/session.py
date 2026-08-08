@@ -17,8 +17,13 @@ from skcomms.glossa.message import Message
 
 
 class GlossaSession:
-    def __init__(self, *, local: CapabilityDescriptor, codebook: Codebook,
-                 lexicon: MacroLexicon | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        local: CapabilityDescriptor,
+        codebook: Codebook,
+        lexicon: MacroLexicon | None = None,
+    ) -> None:
         self.local = local
         self.codebook = codebook
         self._lexicon = lexicon

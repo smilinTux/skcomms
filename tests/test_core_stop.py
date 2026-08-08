@@ -6,6 +6,7 @@ a doctor check) leaks one such thread per construction unless it is stopped. A
 polled dashboard once accumulated 400+ leaked workers, saturating CPU and
 starving its asyncio event loop.
 """
+
 from __future__ import annotations
 
 import threading

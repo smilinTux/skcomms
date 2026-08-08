@@ -4,11 +4,11 @@ from skcomms.transports.ble.noise import NoiseSession
 
 def _drive_handshake(initiator: NoiseSession, responder: NoiseSession):
     """XX is a 3-message handshake: i->r, r->i, i->r."""
-    m1 = initiator.write_handshake()       # -> e
+    m1 = initiator.write_handshake()  # -> e
     responder.read_handshake(m1)
-    m2 = responder.write_handshake()       # -> e, ee, s, es
+    m2 = responder.write_handshake()  # -> e, ee, s, es
     initiator.read_handshake(m2)
-    m3 = initiator.write_handshake()       # -> s, se
+    m3 = initiator.write_handshake()  # -> s, se
     responder.read_handshake(m3)
     assert initiator.handshake_complete
     assert responder.handshake_complete

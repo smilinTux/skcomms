@@ -35,16 +35,19 @@ from skcomms.access import (
 from skcomms.access.audit import AccessAuditLog
 from skcomms.access import grants as grants_mod
 
-
 # --- key helpers (same pattern as test_access_server.py) -------------------
 
 
 def _gen_key(uid: str):
     import pgpy
     from pgpy.constants import (
-        CompressionAlgorithm, HashAlgorithm, KeyFlags,
-        PubKeyAlgorithm, SymmetricKeyAlgorithm,
+        CompressionAlgorithm,
+        HashAlgorithm,
+        KeyFlags,
+        PubKeyAlgorithm,
+        SymmetricKeyAlgorithm,
     )
+
     key = pgpy.PGPKey.new(PubKeyAlgorithm.RSAEncryptOrSign, 1024)
     key.add_uid(
         pgpy.PGPUID.new(uid),
@@ -222,8 +225,10 @@ class TestGrantsCLI:
         gp = tmp_path / "grants.yml"
         rc = grants_mod.main(["--file", str(gp), "grant", "lumina@chef.skworld", "write"])
         assert rc == 0
-        assert grants_mod.load_grants(gp)["lumina@chef.skworld"] == {Scope.READ, Scope.WRITE} or \
-            grants_mod.load_grants(gp)["lumina@chef.skworld"] == {Scope.WRITE}
+        assert grants_mod.load_grants(gp)["lumina@chef.skworld"] == {
+            Scope.READ,
+            Scope.WRITE,
+        } or grants_mod.load_grants(gp)["lumina@chef.skworld"] == {Scope.WRITE}
 
         rc = grants_mod.main(["--file", str(gp), "list"])
         assert rc == 0

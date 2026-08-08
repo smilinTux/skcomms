@@ -14,6 +14,7 @@ Also covers the fail-closed identity contract (coord 8e57a48a):
 - the claimed-peer convenience survives only behind the explicit
   ``SKCOMMS_DEV_AUTH`` dev gate.
 """
+
 import json
 
 import pytest
@@ -76,8 +77,10 @@ def test_relays_signal_between_two_peers(monkeypatch):
     c = TestClient(app)
     room = "skcomms-test-room"
     a_fp, b_fp = "A" * 40, "B" * 40
-    with c.websocket_connect(f"/webrtc/ws?room={room}&peer={a_fp}") as wa, \
-         c.websocket_connect(f"/webrtc/ws?room={room}&peer={b_fp}") as wb:
+    with (
+        c.websocket_connect(f"/webrtc/ws?room={room}&peer={a_fp}") as wa,
+        c.websocket_connect(f"/webrtc/ws?room={room}&peer={b_fp}") as wb,
+    ):
         # a sends a signal addressed to b
         wa.send_text(json.dumps({"type": "signal", "to": b_fp, "data": {"kind": "offer", "x": 1}}))
         # b receives frames (welcome/peer_joined first); loop until the signal arrives.

@@ -222,13 +222,7 @@ def seal_routed(
     nonce = os.urandom(_WRAP_NONCE_LEN)
     sealed_inner = AESGCM(wrap_key).encrypt(nonce, inner, aad)
 
-    return (
-        struct.pack(">I", len(route_bytes))
-        + route_bytes
-        + ciphertext
-        + nonce
-        + sealed_inner
-    )
+    return struct.pack(">I", len(route_bytes)) + route_bytes + ciphertext + nonce + sealed_inner
 
 
 def read_route_header(blob: bytes) -> dict:
@@ -293,9 +287,7 @@ def open_routed(blob: bytes, dest_hybrid_priv: bytes) -> tuple[dict, dict, bytes
         raise PqRouteFormatError(f"route header not valid JSON: {exc}") from exc
 
     ciphertext = sealed_inner[:HYBRID_CIPHERTEXT_LEN]
-    nonce = sealed_inner[
-        HYBRID_CIPHERTEXT_LEN : HYBRID_CIPHERTEXT_LEN + _WRAP_NONCE_LEN
-    ]
+    nonce = sealed_inner[HYBRID_CIPHERTEXT_LEN : HYBRID_CIPHERTEXT_LEN + _WRAP_NONCE_LEN]
     body = sealed_inner[HYBRID_CIPHERTEXT_LEN + _WRAP_NONCE_LEN :]
 
     aad = _aad(route_bytes)

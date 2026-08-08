@@ -21,7 +21,6 @@ import importlib
 import pytest
 from fastapi.testclient import TestClient
 
-
 UNLISTED = "https://evil.example"
 ALLOWED = "https://hub.skworld.io"
 
@@ -92,9 +91,7 @@ def test_listed_origin_allowed(monkeypatch, tmp_path, path):
 
 def test_allowlist_parses_multiple_and_trims(monkeypatch, tmp_path):
     """Comma-separated origins are split, whitespace-trimmed, blanks dropped."""
-    api = _reload_api(
-        monkeypatch, tmp_path, origins=f" {ALLOWED} , https://second.skworld.io ,"
-    )
+    api = _reload_api(monkeypatch, tmp_path, origins=f" {ALLOWED} , https://second.skworld.io ,")
     assert api._cors_allow_origins() == [ALLOWED, "https://second.skworld.io"]
     client = TestClient(api.app)
     assert (

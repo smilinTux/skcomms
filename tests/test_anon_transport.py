@@ -249,7 +249,7 @@ def test_explicit_nonce_roundtrips():
     _, sid = new_queue_pair()
     nonce = b"\x07" * 16
     wire = frame_anon(b"m", sid, SECRET, nonce=nonce, enabled=True)
-    assert wire[len(ANON_MAGIC) + 1 + 16: len(ANON_MAGIC) + 1 + 16 + 16] == nonce
+    assert wire[len(ANON_MAGIC) + 1 + 16 : len(ANON_MAGIC) + 1 + 16 + 16] == nonce
     assert parse_anon(wire, SECRET).payload == b"m"
 
 

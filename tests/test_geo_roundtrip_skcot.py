@@ -95,9 +95,7 @@ def _skcot_bridge(monkeypatch):
     original = _fully_populated_unit()
     store.upsert(original)
     with _SkcotServer(store) as srv:
-        monkeypatch.setenv(
-            gs.SKCOT_GEO_URL_ENV, f"http://127.0.0.1:{srv.port}/geo/units"
-        )
+        monkeypatch.setenv(gs.SKCOT_GEO_URL_ENV, f"http://127.0.0.1:{srv.port}/geo/units")
         yield original
 
 

@@ -103,9 +103,7 @@ def pad_to_bucket(data: bytes, ladder: tuple[int, ...] = PAD_LADDER) -> bytes:
         raise PaddingError(f"data must be bytes, got {type(data).__name__}")
     body = bytes(data)
     if len(body) > _MAX_BODY_LEN:
-        raise PaddingError(
-            f"body too large to length-prefix: {len(body)} > {_MAX_BODY_LEN}"
-        )
+        raise PaddingError(f"body too large to length-prefix: {len(body)} > {_MAX_BODY_LEN}")
     prefix = len(body).to_bytes(_LEN_PREFIX_LEN, "big")
     total = len(prefix) + len(body)
     target = _bucket_for(total, ladder)
@@ -134,8 +132,7 @@ def unpad(padded: bytes) -> bytes:
     blob = bytes(padded)
     if len(blob) < _LEN_PREFIX_LEN:
         raise PaddingError(
-            f"padded blob shorter than {_LEN_PREFIX_LEN}-byte length prefix: "
-            f"{len(blob)} bytes"
+            f"padded blob shorter than {_LEN_PREFIX_LEN}-byte length prefix: " f"{len(blob)} bytes"
         )
     body_len = int.from_bytes(blob[:_LEN_PREFIX_LEN], "big")
     body_end = _LEN_PREFIX_LEN + body_len

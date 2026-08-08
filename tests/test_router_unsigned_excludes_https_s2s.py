@@ -30,12 +30,26 @@ import pytest
 from skcomms import router as router_mod
 from skcomms.models import MessageEnvelope, MessagePayload, MessageType, RoutingConfig, RoutingMode
 from skcomms.router import Router
-from skcomms.transport import HealthStatus, SendResult, Transport, TransportCategory, TransportStatus
+from skcomms.transport import (
+    HealthStatus,
+    SendResult,
+    Transport,
+    TransportCategory,
+    TransportStatus,
+)
 
 
 class FakeTransport(Transport):
-    def __init__(self, name, priority, send_log, *, succeed=True, available=True,
-                 category=TransportCategory.REALTIME):
+    def __init__(
+        self,
+        name,
+        priority,
+        send_log,
+        *,
+        succeed=True,
+        available=True,
+        category=TransportCategory.REALTIME,
+    ):
         self.name = name
         self.priority = priority
         self.category = category

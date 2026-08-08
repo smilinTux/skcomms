@@ -73,8 +73,9 @@ def granter_patch(chef_keys):
         "fqid": "lumina@chef.skworld",
         "fingerprint": EnvelopeSigner(priv, "").fingerprint,
     }
-    with patch("skcomms.grants.resolve_self_identity", return_value=ident), patch(
-        "skcomms.grants._load_signer", return_value=EnvelopeSigner(priv, "")
+    with (
+        patch("skcomms.grants.resolve_self_identity", return_value=ident),
+        patch("skcomms.grants._load_signer", return_value=EnvelopeSigner(priv, "")),
     ):
         yield priv, pub
 
@@ -153,9 +154,7 @@ class TestVerifyFailures:
 
         _, pub = granter_patch
         # expires in the past
-        token = mint_grant(
-            "chef.skworld/journal", "opus@casey.douno", _iso_in(-1)
-        )
+        token = mint_grant("chef.skworld/journal", "opus@casey.douno", _iso_in(-1))
         result = verify_grant(token, pubkey=pub)
         assert not result.valid
         assert "expired" in result.reason.lower()
@@ -218,12 +217,8 @@ class TestAcceptAndList:
         from skcomms.grants import accept_grant, list_grants, mint_grant
 
         _, pub = granter_patch
-        accept_grant(
-            mint_grant("chef.skworld/journal", "opus@casey.douno", "30d"), pubkey=pub
-        )
-        accept_grant(
-            mint_grant("chef.skworld/notes", "opus@casey.douno", "30d"), pubkey=pub
-        )
+        accept_grant(mint_grant("chef.skworld/journal", "opus@casey.douno", "30d"), pubkey=pub)
+        accept_grant(mint_grant("chef.skworld/notes", "opus@casey.douno", "30d"), pubkey=pub)
         grants = list_grants()
         collections = {g["collection"] for g in grants}
         assert collections == {"chef.skworld/journal", "chef.skworld/notes"}
@@ -246,9 +241,7 @@ class TestGrantCLI:
         from skcomms.signing import EnvelopeSigner
         from skcomms.tofu import record_fingerprint
 
-        record_fingerprint(
-            "lumina@chef.skworld", EnvelopeSigner(priv, "").fingerprint, pubkey=pub
-        )
+        record_fingerprint("lumina@chef.skworld", EnvelopeSigner(priv, "").fingerprint, pubkey=pub)
 
         runner = CliRunner()
         # mint to stdout
@@ -270,9 +263,7 @@ class TestGrantCLI:
         assert token["granted_by"] == "lumina@chef.skworld"
 
         # accept from stdin
-        accept = runner.invoke(
-            main, ["grants", "accept", "-"], input=json.dumps(token)
-        )
+        accept = runner.invoke(main, ["grants", "accept", "-"], input=json.dumps(token))
         assert accept.exit_code == 0, accept.output
 
         # the consent file lands in T9 schema

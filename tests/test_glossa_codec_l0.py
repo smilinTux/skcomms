@@ -9,8 +9,9 @@ def test_level_constants():
 
 
 def test_l0_roundtrip():
-    m = Message(intent="coord.claim", args={"task": "abc", "n": 3},
-                refs=["t1", "t2"], text="claiming this")
+    m = Message(
+        intent="coord.claim", args={"task": "abc", "n": 3}, refs=["t1", "t2"], text="claiming this"
+    )
     raw = codec.encode(m, codec.L0_ENGLISH)
     assert isinstance(raw, bytes)
     out = codec.decode(raw, codec.L0_ENGLISH)
@@ -19,4 +20,4 @@ def test_l0_roundtrip():
 
 def test_l0_is_human_readable_text():
     raw = codec.encode(Message(intent="ack"), codec.L0_ENGLISH)
-    assert b"ack" in raw                  # the floor is literally readable
+    assert b"ack" in raw  # the floor is literally readable

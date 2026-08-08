@@ -8,6 +8,7 @@ sender is temp-deferred ('defer'); a retry after ``min_delay_s`` is admitted
 
 Clock is injected so the delay is testable without sleeping.
 """
+
 import pytest
 
 from skcomms.consent_greylist import Greylist
@@ -50,8 +51,8 @@ def test_injected_clock_controls_delay(tmp_path, monkeypatch):
     monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path))
     gl = Greylist(agent="lumina", min_delay_s=10)
     assert gl.see(L, now=500.0) == "defer"
-    assert gl.see(L, now=509.0) == "defer"   # 9s < 10s
-    assert gl.see(L, now=510.0) == "admit"   # exactly at window boundary
+    assert gl.see(L, now=509.0) == "defer"  # 9s < 10s
+    assert gl.see(L, now=510.0) == "admit"  # exactly at window boundary
 
 
 def test_sightings_are_tracked_and_persisted(greylist, tmp_path):

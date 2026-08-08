@@ -11,7 +11,6 @@ import pytest
 
 import skcomms.public_pairing as pp
 
-
 # --- helpers ----------------------------------------------------------------
 
 

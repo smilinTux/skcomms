@@ -15,7 +15,6 @@ from __future__ import annotations
 from skcomms.envelope import KNOWN_CONTENT_TYPES, Envelope
 from skcomms.models import MessageEnvelope, MessagePayload, MessageType
 
-
 # ---------------------------------------------------------------------------
 # MessagePayload — known types
 # ---------------------------------------------------------------------------
@@ -94,9 +93,7 @@ def test_unknown_type_not_mistaken_for_ack():
 
 
 def test_envelope_ack_helper_still_typed():
-    env = MessageEnvelope(
-        sender="a", recipient="b", payload=MessagePayload(content="hi")
-    )
+    env = MessageEnvelope(sender="a", recipient="b", payload=MessagePayload(content="hi"))
     ack = env.make_ack("b")
     assert ack.payload.content_type is MessageType.ACK
     assert ack.is_ack is True
@@ -129,17 +126,13 @@ def test_envelope_v1_known_content_type():
 
 
 def test_envelope_v1_unknown_content_type_falls_back_to_body():
-    e = Envelope(
-        from_fqid="a@c.r", to_fqid="b@c.r", body="raw", content_type="x/unknown"
-    )
+    e = Envelope(from_fqid="a@c.r", to_fqid="b@c.r", body="raw", content_type="x/unknown")
     assert e.is_known_content_type() is False
     assert e.render() == "raw"
 
 
 def test_envelope_v1_unknown_type_roundtrip_and_canonical_stable():
-    e = Envelope(
-        from_fqid="a@c.r", to_fqid="b@c.r", body="raw", content_type="x/unknown"
-    )
+    e = Envelope(from_fqid="a@c.r", to_fqid="b@c.r", body="raw", content_type="x/unknown")
     canon = e.canonical_bytes()
     e2 = Envelope.from_bytes(e.to_bytes())
     assert e2.content_type == "x/unknown"

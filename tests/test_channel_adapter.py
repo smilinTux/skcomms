@@ -121,9 +121,7 @@ class TestAdapterHealth:
         assert h.error is None
 
     def test_error_state(self):
-        h = AdapterHealth(
-            adapter_name="fake", connected=False, latency_ms=None, error="timeout"
-        )
+        h = AdapterHealth(adapter_name="fake", connected=False, latency_ms=None, error="timeout")
         assert h.error == "timeout"
 
 
@@ -182,9 +180,7 @@ class FakeAdapter(ChannelAdapter):
     async def resolve_fqid(self, platform_id: PlatformIdentity) -> Optional[str]:
         return self._fqid_map.get(platform_id.canonical_key)
 
-    async def bind_fqid(
-        self, platform_id: PlatformIdentity, fqid: str, trust_level: str
-    ) -> None:
+    async def bind_fqid(self, platform_id: PlatformIdentity, fqid: str, trust_level: str) -> None:
         self._fqid_map[platform_id.canonical_key] = fqid
 
 
@@ -207,9 +203,7 @@ class TestAdapterRegistryRegistration:
     def test_send_to_unregistered_raises_keyerror(self):
         reg = AdapterRegistry()
         with pytest.raises(KeyError):
-            asyncio.get_event_loop().run_until_complete(
-                reg.send_to_adapter("ghost", _text_msg())
-            )
+            asyncio.get_event_loop().run_until_complete(reg.send_to_adapter("ghost", _text_msg()))
 
 
 class TestAdapterRegistryInbound:

@@ -299,9 +299,7 @@ class TestTailscaleBackend:
 
         be = TailscaleBackend(status_runner=self._runner())
         # some-laptop has no skcomms- prefix and no tag -> not discoverable
-        assert be.list() and all(
-            r.fqid != "@some-laptop" for r in be.list()
-        )
+        assert be.list() and all(r.fqid != "@some-laptop" for r in be.list())
 
     def test_runner_error_is_a_miss(self):
         from skcomms.registry import TailscaleBackend
@@ -447,9 +445,7 @@ class TestPeerRegistryFromConfig:
             enabled=["tailscale", "syncthing-shared"],
             order=["tailscale", "syncthing-shared"],
         )
-        reg = PeerRegistry.from_config(
-            cfg, tailscale_status_runner=lambda: TS_STATUS
-        )
+        reg = PeerRegistry.from_config(cfg, tailscale_status_runner=lambda: TS_STATUS)
         assert [b.name for b in reg.backends] == ["tailscale", "syncthing-shared"]
 
 

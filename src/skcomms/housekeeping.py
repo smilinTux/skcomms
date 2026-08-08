@@ -146,9 +146,7 @@ def run_housekeeping_pass(
         prune_outbox = getattr(transport, "prune_outbox", None)
         if callable(prune_outbox):
             try:
-                results["outbox_pruned"] += prune_outbox(
-                    max_age_hours=cfg.outbox_max_age_hours
-                )
+                results["outbox_pruned"] += prune_outbox(max_age_hours=cfg.outbox_max_age_hours)
             except Exception:
                 logger.exception("prune_outbox failed for transport %s", name)
 

@@ -58,10 +58,10 @@ class SuiteStatus(str, Enum):
     Deliberately three honest states — never "quantum-proof"/"quantum-safe".
     """
 
-    CLASSICAL = "classical"        # Shor- or Grover-relevant classical primitive(s)
-    HYBRID_PQ = "hybrid-pq"        # classical ‖ PQ combiner (secure if *either* holds)
-    PQ = "pq"                      # pure post-quantum (no classical component)
-    SYMMETRIC = "symmetric"        # symmetric/hash — Grover-only, quantum-acceptable
+    CLASSICAL = "classical"  # Shor- or Grover-relevant classical primitive(s)
+    HYBRID_PQ = "hybrid-pq"  # classical ‖ PQ combiner (secure if *either* holds)
+    PQ = "pq"  # pure post-quantum (no classical component)
+    SYMMETRIC = "symmetric"  # symmetric/hash — Grover-only, quantum-acceptable
 
 
 @dataclass(frozen=True)

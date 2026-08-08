@@ -18,13 +18,11 @@ from skcomms.config import load_config
 def _write(tmp_path: Path, name: str) -> Path:
     p = tmp_path / "config.yml"
     p.write_text(
-        textwrap.dedent(
-            f"""
+        textwrap.dedent(f"""
             skcomms:
               identity:
                 name: "{name}"
-            """
-        ),
+            """),
         encoding="utf-8",
     )
     return p

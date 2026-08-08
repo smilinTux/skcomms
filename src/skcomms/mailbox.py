@@ -297,7 +297,9 @@ def _load_recipient_key(to_fqid: str) -> Optional[str]:
             return path.read_text(encoding="utf-8")
     logger.debug(
         "no recipient key for %s (same_box=%s, tried %d candidates)",
-        to_fqid, same_box, len(candidates),
+        to_fqid,
+        same_box,
+        len(candidates),
     )
     return None
 

@@ -22,7 +22,6 @@ from skcomms.access.files import (
     _apply_unified_diff,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -119,12 +118,7 @@ def test_patch_roundtrip(fa, root):
 def test_patch_context_mismatch_rejected(fa, root):
     p = str(root / "patch.txt")
     fa.file_write(p, "alpha\nbeta\n")
-    bad = (
-        "@@ -1,2 +1,2 @@\n"
-        " WRONG\n"
-        "-beta\n"
-        "+gamma\n"
-    )
+    bad = "@@ -1,2 +1,2 @@\n" " WRONG\n" "-beta\n" "+gamma\n"
     with pytest.raises(AccessError):
         fa.file_patch(p, bad)
 

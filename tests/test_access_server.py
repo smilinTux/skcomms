@@ -26,16 +26,19 @@ from skcomms.access import (
 from skcomms.access.config import is_public_bind, assert_not_public
 from skcomms.access.server import ToolNotFoundError, build_app
 
-
 # --- key helpers (same pattern as test_federation.py) ----------------------
 
 
 def _gen_key(uid: str):
     import pgpy
     from pgpy.constants import (
-        CompressionAlgorithm, HashAlgorithm, KeyFlags,
-        PubKeyAlgorithm, SymmetricKeyAlgorithm,
+        CompressionAlgorithm,
+        HashAlgorithm,
+        KeyFlags,
+        PubKeyAlgorithm,
+        SymmetricKeyAlgorithm,
     )
+
     key = pgpy.PGPKey.new(PubKeyAlgorithm.RSAEncryptOrSign, 1024)
     key.add_uid(
         pgpy.PGPUID.new(uid),
@@ -208,9 +211,7 @@ class TestScopeEnforcement:
         async def _writer(args, ctx):
             return {"wrote": args.get("path", "?")}
 
-        srv.registry.register(
-            "file_write", _writer, Scope.WRITE, description="fake write tool"
-        )
+        srv.registry.register("file_write", _writer, Scope.WRITE, description="fake write tool")
         return srv
 
     def test_write_denied_to_reader(self, admin_keys, reader_keys):
@@ -285,7 +286,9 @@ class TestRegistrationSeam:
             return {"q": args["query"], "caller": ctx.identity, "hits": []}
 
         srv.registry.register(
-            "pg_search", _pg_search, "read",
+            "pg_search",
+            _pg_search,
+            "read",
             description="fake knowledge search",
             input_schema={"type": "object", "properties": {"query": {"type": "string"}}},
         )

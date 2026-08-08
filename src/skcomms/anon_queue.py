@@ -147,13 +147,9 @@ def encode_aqid(relay: str, sender_id: bytes) -> str:
     if "/" in relay:
         raise AnonQueueFormatError("relay must not contain '/'")
     if not isinstance(sender_id, (bytes, bytearray)):
-        raise AnonQueueFormatError(
-            f"sender_id must be bytes, got {type(sender_id).__name__}"
-        )
+        raise AnonQueueFormatError(f"sender_id must be bytes, got {type(sender_id).__name__}")
     if len(sender_id) != QUEUE_ID_LEN:
-        raise AnonQueueFormatError(
-            f"sender_id must be {QUEUE_ID_LEN} bytes, got {len(sender_id)}"
-        )
+        raise AnonQueueFormatError(f"sender_id must be {QUEUE_ID_LEN} bytes, got {len(sender_id)}")
     b64 = base64.urlsafe_b64encode(bytes(sender_id)).rstrip(b"=").decode("ascii")
     return f"{AQID_SCHEME}{relay}/{b64}"
 
@@ -171,7 +167,7 @@ def decode_aqid(s: str) -> tuple[str, bytes]:
         raise AnonQueueFormatError(f"address must be a string, got {type(s).__name__}")
     if not s.startswith(AQID_SCHEME):
         raise AnonQueueFormatError(f"address must start with '{AQID_SCHEME}'")
-    body = s[len(AQID_SCHEME):]
+    body = s[len(AQID_SCHEME) :]
     relay, sep, b64 = body.partition("/")
     if not sep:
         raise AnonQueueFormatError("address must be 'aqid:<relay>/<id>'")

@@ -219,9 +219,7 @@ def build_store_forward_event(
     return gift
 
 
-def parse_store_forward_event(
-    event: dict, recipient_secret: bytes
-) -> Optional[SignedEnvelope]:
+def parse_store_forward_event(event: dict, recipient_secret: bytes) -> Optional[SignedEnvelope]:
     """Unwrap + decrypt an S&F gift wrap back into a :class:`SignedEnvelope`.
 
     Args:
@@ -359,9 +357,7 @@ class StoreForwardTransport(Transport):
             )
 
         try:
-            event = build_store_forward_event(
-                envelope_bytes, pubkey, sender_secret=self._secret
-            )
+            event = build_store_forward_event(envelope_bytes, pubkey, sender_secret=self._secret)
             published = self._publish(event)
         except Exception as exc:  # noqa: BLE001
             return SendResult(
@@ -571,9 +567,7 @@ class StoreForwardPuller:
             from_fqid = signed.envelope.from_fqid
             try:
                 verifier = self._verifier_factory(from_fqid)
-                env = accept_signed(
-                    signed, verifier=verifier, nonce_cache=self._nonce_cache
-                )
+                env = accept_signed(signed, verifier=verifier, nonce_cache=self._nonce_cache)
             except ReplayError:
                 logger.debug("S&F replay rejected from %s (nonce dedup)", from_fqid)
                 continue

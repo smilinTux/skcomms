@@ -118,7 +118,9 @@ def pqroute_enabled(override: Optional[bool] = None) -> bool:
 
 def is_pqrouted(wire: bytes) -> bool:
     """True iff ``wire`` is a pqroute1-wrapped blob (carries the magic prefix)."""
-    return isinstance(wire, (bytes, bytearray)) and bytes(wire[: len(PQROUTE_MAGIC)]) == PQROUTE_MAGIC
+    return (
+        isinstance(wire, (bytes, bytearray)) and bytes(wire[: len(PQROUTE_MAGIC)]) == PQROUTE_MAGIC
+    )
 
 
 def read_next_hop(wire: bytes) -> dict:
@@ -133,7 +135,7 @@ def read_next_hop(wire: bytes) -> dict:
     """
     if not is_pqrouted(wire):
         raise PqRouteFormatError("not a pqroute1-wrapped blob (missing magic)")
-    return read_route_header(bytes(wire)[len(PQROUTE_MAGIC):])
+    return read_route_header(bytes(wire)[len(PQROUTE_MAGIC) :])
 
 
 # ---------------------------------------------------------------------------
@@ -216,9 +218,7 @@ def wrap_signed(
     return PQROUTE_MAGIC + blob
 
 
-def unwrap_signed(
-    wire: bytes, dest_hybrid_priv: bytes
-) -> tuple[dict, SignedEnvelope]:
+def unwrap_signed(wire: bytes, dest_hybrid_priv: bytes) -> tuple[dict, SignedEnvelope]:
     """Open a wrapped wire blob at the FINAL destination.
 
     Args:
@@ -238,7 +238,7 @@ def unwrap_signed(
     if not is_pqrouted(wire):
         raise PqRouteFormatError("not a pqroute1-wrapped blob (missing magic)")
     _route_hdr, inner_meta, content = open_routed(
-        bytes(wire)[len(PQROUTE_MAGIC):], dest_hybrid_priv
+        bytes(wire)[len(PQROUTE_MAGIC) :], dest_hybrid_priv
     )
     # Self-describing un-pad: only strip the P2 ladder when the sealed inner
     # advertised it (legacy / pad=False blobs carry the content verbatim).
