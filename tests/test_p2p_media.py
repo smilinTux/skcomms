@@ -7,11 +7,18 @@ minimal silent audio track so real SRTP media flows over aiortc loopback.
 import asyncio
 import fractions
 
-import av
 import pytest
-from aiortc import MediaStreamTrack
 
-from skcomms.transports.p2p_session import P2PSession
+# aiortc/av are optional WebRTC extras, not installed by the `dev` set. Without
+# this guard the module raises ImportError at COLLECTION time, which aborts the
+# whole run rather than skipping this test.
+pytest.importorskip("av", reason="PyAV not installed (webrtc extra)")
+pytest.importorskip("aiortc", reason="aiortc not installed (webrtc extra)")
+
+import av  # noqa: E402
+from aiortc import MediaStreamTrack  # noqa: E402
+
+from skcomms.transports.p2p_session import P2PSession  # noqa: E402
 
 
 class SilenceAudioTrack(MediaStreamTrack):

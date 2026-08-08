@@ -20,8 +20,15 @@ import asyncio
 import threading
 
 import pytest
-from skcot.geo import GeoStore, GeoUnit
-from skcot.geo_http import start_geo_http_server
+
+# skcot is an optional sibling package, not a skcomms dependency (the `dev`
+# extras deliberately install no sibling sk* packages). Without this guard the
+# module raises ImportError at COLLECTION time, which aborts the whole run
+# rather than skipping these three tests.
+pytest.importorskip("skcot.geo", reason="skcot sibling package not installed")
+
+from skcot.geo import GeoStore, GeoUnit  # noqa: E402
+from skcot.geo_http import start_geo_http_server  # noqa: E402
 
 import skcomms.geo_store as gs
 
