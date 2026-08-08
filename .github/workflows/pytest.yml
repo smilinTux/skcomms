@@ -59,7 +59,7 @@ jobs:
         run: |
           pip install --no-deps --no-cache-dir \
             "skcapstone @ git+https://github.com/smilinTux/skcapstone@main" \
-            "skcoord @ git+https://github.com/smilinTux/skcoord@master" \
+            "skcoord @ git+https://github.com/smilinTux/skcoord@main" \
             "skcot @ git+https://github.com/smilinTux/skcot@main" \
             "capauth @ git+https://github.com/smilinTux/capauth@main"
       - name: Run pytest (full suite)
@@ -103,7 +103,7 @@ jobs:
         run: |
           pip install --no-deps --no-cache-dir \
             "skcapstone @ git+https://github.com/smilinTux/skcapstone@main" \
-            "skcoord @ git+https://github.com/smilinTux/skcoord@master" \
+            "skcoord @ git+https://github.com/smilinTux/skcoord@main" \
             "skcot @ git+https://github.com/smilinTux/skcot@main" \
             "capauth @ git+https://github.com/smilinTux/capauth@main"
       - name: Assert the PQ backend is really present
