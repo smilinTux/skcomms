@@ -55,15 +55,36 @@ def _base() -> Optional[str]:
 def mirror_pairing(fqid: str, pubkey: str) -> None:
     """Record an accepted peer as a TOFU enrollment in capauth.pairing.
 
+    Idempotent per (subject, key): re-mirroring an already-enrolled key is a
+    no-op. Without that guard every accept minted ANOTHER approved DeviceRecord,
+    and because each accept presents a freshly generated key, TOFU pinned
+    nothing: the subject simply accumulated approved devices. Observed on
+    ``opus@chef.skworld``, 22 records in one afternoon, every one a distinct
+    fingerprint, in pairs because both :func:`skcomms.pairing.accept_pairing`
+    and the public-pairing path mirror the same accept.
+
+    Enrollments are NOT deduped by content upstream (``enroll_device`` +
+    ``approve`` always create), so the check belongs here at the call site.
+
     Best-effort: gated on the kernel flag, and any capauth error is logged at
     debug and swallowed so it can never break :func:`accept_pairing`.
     """
     if not kernel_enabled() or not fqid or not pubkey:
         return
     try:
-        from capauth.pairing import approve, enroll_device
+        from capauth.pairing import approve, enroll_device, list_devices
 
         base = _base()
+
+        # Trust on FIRST use: if this subject already has a live device for this
+        # key, keep the existing record rather than minting a second one. A
+        # revoked record is deliberately not resurrected here; re-enrolling a
+        # revoked key must be an explicit operator action, not a side effect of
+        # a peer re-accept.
+        if _already_enrolled(fqid, pubkey, base):
+            logger.debug("pairing mirror: %s already enrolled for this key, skipping", fqid)
+            return
+
         enr = enroll_device(
             pubkey,
             list(_DEFAULT_SCOPES),
@@ -74,6 +95,30 @@ def mirror_pairing(fqid: str, pubkey: str) -> None:
         approve(enr.enrollment_id, "skcomms", base_dir=base)
     except Exception:
         logger.debug("capauth pairing mirror failed", exc_info=True)
+
+
+def _already_enrolled(fqid: str, pubkey: str, base) -> bool:
+    """Whether *fqid* already has a live capauth device carrying *pubkey*.
+
+    Compares the armored public key stored on the DeviceRecord. A record with
+    no stored key never matches, so it enrolls rather than silently treating an
+    unknown key as already trusted. Any lookup failure also returns False: a
+    duplicate record is far better than dropping a real pairing.
+    """
+    from capauth.pairing import list_devices
+
+    try:
+        existing = list_devices(fqid, base_dir=base, include_revoked=False)
+    except Exception:
+        logger.debug("pairing mirror: device lookup failed, enrolling anyway", exc_info=True)
+        return False
+
+    presented = (pubkey or "").strip()
+    for dev in existing:
+        stored = (getattr(dev, "pubkey", None) or "").strip()
+        if stored and stored == presented:
+            return True
+    return False
 
 
 def mirror_revocation(fqid: str) -> None:
