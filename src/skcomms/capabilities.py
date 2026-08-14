@@ -42,7 +42,7 @@ import logging
 import socket
 from typing import Optional
 
-from .cluster import get_operator, get_realm
+from .cluster import ClusterConfigError, require_operator, require_realm
 
 logger = logging.getLogger("skcomms.capabilities")
 
@@ -251,13 +251,29 @@ def build_capabilities(skcomms=None, *, probe: bool = True) -> dict:
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("identity resolve failed: %s", exc)
 
+    # Strict fallback: this mints the node's own fqid for the capabilities
+    # document (comm.identity or label combined with the cluster
+    # operator/realm), which other components can read and trust for
+    # capability-based routing. A defaulted wrong realm here would mint the
+    # same class of wrong identity as the capauth pairing store defect
+    # (coord card 076d49cd), so a broken cluster.json must produce a loudly
+    # logged null id, never a silently wrong one. build_capabilities() stays
+    # resilient (the rest of the document is still returned) by catching the
+    # error here instead of letting it crash the whole status endpoint.
+    cluster_suffix = None
+    if fqid is None and (comm is not None or label):
+        try:
+            cluster_suffix = f"{require_operator()}.{require_realm()}"
+        except ClusterConfigError as exc:
+            logger.warning("capabilities: cannot mint node fqid, cluster.json error: %s", exc)
+
     if comm is not None:
         label = label or comm.identity
-        if not fqid:
-            fqid = f"{comm.identity}@{get_operator()}.{get_realm()}"
+        if not fqid and cluster_suffix:
+            fqid = f"{comm.identity}@{cluster_suffix}"
 
     node = {
-        "id": fqid or (f"{label}@{get_operator()}.{get_realm()}" if label else None),
+        "id": fqid or (f"{label}@{cluster_suffix}" if label and cluster_suffix else None),
         "label": label or "unknown",
         "host": socket.gethostname(),
     }

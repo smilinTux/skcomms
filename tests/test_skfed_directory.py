@@ -54,6 +54,24 @@ JARVIS_FQID = "jarvis@chef.skworld"
 LUMINA_FQID = "lumina@chef.skworld"
 
 
+@pytest.fixture(autouse=True)
+def _cluster_json(tmp_path_factory):
+    """upsert_entry() mints a brand-new directory's realm/operator via the
+    strict require_realm()/require_operator() (coord card 076d49cd) when no
+    directory exists yet, so tests need a real, deterministic cluster.json
+    regardless of what the host machine happens to have at
+    ~/.skcapstone/cluster.json. Matches REALM/OPERATOR above exactly."""
+    cluster_dir = tmp_path_factory.mktemp("cluster")
+    cluster_file = cluster_dir / "cluster.json"
+    cluster_file.write_text('{"realm": "skworld", "operator": "chef"}')
+    from skcomms import cluster as cm
+
+    original = cm._CLUSTER_LOOKUP
+    cm._CLUSTER_LOOKUP = [cluster_file]
+    yield
+    cm._CLUSTER_LOOKUP = original
+
+
 def _entry(
     fqid, inbox="https://node.ts.net/api/v1/inbox", prekey="https://node.ts.net/api/v1/prekey"
 ):

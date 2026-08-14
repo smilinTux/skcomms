@@ -49,6 +49,24 @@ def operator_keys():
     return _gen_key("chef <chef@chef.skworld>")
 
 
+@pytest.fixture(autouse=True)
+def _cluster_json(tmp_path_factory):
+    """publish_self_to_realm_directory -> upsert_entry mints a brand-new
+    directory's realm/operator via the strict require_realm()/
+    require_operator() (coord card 076d49cd) when no directory exists yet,
+    so tests need a real, deterministic cluster.json regardless of the
+    host's real one."""
+    cluster_dir = tmp_path_factory.mktemp("cluster")
+    cluster_file = cluster_dir / "cluster.json"
+    cluster_file.write_text('{"realm": "skworld", "operator": "chef"}')
+    from skcomms import cluster as cm
+
+    original = cm._CLUSTER_LOOKUP
+    cm._CLUSTER_LOOKUP = [cluster_file]
+    yield
+    cm._CLUSTER_LOOKUP = original
+
+
 class _CapturingPublisher:
     """A fake publisher recording exactly what announce_self forwarded."""
 

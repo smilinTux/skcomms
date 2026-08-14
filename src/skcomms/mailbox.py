@@ -22,7 +22,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from .cluster import get_operator, get_realm
+from .cluster import get_operator, require_operator, require_realm
 from .crypto import PQDM_SCHEME, CryptoError, EnvelopeCrypto
 from .envelope import Envelope, SignedEnvelope
 from .home import peer_inbox, scaffold, skcomms_home
@@ -273,6 +273,10 @@ def _load_recipient_key(to_fqid: str) -> Optional[str]:
         # must NOT strand a local agent's own key, which the exact-string
         # compare did (see the calling-backend design doc).
         operator_component = suffix.split(".", 1)[0]
+        # Lenient by design: a comparison, not a mint. If get_operator()
+        # ever defaulted to the wrong value, same_box would go False and the
+        # function already documents that as a safe refusal to write (never
+        # a wrong-key fallback), so this call stays on the lenient reader.
         same_box = operator_component == get_operator()
     else:
         agent = to_fqid
@@ -577,6 +581,18 @@ def reseal_outbox_plaintext(home: Optional[Path] = None) -> dict:
 
     Returns:
         dict: ``{"resealed": int, "purged": int}`` counts for the sweep.
+
+    Raises:
+        ClusterConfigError: cluster.json is missing, unreadable, or invalid.
+            Strict on purpose: a defaulted realm/operator would point this
+            security-sensitive plaintext sweep at the wrong subtree, so
+            ``op_root.is_dir()`` would come back False and the sweep would
+            silently report ``{"resealed": 0, "purged": 0}`` (looks clean)
+            while real plaintext records sit unswept at the correct path.
+            The caller in :mod:`skcomms.housekeeping` already wraps this
+            call in a broad ``try/except`` that logs and continues, so a
+            broken cluster.json surfaces as a loud log line rather than a
+            crashed housekeeping pass.
     """
     result = {"resealed": 0, "purged": 0}
 
@@ -588,7 +604,7 @@ def reseal_outbox_plaintext(home: Optional[Path] = None) -> dict:
         return result
 
     root = home if home is not None else skcomms_home()
-    op_root = root / get_realm() / get_operator()
+    op_root = root / require_realm() / require_operator()
     if not op_root.is_dir():
         return result
 

@@ -271,6 +271,21 @@ TS_STATUS = {
 
 
 class TestTailscaleBackend:
+    @pytest.fixture(autouse=True)
+    def _cluster(self, tmp_path):
+        """TailscaleBackend.list() mints an fqid via the strict
+        require_realm() (coord card 076d49cd), so every test in this class
+        needs a real, valid cluster.json regardless of what the host machine
+        happens to have at ~/.skcapstone/cluster.json."""
+        cluster_file = tmp_path / "cluster.json"
+        cluster_file.write_text(json.dumps({"realm": "skworld", "operator": "chef"}))
+        from skcomms import cluster as cm
+
+        original = cm._CLUSTER_LOOKUP
+        cm._CLUSTER_LOOKUP = [cluster_file]
+        yield
+        cm._CLUSTER_LOOKUP = original
+
     def _runner(self, status=None):
         def run():
             return status if status is not None else TS_STATUS
@@ -318,6 +333,25 @@ class TestTailscaleBackend:
         hosts = {r.tailscale["node"] for r in be.list()}
         assert "skcomms-opus-casey" in hosts
         assert "skcomms-lumina-chef" in hosts
+
+    def test_list_missing_cluster_json_raises_not_wrong_fqid(self, tmp_path):
+        """Coord card 076d49cd: list() mints an fqid from the realm, so a
+        missing cluster.json must raise, not mint a "skworld"-suffixed fqid.
+        PeerRegistry.list()/.resolve() already catch this per-backend (see
+        TestPeerRegistryResolve) so a broken cluster.json degrades to "this
+        backend contributed nothing" instead of breaking discovery."""
+        from skcomms import cluster as cm
+        from skcomms.cluster import ClusterConfigError
+        from skcomms.registry import TailscaleBackend
+
+        original = cm._CLUSTER_LOOKUP
+        cm._CLUSTER_LOOKUP = [tmp_path / "nonexistent-cluster.json"]
+        try:
+            be = TailscaleBackend(status_runner=self._runner())
+            with pytest.raises(ClusterConfigError, match="not found"):
+                be.list()
+        finally:
+            cm._CLUSTER_LOOKUP = original
 
 
 # ---------------------------------------------------------------------------

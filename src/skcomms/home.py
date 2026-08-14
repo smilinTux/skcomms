@@ -24,7 +24,7 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from .cluster import get_operator, get_realm
+from .cluster import require_operator, require_realm
 from .identity import resolve_self_identity
 
 logger = logging.getLogger("skcomms.home")
@@ -227,10 +227,17 @@ def scaffold(agent: Optional[str] = None) -> dict:
     Returns:
         Dict with resolved ``home``, ``realm``, ``operator``, ``agent``,
         ``agent_dir``, ``outbox``, ``inbox``, ``stignore`` paths.
+
+    Raises:
+        ClusterConfigError: cluster.json is missing, unreadable, or invalid.
+            Strict on purpose: this is the exact path construction that must
+            never default silently (coord card 076d49cd). A defaulted realm
+            or operator would create the agent's outbox/inbox tree under the
+            wrong subtree, decoupling it from peers without any error.
     """
     home = skcomms_home()
-    realm = get_realm()
-    operator = get_operator()
+    realm = require_realm()
+    operator = require_operator()
     name = _agent_name(agent)
 
     agent_dir = home / realm / operator / name

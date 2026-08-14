@@ -191,11 +191,16 @@ def realm_verifier(realm: str, operator_label: Optional[str] = None):
     if not path.exists():
         return None
     try:
-        from .cluster import get_operator
+        # Strict: this label keys the verifier's trust map for the pinned
+        # operator key. The enclosing try/except already documents this
+        # function as fail-closed (None on any failure), so a broken
+        # cluster.json degrades to "no verifier" rather than silently
+        # keying the pinned key under the wrong operator label.
+        from .cluster import require_operator
         from .signing import EnvelopeVerifier
 
         v = EnvelopeVerifier()
-        v.add_key(operator_label or get_operator(), path.read_text(encoding="utf-8"))
+        v.add_key(operator_label or require_operator(), path.read_text(encoding="utf-8"))
         return v
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("realm_verifier(%s) failed: %s", realm, exc)

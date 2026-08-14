@@ -38,7 +38,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from .cluster import get_operator, get_realm
+from .cluster import require_operator, require_realm
 from .home import skcomms_home
 from .signing import EnvelopeSigner, EnvelopeVerifier
 
@@ -252,12 +252,23 @@ def upsert_entry(
 
     Returns:
         SignedDirectory: the freshly signed, persisted directory.
+
+    Raises:
+        ClusterConfigError: no explicit realm/operator was given, this is the
+            first entry (no existing directory to inherit from), and
+            cluster.json is missing, unreadable, or invalid. Strict on
+            purpose: this mints and signs a brand-new federation directory
+            under the realm/operator identity, persisted to disk and trusted
+            by every remote node that pins this operator's key, so a
+            defaulted wrong realm here would mint the exact class of wrong
+            identity the capauth pairing store defect did (coord card
+            076d49cd), just in the SKFed directory instead.
     """
     sd = load_directory()
     if sd is None:
         sd = SignedDirectory(
-            realm=realm or get_realm(),
-            operator=operator or get_operator(),
+            realm=realm or require_realm(),
+            operator=operator or require_operator(),
             entries=[],
         )
     sd.upsert(entry)

@@ -6,8 +6,9 @@ import skcomms.mailbox as mb
 
 
 def test_same_box_match_is_operator_component_not_exact_realm(monkeypatch, tmp_path):
+    # _load_recipient_key only consults get_operator() (the operator-component
+    # match); it never reads the realm, so there is nothing to patch there.
     monkeypatch.setattr(mb, "get_operator", lambda: "chef")
-    monkeypatch.setattr(mb, "get_realm", lambda: "skworld.io")
 
     # A local agent key on disk, addressed by bare agent name.
     key_dir = tmp_path / "agents" / "lumina" / "capauth" / "identity"
@@ -27,7 +28,6 @@ def test_same_box_match_is_operator_component_not_exact_realm(monkeypatch, tmp_p
 
 def test_cross_operator_name_collision_is_rejected(monkeypatch, tmp_path):
     monkeypatch.setattr(mb, "get_operator", lambda: "chef")
-    monkeypatch.setattr(mb, "get_realm", lambda: "skworld.io")
     key_dir = tmp_path / "agents" / "lumina" / "capauth" / "identity"
     key_dir.mkdir(parents=True)
     (key_dir / "public.asc").write_text("LOCAL-LUMINA-KEY")

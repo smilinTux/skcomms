@@ -658,9 +658,14 @@ def init(agent: Optional[str]):
 
         skcomms init --agent lumina
     """
+    from .cluster import ClusterConfigError
     from .home import scaffold
 
-    info = scaffold(agent=agent)
+    try:
+        info = scaffold(agent=agent)
+    except ClusterConfigError as exc:
+        _print(f"\n  [red]cluster.json error:[/] {exc}\n")
+        raise SystemExit(1)
     _print(f"\n  [bold green]skcomms initialized[/] for [cyan]{info['agent']}[/]\n")
     _print(f"  Home:     [dim]{info['home']}[/]")
     _print(f"  FQID dir: [dim]{info['agent_dir']}[/]")
@@ -980,6 +985,7 @@ def rail_provision(dry_run: bool, json_out: bool):
     self Send-Only folder + per-peer Receive-Only folders. Re-running is a
     no-op once the rail is in place.
     """
+    from .cluster import ClusterConfigError
     from .syncthing_rail import SyncthingRest, SyncthingRestError, provision_rail
 
     try:
@@ -990,6 +996,12 @@ def rail_provision(dry_run: bool, json_out: bool):
             click.echo(json.dumps({"error": str(exc)}, indent=2))
         else:
             _print(f"\n  [red]Syncthing REST error:[/] {exc}\n")
+        raise SystemExit(1)
+    except ClusterConfigError as exc:
+        if json_out:
+            click.echo(json.dumps({"error": str(exc)}, indent=2))
+        else:
+            _print(f"\n  [red]cluster.json error:[/] {exc}\n")
         raise SystemExit(1)
 
     if json_out:
@@ -1030,6 +1042,7 @@ def rail_health(stale_hours: Optional[float], json_out: bool):
     ``*.sync-conflict-*`` files exist, and no outbox envelope is unsynced past
     the stale threshold. Exit code 0 on OK/WARN, 1 on FAIL.
     """
+    from .cluster import ClusterConfigError
     from .syncthing_rail import (
         DEFAULT_STALE_OUTBOX_HOURS,
         RailStatus,
@@ -1044,10 +1057,19 @@ def rail_health(stale_hours: Optional[float], json_out: bool):
         logger.debug("no Syncthing REST client (%s); filesystem checks only", exc)
         rest = None
 
-    report = check_share_health(
-        rest=rest,
-        stale_outbox_hours=stale_hours if stale_hours is not None else DEFAULT_STALE_OUTBOX_HOURS,
-    )
+    try:
+        report = check_share_health(
+            rest=rest,
+            stale_outbox_hours=(
+                stale_hours if stale_hours is not None else DEFAULT_STALE_OUTBOX_HOURS
+            ),
+        )
+    except ClusterConfigError as exc:
+        if json_out:
+            click.echo(json.dumps({"error": str(exc)}, indent=2))
+        else:
+            _print(f"\n  [red]cluster.json error:[/] {exc}\n")
+        raise SystemExit(1)
 
     if json_out:
         click.echo(json.dumps(report.as_dict(), indent=2))
