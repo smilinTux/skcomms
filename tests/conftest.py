@@ -25,8 +25,19 @@ def _isolate_skcomms_home(tmp_path, monkeypatch):
     isolation, tests that build servers with defaults would write replay
     state into the operator's live home. Tests that need a specific home
     still win: their own ``monkeypatch.setenv`` runs after this fixture.
+
+    The pairing kernel base is isolated for the same reason, and it is the
+    sharper case: ``mirror_pairing`` enrolls + approves into the capauth
+    pairing store, which is the store ``capauth.authz.decide()`` reads to
+    authorize. Four test files exercise pairing without setting the base
+    themselves (test_pairing, test_pairing_cli, test_public_pairing,
+    test_key_exchange_transport_scoping), so a plain ``pytest tests/`` was
+    minting real approved DeviceRecords into the operator's live security
+    store. Measured: running test_public_pairing.py alone added 2 records,
+    and 58 accumulated records for ``opus@chef.skworld`` trace to this.
     """
     monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "skcomms-home"))
+    monkeypatch.setenv("SKCOMMS_PAIRING_KERNEL_BASE", str(tmp_path / "capauth-pairing"))
     # Nonce caches are node-local (outside the synced home) by default; keep
     # tests off the operator's real ~/.local/state/skcomms as well.
     monkeypatch.setenv("SKCOMMS_NONCE_CACHE_DIR", str(tmp_path / "skcomms-local-state"))

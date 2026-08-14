@@ -308,3 +308,54 @@ def test_public_pairing_kernel_disabled_writes_nothing(tmp_path, monkeypatch):
     )
     assert res["paired"]["fqid"] == "opus@chef.skworld"
     assert list_devices(subject="opus@chef.skworld", base_dir=str(tmp_path / "capauth")) == []
+
+
+# ── idempotency (trust on FIRST use, not on every use) ───────────────────
+
+
+# Deliberately NOT shaped like real base64 key material. mirror_pairing only
+# needs two distinct opaque strings (it stores them and fingerprints them), and
+# a realistic-looking prefix made the secret scanner flag these as a leaked
+# key. Suppressing that with an allowlist entry would blunt a gate that only
+# started working on 2026-08-14 (see the secret-scan workflow), so the fixture
+# avoids tripping it in the first place.
+_KEY_A = "not-a-real-key-fixture-alpha"
+_KEY_B = "not-a-real-key-fixture-bravo"
+
+
+def test_re_mirroring_the_same_key_does_not_mint_a_second_device(tmp_path, monkeypatch):
+    """Repeated accepts of one peer+key must converge on ONE device record.
+
+    Regression pin for the observed drift: opus@chef.skworld accumulated 22
+    approved TOFU records in a single afternoon because every accept called
+    enroll_device + approve unconditionally.
+    """
+    monkeypatch.setenv("SKCOMMS_PAIRING_KERNEL_BASE", str(tmp_path))
+    from capauth.pairing.kernel import list_devices
+
+    from skcomms.pairing_mirror import mirror_pairing
+
+    for _ in range(5):
+        mirror_pairing("peer@example.skworld", _KEY_A)
+
+    devices = list_devices("peer@example.skworld", base_dir=tmp_path, include_revoked=True)
+    assert len(devices) == 1
+
+
+def test_a_genuinely_new_key_still_enrolls(tmp_path, monkeypatch):
+    """The guard must not block a real second device for the same subject."""
+    monkeypatch.setenv("SKCOMMS_PAIRING_KERNEL_BASE", str(tmp_path))
+    from capauth.pairing.kernel import list_devices
+
+    from skcomms.pairing_mirror import mirror_pairing
+
+    mirror_pairing("peer@example.skworld", _KEY_A)
+    mirror_pairing("peer@example.skworld", _KEY_B)
+
+    devices = list_devices("peer@example.skworld", base_dir=tmp_path, include_revoked=True)
+    assert len(devices) == 2
+
+    # And re-presenting the first key still does not add a third.
+    mirror_pairing("peer@example.skworld", _KEY_A)
+    devices = list_devices("peer@example.skworld", base_dir=tmp_path, include_revoked=True)
+    assert len(devices) == 2
