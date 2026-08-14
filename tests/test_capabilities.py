@@ -134,6 +134,70 @@ def test_services_derive_from_transports(tmp_path):
     assert by_id["geo-cot"]["status"] == CONFIGURED
 
 
+class TestNodeIdentityStrictFallback:
+    """Coord card 076d49cd: when resolve_self_identity() has no fqid (capauth
+    absent/unresolvable), build_capabilities() falls back to minting the fqid
+    from cluster.json. That fallback must be strict (require_realm/
+    require_operator), so a missing cluster.json produces a loudly logged
+    ``null`` node id instead of silently minting "unknown@chef.skworld"
+    style identities. The document stays well-formed either way (this is a
+    status endpoint, not a security-store write)."""
+
+    def _patch_cluster(self, monkeypatch, tmp_path, data=None):
+        import json
+
+        from skcomms import cluster as cm
+
+        cluster_file = tmp_path / "cluster.json"
+        cluster_file.write_text(json.dumps(data or {"realm": "skworld", "operator": "chef"}))
+        monkeypatch.setattr(cm, "_CLUSTER_LOOKUP", [cluster_file])
+
+    def test_valid_cluster_json_mints_correct_fqid(self, tmp_path, monkeypatch):
+        from unittest.mock import patch
+
+        self._patch_cluster(monkeypatch, tmp_path)
+        with patch(
+            "capauth.agent_identity.resolve_agent_identity",
+            side_effect=ImportError("capauth absent"),
+        ):
+            doc = _build_with_file_only(tmp_path)
+        assert doc["node"]["id"] == "unknown@chef.skworld"
+
+    def test_missing_cluster_json_yields_null_id_not_wrong_fqid(self, tmp_path, monkeypatch):
+        """The heart of the fix: no cluster.json must never mint an id that
+        looks plausible but is wrong (e.g. "unknown@chef.skworld" when the
+        real realm is "skworld.io"). It must come back None instead."""
+        from unittest.mock import patch
+
+        from skcomms import cluster as cm
+
+        monkeypatch.setattr(cm, "_CLUSTER_LOOKUP", [tmp_path / "nonexistent-cluster.json"])
+        with patch(
+            "capauth.agent_identity.resolve_agent_identity",
+            side_effect=ImportError("capauth absent"),
+        ):
+            doc = _build_with_file_only(tmp_path)
+        assert doc["node"]["id"] is None
+        # Well-formed otherwise: the rest of the document is unaffected.
+        assert doc["node"]["label"] != ""
+        assert set(doc.keys()) == {"api", "node", "transports", "services", "modules"}
+
+    def test_corrupt_cluster_json_yields_null_id_not_wrong_fqid(self, tmp_path, monkeypatch):
+        from unittest.mock import patch
+
+        cluster_file = tmp_path / "cluster.json"
+        cluster_file.write_text("{ not valid json ")
+        from skcomms import cluster as cm
+
+        monkeypatch.setattr(cm, "_CLUSTER_LOOKUP", [cluster_file])
+        with patch(
+            "capauth.agent_identity.resolve_agent_identity",
+            side_effect=ImportError("capauth absent"),
+        ):
+            doc = _build_with_file_only(tmp_path)
+        assert doc["node"]["id"] is None
+
+
 def test_no_skcomms_returns_wellformed_document():
     """With ``skcomms=None`` the helper self-loads from config and still returns
     a well-formed doc (statuses depend on the running node's config)."""

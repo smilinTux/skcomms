@@ -492,10 +492,17 @@ def provision_rail(
         rest: An injected :class:`SyncthingRest` (real or fake).
         home: skcomms home root; defaults to :func:`skcomms.home.skcomms_home`.
         peers: ``peers.json`` mapping; defaults to :func:`skcomms.peers.list_peers`.
-        realm: This node's realm; defaults to :func:`skcomms.cluster.get_realm`.
+        realm: This node's realm; defaults to :func:`skcomms.cluster.require_realm`.
         operator: This node's operator; defaults to
-            :func:`skcomms.cluster.get_operator`.
+            :func:`skcomms.cluster.require_operator`.
         apply: When ``False``, only compute + return the plan (no writes).
+
+    Raises:
+        ClusterConfigError: *realm*/*operator* were not given and
+            cluster.json is missing, unreadable, or invalid. Strict on
+            purpose: this scopes the self folder actually created/shared in
+            Syncthing, so a defaulted wrong value would silently provision
+            the rail under a subtree no peer recognizes.
 
     Returns:
         A :class:`ProvisionResult`. ``type_mismatches`` are always reported and
@@ -506,13 +513,20 @@ def provision_rail(
 
         home = skcomms_home()
     if realm is None:
-        from .cluster import get_realm
+        # Strict: this realm/operator scopes the self folder that gets
+        # created and shared in real Syncthing config (apply=True writes
+        # persistent state). A defaulted wrong realm would silently
+        # provision the rail under a subtree no peer recognizes, collapsing
+        # the "get two" redundancy without any visible error, so a missing
+        # cluster.json must fail loudly here rather than mint a folder tree
+        # under the wrong realm.
+        from .cluster import require_realm
 
-        realm = get_realm()
+        realm = require_realm()
     if operator is None:
-        from .cluster import get_operator
+        from .cluster import require_operator
 
-        operator = get_operator()
+        operator = require_operator()
     if peers is None:
         from .peers import list_peers
 
@@ -693,6 +707,13 @@ def check_share_health(
     (unknown — daemon unreachable) rather than failing, and the filesystem
     checks (conflicts, stale outbox) still run.
 
+    Raises:
+        ClusterConfigError: *realm*/*operator* were not given and
+            cluster.json is missing, unreadable, or invalid. Strict on
+            purpose, consistent with :func:`provision_rail`: checking health
+            against a defaulted wrong realm would validate the wrong
+            subtree and could report a false-healthy rail.
+
     Returns:
         A :class:`ShareHealth` aggregate.
     """
@@ -701,13 +722,18 @@ def check_share_health(
 
         home = skcomms_home()
     if realm is None:
-        from .cluster import get_realm
+        # Strict: consistent with provision_rail above. Checking health
+        # against a defaulted wrong realm would validate the wrong subtree
+        # and can report a false-healthy rail while the real one is
+        # unshared/unmonitored, which is the same silent-wrong-value class
+        # of failure the strict reader exists to prevent.
+        from .cluster import require_realm
 
-        realm = get_realm()
+        realm = require_realm()
     if operator is None:
-        from .cluster import get_operator
+        from .cluster import require_operator
 
-        operator = get_operator()
+        operator = require_operator()
     if peers is None:
         from .peers import list_peers
 

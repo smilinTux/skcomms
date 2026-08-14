@@ -431,9 +431,15 @@ class HttpS2STransport(Transport):
 
             fqid = recipient
             if "@" not in fqid:
-                from skcomms.cluster import get_operator, get_realm
+                # Strict: mints the recipient's fqid from the local
+                # realm/operator. The enclosing try/except already documents
+                # this method as "fails closed (None), never raises" to its
+                # caller, so a broken cluster.json is caught below and
+                # degrades to "no directory URL" instead of silently
+                # resolving the wrong recipient identity.
+                from skcomms.cluster import require_operator, require_realm
 
-                fqid = f"{recipient}@{get_operator()}.{get_realm()}"
+                fqid = f"{recipient}@{require_operator()}.{require_realm()}"
             realm = _realm_of(fqid)
             verifier = realm_verifier(realm) if realm else None
             if verifier is None:

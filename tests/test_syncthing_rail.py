@@ -415,3 +415,41 @@ def test_find_stale_outbox_only_flags_old(tmp_path):
     os.utime(old, (past, past))
     stale = find_stale_outbox(tmp_path, REALM, OPERATOR, max_age_hours=6.0)
     assert stale == [old]
+
+
+# ---------------------------------------------------------------------------
+# Coord card 076d49cd: when realm/operator are NOT given explicitly,
+# provision_rail and check_share_health must refuse to default a missing
+# cluster.json rather than silently provisioning/checking the wrong subtree.
+# ---------------------------------------------------------------------------
+
+
+def test_provision_rail_missing_cluster_json_raises(tmp_path):
+    from skcomms.cluster import ClusterConfigError
+    from skcomms import cluster as cm
+
+    original = cm._CLUSTER_LOOKUP
+    cm._CLUSTER_LOOKUP = [tmp_path / "nonexistent-cluster.json"]
+    try:
+        rest = FakeRest()
+        with pytest.raises(ClusterConfigError, match="not found"):
+            provision_rail(rest, home=tmp_path, peers={}, apply=True)
+        # The defect this closes: nothing was written under any subtree.
+        assert rest.put_devices == []
+        assert rest.put_folders == []
+    finally:
+        cm._CLUSTER_LOOKUP = original
+
+
+def test_check_share_health_missing_cluster_json_raises(tmp_path):
+    from skcomms.cluster import ClusterConfigError
+    from skcomms import cluster as cm
+
+    original = cm._CLUSTER_LOOKUP
+    cm._CLUSTER_LOOKUP = [tmp_path / "nonexistent-cluster.json"]
+    try:
+        rest = FakeRest()
+        with pytest.raises(ClusterConfigError, match="not found"):
+            check_share_health(rest=rest, home=tmp_path, peers={})
+    finally:
+        cm._CLUSTER_LOOKUP = original

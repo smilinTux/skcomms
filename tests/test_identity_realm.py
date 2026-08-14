@@ -145,6 +145,44 @@ class TestResolveFqid:
         finally:
             cm._CLUSTER_LOOKUP = original
 
+    def test_missing_cluster_json_never_mints_short_realm(self, tmp_path: Path):
+        """Coord card 076d49cd: with an agent name given, capauth absent, AND
+        cluster.json missing, resolve_fqid must degrade to None (fail
+        closed), never mint "agent@chef.skworld" from the lenient default.
+        """
+        from skcomms import cluster as cm
+
+        original = cm._CLUSTER_LOOKUP
+        try:
+            cm._CLUSTER_LOOKUP = [tmp_path / "nope.json"]
+            with patch(
+                "capauth.agent_identity.resolve_agent_identity",
+                side_effect=ImportError("capauth absent"),
+            ):
+                fqid = resolve_fqid("lumina")
+                assert fqid is None
+        finally:
+            cm._CLUSTER_LOOKUP = original
+
+    def test_corrupt_cluster_json_never_mints_short_realm(self, tmp_path: Path):
+        """Same as above but for a malformed (unreadable) cluster.json rather
+        than a missing one: still degrades to None, not a wrong fqid."""
+        cluster_file = tmp_path / "cluster.json"
+        cluster_file.write_text("{ not valid json ")
+        from skcomms import cluster as cm
+
+        original = cm._CLUSTER_LOOKUP
+        try:
+            cm._CLUSTER_LOOKUP = [cluster_file]
+            with patch(
+                "capauth.agent_identity.resolve_agent_identity",
+                side_effect=ImportError("capauth absent"),
+            ):
+                fqid = resolve_fqid("lumina")
+                assert fqid is None
+        finally:
+            cm._CLUSTER_LOOKUP = original
+
 
 # ---------------------------------------------------------------------------
 # identity.py

@@ -21,6 +21,8 @@ from skcomms.cluster import (
     ClusterConfigError,
     load_cluster,
     load_cluster_config,
+    require_operator,
+    require_realm,
 )
 
 FULL = {
@@ -163,3 +165,89 @@ class TestLoadClusterLenient:
         data = load_cluster()
         assert data is not None
         assert data["operator"] == "chef"
+
+
+# ---------------------------------------------------------------------------
+# require_realm / require_operator (strict, identity-minting call sites)
+#
+# Coord card 076d49cd: a missing/unreadable cluster.json must never let an
+# identity-minting call site default to a short realm ("skworld" instead of
+# the real "skworld.io"). These accessors are the strict counterpart to
+# get_realm/get_operator; every call site that constructs or persists an
+# identity uses them instead.
+# ---------------------------------------------------------------------------
+
+
+class TestRequireRealm:
+    def test_returns_configured_realm(self, tmp_path: Path):
+        f = _write(tmp_path, FULL)
+        from skcomms import cluster as cm
+
+        original = cm._CLUSTER_LOOKUP
+        try:
+            cm._CLUSTER_LOOKUP = [f]
+            assert require_realm() == "skworld.io"
+        finally:
+            cm._CLUSTER_LOOKUP = original
+
+    def test_missing_cluster_json_raises_not_silently_defaults(self, tmp_path: Path):
+        """The edge case at the heart of coord card 076d49cd: an absent
+        cluster.json must raise, never silently return the lenient
+        "skworld" default that would mint a wrong identity."""
+        from skcomms import cluster as cm
+
+        original = cm._CLUSTER_LOOKUP
+        try:
+            cm._CLUSTER_LOOKUP = [tmp_path / "nope.json"]
+            with pytest.raises(ClusterConfigError, match="not found"):
+                require_realm()
+        finally:
+            cm._CLUSTER_LOOKUP = original
+
+    def test_malformed_cluster_json_raises(self, tmp_path: Path):
+        f = _write(tmp_path, "{ not valid json ")
+        from skcomms import cluster as cm
+
+        original = cm._CLUSTER_LOOKUP
+        try:
+            cm._CLUSTER_LOOKUP = [f]
+            with pytest.raises(ClusterConfigError, match="not valid JSON"):
+                require_realm()
+        finally:
+            cm._CLUSTER_LOOKUP = original
+
+
+class TestRequireOperator:
+    def test_returns_configured_operator(self, tmp_path: Path):
+        f = _write(tmp_path, FULL)
+        from skcomms import cluster as cm
+
+        original = cm._CLUSTER_LOOKUP
+        try:
+            cm._CLUSTER_LOOKUP = [f]
+            assert require_operator() == "chef"
+        finally:
+            cm._CLUSTER_LOOKUP = original
+
+    def test_missing_cluster_json_raises_not_silently_defaults(self, tmp_path: Path):
+        from skcomms import cluster as cm
+
+        original = cm._CLUSTER_LOOKUP
+        try:
+            cm._CLUSTER_LOOKUP = [tmp_path / "nope.json"]
+            with pytest.raises(ClusterConfigError, match="not found"):
+                require_operator()
+        finally:
+            cm._CLUSTER_LOOKUP = original
+
+    def test_schema_violation_raises(self, tmp_path: Path):
+        f = _write(tmp_path, {"realm": "skworld.io"})  # missing operator
+        from skcomms import cluster as cm
+
+        original = cm._CLUSTER_LOOKUP
+        try:
+            cm._CLUSTER_LOOKUP = [f]
+            with pytest.raises(ClusterConfigError, match="failed validation"):
+                require_operator()
+        finally:
+            cm._CLUSTER_LOOKUP = original

@@ -29,6 +29,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import skfed_directory
 from .capauth_validator import CapAuthValidator
+from .cluster import ClusterConfigError
 from .core import SKComms
 from .discovery import PeerInfo, PeerStore
 from .heartbeat import HeartbeatConfig, HeartbeatPublisher
@@ -1790,7 +1791,13 @@ async def post_skfed_announce(request: Request):
         did=record.get("did"),
         caps=list(record.get("caps") or []),
     )
-    skfed_directory.upsert_entry(entry, signer=signer)
+    try:
+        skfed_directory.upsert_entry(entry, signer=signer)
+    except ClusterConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"cannot mint a new realm directory, cluster.json error: {exc}",
+        ) from exc
     logger.info("skfed announce accepted: %s -> %s", announced_fqid, inbox_url)
     return {"ok": True, "fqid": announced_fqid}
 

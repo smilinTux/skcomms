@@ -16,6 +16,8 @@ from unittest.mock import patch
 
 import pytest
 
+from skcomms.cluster import ClusterConfigError
+
 # ---------------------------------------------------------------------------
 # Home resolution
 # ---------------------------------------------------------------------------
@@ -207,6 +209,74 @@ class TestScaffold:
             result = scaffold()
             assert result["agent"] == "jarvis"
             assert result["agent_dir"].name == "jarvis"
+
+    # -----------------------------------------------------------------------
+    # Coord card 076d49cd: an unreadable cluster.json must refuse to enroll,
+    # never silently create the identity tree under a defaulted-wrong realm
+    # ("skworld" in place of the real "skworld.io"). Before this fix,
+    # scaffold() used the lenient get_realm()/get_operator() and would
+    # happily create <home>/skworld/chef/<agent>/ even when cluster.json was
+    # missing or corrupt.
+    # -----------------------------------------------------------------------
+
+    def test_missing_cluster_json_refuses_to_enroll(self, monkeypatch, tmp_path, mock_identity):
+        """No cluster.json at all: scaffold() must raise, not create a tree
+        under the lenient "skworld"/"chef" default."""
+        from skcomms import cluster as cm
+
+        original = cm._CLUSTER_LOOKUP
+        cm._CLUSTER_LOOKUP = [tmp_path / "nonexistent-cluster.json"]
+        try:
+            monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "home"))
+            from skcomms.home import scaffold
+
+            with pytest.raises(ClusterConfigError, match="not found"):
+                scaffold(agent="lumina")
+
+            # The defect this closes: no wrong-realm tree gets created either.
+            assert not (tmp_path / "home" / "skworld").exists()
+        finally:
+            cm._CLUSTER_LOOKUP = original
+
+    def test_corrupt_cluster_json_refuses_to_enroll(self, monkeypatch, tmp_path, mock_identity):
+        """An unreadable (malformed JSON) cluster.json must also raise rather
+        than silently enrolling under the wrong realm."""
+        cluster_file = tmp_path / "cluster.json"
+        cluster_file.write_text("{ this is not valid json ")
+        from skcomms import cluster as cm
+
+        original = cm._CLUSTER_LOOKUP
+        cm._CLUSTER_LOOKUP = [cluster_file]
+        try:
+            monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "home"))
+            from skcomms.home import scaffold
+
+            with pytest.raises(ClusterConfigError, match="not valid JSON"):
+                scaffold(agent="lumina")
+
+            assert not (tmp_path / "home" / "skworld").exists()
+        finally:
+            cm._CLUSTER_LOOKUP = original
+
+    def test_schema_invalid_cluster_json_refuses_to_enroll(
+        self, monkeypatch, tmp_path, mock_identity
+    ):
+        """A cluster.json that fails schema validation (e.g. missing
+        operator) must also raise rather than fall back to a default."""
+        cluster_file = tmp_path / "cluster.json"
+        cluster_file.write_text(json.dumps({"realm": "skworld.io"}))  # no operator
+        from skcomms import cluster as cm
+
+        original = cm._CLUSTER_LOOKUP
+        cm._CLUSTER_LOOKUP = [cluster_file]
+        try:
+            monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "home"))
+            from skcomms.home import scaffold
+
+            with pytest.raises(ClusterConfigError, match="failed validation"):
+                scaffold(agent="lumina")
+        finally:
+            cm._CLUSTER_LOOKUP = original
 
 
 # ---------------------------------------------------------------------------

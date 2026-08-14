@@ -28,6 +28,16 @@ Two readers are provided:
 * :func:`load_cluster_config` returns a validated :class:`ClusterConfig`
   typed object and raises :class:`ClusterConfigError` with a clear message on
   a missing file, malformed JSON, or a schema violation.
+
+Four convenience accessors sit on top of these two readers:
+
+* :func:`get_realm` / :func:`get_operator` are lenient (default on failure).
+  Use them only for display, logging, or network-target selection, where a
+  wrong value degrades to a failed lookup.
+* :func:`require_realm` / :func:`require_operator` are strict (raise
+  :class:`ClusterConfigError` on failure). Use them at every call site that
+  mints or persists an identity: fqid construction, capauth pairing,
+  on-disk identity paths, signed federation directories.
 """
 
 from __future__ import annotations
@@ -198,7 +208,16 @@ def load_cluster_config(path: Optional[Union[Path, str]] = None) -> ClusterConfi
 
 
 def get_realm() -> str:
-    """Return the realm name (default: ``"skworld"``)."""
+    """Return the realm name (default: ``"skworld"``).
+
+    Lenient: never raises, even when cluster.json is missing or malformed.
+    This is safe only for display/logging/network-target-selection callers,
+    where a wrong-but-plausible value degrades to a failed lookup rather than
+    a wrongly minted identity. Any call site that constructs or persists an
+    identity (an fqid, a capauth pairing record, an on-disk identity path, a
+    signed federation directory) must use :func:`require_realm` instead, so a
+    missing config fails loudly rather than silently minting a short realm.
+    """
     data = load_cluster()
     if data:
         return str(data.get("realm", "skworld"))
@@ -206,8 +225,53 @@ def get_realm() -> str:
 
 
 def get_operator() -> str:
-    """Return the operator name (default: ``"chef"``)."""
+    """Return the operator name (default: ``"chef"``).
+
+    Lenient: see :func:`get_realm` for the strict/lenient split rationale.
+    Any call site that constructs or persists an identity must use
+    :func:`require_operator` instead.
+    """
     data = load_cluster()
     if data:
         return str(data.get("operator", "chef"))
     return "chef"
+
+
+def require_realm() -> str:
+    """Return the realm name, refusing to default on a missing/invalid config.
+
+    Strict counterpart to :func:`get_realm`. Every identity-minting call site
+    (fqid construction, capauth pairing, on-disk identity paths, signed
+    federation directories) must call this instead of :func:`get_realm`: a
+    missing or unreadable cluster.json must fail loudly, never silently mint
+    an identity under the wrong realm. (Coord card 076d49cd: a missing
+    cluster.json minted ``chef.skworld`` in place of the real
+    ``chef.skworld.io``, landing 58 wrong fqids in the live capauth pairing
+    store before this was caught.)
+
+    Returns:
+        The realm name from a validated cluster.json.
+
+    Raises:
+        ClusterConfigError: cluster.json is missing, unreadable, malformed,
+            or fails schema validation. The message names the searched
+            paths.
+    """
+    return load_cluster_config().realm
+
+
+def require_operator() -> str:
+    """Return the operator name, refusing to default on a missing/invalid config.
+
+    Strict counterpart to :func:`get_operator`. See :func:`require_realm` for
+    the rationale; use this at every identity-minting call site.
+
+    Returns:
+        The operator name from a validated cluster.json.
+
+    Raises:
+        ClusterConfigError: cluster.json is missing, unreadable, malformed,
+            or fails schema validation. The message names the searched
+            paths.
+    """
+    return load_cluster_config().operator

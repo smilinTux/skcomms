@@ -46,7 +46,7 @@ from typing import Callable, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from .cluster import get_realm
+from .cluster import get_realm, require_realm
 from .home import skcomms_home
 
 logger = logging.getLogger("skcomms.registry")
@@ -300,6 +300,11 @@ class HttpsBackend(RegistryBackend):
         fetcher: Optional[Fetcher] = None,
     ):
         self.url_template = url_template
+        # Lenient by design: this realm only selects an HTTPS lookup target
+        # (registry.<realm>/peers.json). A defaulted wrong realm queries the
+        # wrong host and _load() already treats any fetch failure as "no
+        # peers found" (fail safe, not fail wrong) rather than minting or
+        # persisting an identity anywhere.
         self.realm = realm or get_realm()
         self._fetch = fetcher or _default_https_fetcher
 
@@ -463,8 +468,11 @@ class TailscaleBackend(RegistryBackend):
                 # tagged but non-conventional host — skip (can't form an fqid)
                 continue
             agent, operator = parsed
-            # realm is realm-local; use the configured/default realm for display
-            fqid = f"{agent}@{operator}.{get_realm()}"
+            # Strict: this builds an fqid identity string that flows into
+            # PeerRecord.merge() and downstream trust/routing decisions, so a
+            # defaulted wrong realm would mint a wrong peer identity instead
+            # of failing loudly.
+            fqid = f"{agent}@{operator}.{require_realm()}"
             out.append(
                 PeerRecord(
                     fqid=fqid, operator=operator, tailscale=self._hint(node), source=self.name
@@ -517,6 +525,9 @@ class PeerRegistry:
         from .config import RegistryConfig
 
         cfg = config or RegistryConfig()
+        # Lenient by design: the_realm only feeds HttpsBackend's lookup
+        # target (see the classification note on HttpsBackend.__init__
+        # above). It is never used to mint or persist an identity here.
         the_realm = realm or get_realm()
 
         def _make(name: str) -> Optional[RegistryBackend]:

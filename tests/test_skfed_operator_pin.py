@@ -42,5 +42,8 @@ def test_realm_verifier_loads_pinned_pubkey(monkeypatch, tmp_path):
     pin = operator_pin_path("skworld")
     pin.parent.mkdir(parents=True, exist_ok=True)
     pin.write_text(str(key.pubkey))
-    v = realm_verifier("skworld")
+    # An explicit operator_label sidesteps require_operator()'s cluster.json
+    # lookup (coord card 076d49cd made that lookup strict); this test only
+    # exercises the pin-loading mechanism, not the operator-label default.
+    v = realm_verifier("skworld", operator_label="op")
     assert v is not None

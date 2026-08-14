@@ -64,12 +64,16 @@ def resolve_fqid(agent: Optional[str] = None) -> Optional[str]:
     except Exception as exc:
         logger.debug("capauth resolver unavailable: %s", exc)
 
-    # Fallback: construct from cluster helpers
+    # Fallback: construct from cluster helpers. Strict: build_fqid mints the
+    # identity string directly, so a missing/invalid cluster.json must raise
+    # here rather than default to a short realm. The surrounding except
+    # already treats any failure as "no identity" (returns None below), so
+    # this correctly degrades to fail-closed instead of minting a wrong fqid.
     try:
-        from .cluster import get_operator, get_realm
+        from .cluster import require_operator, require_realm
 
-        operator = get_operator()
-        realm = get_realm()
+        operator = require_operator()
+        realm = require_realm()
         if agent:
             return build_fqid(agent, operator, realm)
     except Exception as exc:
