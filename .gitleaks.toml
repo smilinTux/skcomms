@@ -33,3 +33,15 @@ docs/superpowers/specs/2026-06-13-ble-mesh-proximity-transport-design.md:178.
 """
 paths = ['''docs/superpowers/specs/2026-06-13-ble-mesh-proximity-transport-design\.md''']
 regexes = ['''Ed25519-signed''']
+
+# Fake PGP key blocks in the identity-trust backup test. The private-key rule
+# matches the "-----BEGIN PGP PRIVATE KEY BLOCK-----" armor header, but the body
+# is the literal string "fake-private" (and "fake-public"): a fixture that
+# exercises the backup/restore path without any real key material. Confirmed
+# non-secret on 2026-08-14 by reading tests/test_identity_trust_backup.py:42-43.
+#
+# This is the finding that had been sitting undetected: the CI gate has never
+# actually scanned anything (see secret-scan.yml), so nothing ever reported it.
+[[allowlists]]
+description = "Fake PGP armor fixtures in tests/test_identity_trust_backup.py"
+paths = ['''tests/test_identity_trust_backup\.py''']
