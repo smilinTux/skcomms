@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### Docs
+- **Corrected a false security claim in SOP.md and SECURITY.md.** Both asserted that
+  `:9384` stays on loopback and that no skcomms socket is ever published beyond
+  loopback/tailnet. Verified 2026-08-15 on `.158` with `ss -tlnp`, `:9384` is bound
+  `0.0.0.0`. The docs were describing the code default (`cli.py` `serve --host`
+  `127.0.0.1`, and the correct shipped `contrib/systemd/skcomms-api.service`) as if it
+  were the deployment; the hand-written unit on `.158` hardcodes `--host 0.0.0.0`, so
+  this is unit drift, not a code bug. Section 5 now carries a default-vs-live table, the
+  measured blast radius (LAN `192.168.0.0/16` plus tailnet, NOT the internet: Funnel
+  publishes only `:443`/`:8443`/`:10000` and proxies exactly 1 path to 9384 while
+  `/openapi.json` reports 63 routes, so the Funnel path allowlist is bypassed on the
+  LAN), and the remediation.
+- **Declared two previously undocumented surfaces.** `skcomms-signaling-broker` on
+  `0.0.0.0:9390` (code default is `127.0.0.1:9384`, which collides with the API port),
+  and `sk-access` on `100.108.59.57:9386`, which is correctly tailnet-bound.
+- **Reconciled the stale CoT/TAK references.** `cot.py` and `cot_service.py` are no
+  longer in this repo and the `skcomms-cot` / `skcomms-cot-agent` units are disabled and
+  inactive, superseded by the standalone skcot repo. Sections 1, 2, 5, and 8 said
+  otherwise.
+- **Stopped quoting a stale SemVer.** Section 5 said to bump a `version` field that does
+  not exist and section 9 quoted `0.1.6`; the version is setuptools-scm derived from the
+  newest `v[0-9]*` git tag.
+- Added a `docs-evidence` block (9 hermetic checks, all negative-tested) and the
+  `docs-check` CI gate at tiers 1,2.
+
 ### Fixed
 - **https-s2s 422 wire-format mismatch fixed at the source (sign-at-send).**
   `SKComms.send` now wraps every outbound message into the canonical signed

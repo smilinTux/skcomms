@@ -53,9 +53,23 @@ every claim is scoped to **surface + FIPS/RFC number + hybrid-vs-classical**.
 - ❌ **Not the identity root-of-trust.** Key custody, FQID resolution, and the signing
   key come from [capauth](https://github.com/smilinTux/capauth); skcomms consumes them.
 - ❌ **Federation endpoints are public-by-design, not access-controlled by transport.**
-  Authenticity is the envelope signature, not the socket. The `:9384` API and `:8765`
-  daemon-proxy must stay on loopback / tailnet; only Funnel `:443` is public (see
-  [SOP.md §5](SOP.md)).
+  Authenticity is the envelope signature, not the socket.
+- ⚠️ **The bind address is NOT a control here, and today it is drifted.** A previous
+  revision of this file stated that "the `:9384` API and `:8765` daemon-proxy must stay
+  on loopback / tailnet". That is the intended target state, but it was written as if it
+  described the deployment, and **it did not**. Verified 2026-08-15 on `.158` with
+  `ss -tlnp`: `:9384` is bound `0.0.0.0` (the hand-written unit hardcodes `--host
+  0.0.0.0`, overriding the correct `127.0.0.1` code default and the correct shipped
+  `contrib/systemd/skcomms-api.service`), and `:8765` / `:8766` are bound `0.0.0.0` by
+  skchat's webui. The signaling broker `:9390` is likewise `0.0.0.0` and was undeclared.
+  **Scope, precisely:** the reachable network is the **LAN `192.168.0.0/16` plus the
+  tailnet, not the internet** (this host has no public interface; Tailscale Funnel
+  publishes only `:443`/`:8443`/`:10000`). The practical consequence is that Funnel's
+  path allowlist, which mounts exactly **1** route onto 9384, is bypassed on the LAN,
+  where all **63** routes the service reports in `/openapi.json` answer, including the
+  operator surfaces that trust the client IP. **Do not treat any bind address in these
+  docs as a control until `ss -tlnp` on the node agrees with it.** Full table and
+  remediation: [SOP.md §5](SOP.md).
 
 ---
 
@@ -143,7 +157,8 @@ Credit is given unless you ask otherwise.
 - A crypto-label overclaim — a classical surface (default signatures, classical-peer
   wrap) described as "quantum-resistant."
 - Any skcomms socket reachable on a public interface (should be loopback / tailnet;
-  Funnel `:443` only).
+  Funnel `:443` only). **Already known and not a new report:** `:9384` and `:9390` are
+  bound `0.0.0.0` on `.158` and reachable from the LAN, per the drift note above.
 
 ---
 
