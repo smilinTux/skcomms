@@ -12,14 +12,25 @@ sk-standards [CRYPTOGRAPHY_STANDARD](https://github.com/smilinTux/sk-standards/b
 identity model (`identity.py`, `cluster.py`), the signing/verification layer
 (`EnvelopeSigner` / `EnvelopeVerifier`, `signing.py`, `crypto.py`), the ACK / replay /
 sender-binding layer (`ack.py`), the transport router + adapters (`transports/`,
-`adapters/`, `router.py`), the CoT (Cursor-on-Target) codec + TAK bridge (`cot.py`,
-`cot_service.py`), the SKFed S2S API (inbox, prekey, directory — `skfed_directory.py`,
-`skfed_resolve.py`), and the per-realm discovery registry (`registry.py`).
+`adapters/`, `router.py`), the WebRTC/websocket signaling broker (`signaling.py`,
+`transports/broker_server.py`), the SKFed S2S API (inbox, prekey, directory:
+`skfed_directory.py`, `skfed_resolve.py`), and the per-realm discovery registry
+(`registry.py`).
 
 **Does NOT do:** UI/chat experience (that's [skchat](https://github.com/smilinTux/skchat)
 / [skchat-app](https://github.com/smilinTux/skchat-app)), identity root-of-trust or key
-custody (that's [capauth](https://github.com/smilinTux/capauth)), or the standards
-themselves (that's [sk-standards](https://github.com/smilinTux/sk-standards)).
+custody (that's [capauth](https://github.com/smilinTux/capauth)), the standards
+themselves (that's [sk-standards](https://github.com/smilinTux/sk-standards)), or the
+CoT/TAK geo surface.
+
+> **CoT/TAK moved out.** Earlier revisions of this SOP described `cot.py` /
+> `cot_service.py` as skcomms-owned. Those modules are **no longer in this repo**
+> (`test ! -e src/skcomms/cot_service.py` is an evidence check below) and the
+> `skcomms-cot` / `skcomms-cot-agent` units are disabled and inactive on `.158`,
+> superseded by the standalone **skcot** repo, which carries its own doc set and
+> its own unit (`skcot.service`, CoT/TAK on `:8087` plain / `:8089` TLS). The only
+> residue here is `capabilities.py`'s `"cot": 8087` service probe, which reports on
+> skcot; skcomms does not serve that port.
 
 ## 2. Architecture
 
@@ -45,14 +56,14 @@ flowchart TB
       ROUTER["router.py<br/>failover / broadcast / stealth"]
       SYNC["syncthing · file"]
       WEBRTC["webrtc / signaling<br/>media tracks"]
-      WS["websocket :8765 daemon-proxy"]
+      WS["websocket :8765 daemon-proxy<br/>socket owned by skchat"]
+      BROKER["signaling broker :9390<br/>transports/broker_server.py"]
       NOSTR["nostr · tailscale · ble · lora"]
       ADAPT["ChannelAdapter ABC<br/>telegram · matrix · slack · discord"]
     end
 
     subgraph FED["SKFed S2S surface"]
       API["skcomms.api :9384<br/>inbox · prekey · directory · announce"]
-      COT["CoT codec + TAK bridge<br/>cot_service.py"]
     end
 
     SKCHAT --> ENV
@@ -61,8 +72,9 @@ flowchart TB
     ENV --> SIGN --> CRYPTO --> ACK
     ACK --> ROUTER
     ROUTER --> SYNC & WEBRTC & WS & NOSTR & ADAPT
+    WEBRTC --> BROKER
+    WS --> BROKER
     ROUTER --> API
-    API --> COT
     API -->|"verify: sig → freshness → replay"| ACK
 ```
 
@@ -88,10 +100,16 @@ liboqs / `oqs` is absent. `ruff check .` + `black --check .` for lint.
 
 ## 5. Release / Deploy
 
-Library release: bump `version` in `pyproject.toml`, add a dated `CHANGELOG.md` entry,
-run the gate (`pytest` + `ruff`), `git tag vX.Y.Z`, push. Service runs as a `systemd`
-user unit invoking `uvicorn skcomms.api:app --host 127.0.0.1 --port 9384` (or
-`skcomms serve`).
+Library release: add a dated `CHANGELOG.md` entry, run the gate (`pytest` + `ruff`),
+then `git tag vX.Y.Z` and push the tag. **There is no `version` field to bump.**
+`pyproject.toml` declares `dynamic = ["version"]` and `[tool.setuptools_scm]` derives it
+from the newest `v[0-9]*` git tag (`tag_regex` restricts it to release tags so the
+non-SemVer tags in this repo cannot hijack the version). The tag IS the version.
+
+Service runs as a `systemd` user unit invoking `uvicorn skcomms.api:app --host
+${SKCOMMS_API_HOST} --port ${SKCOMMS_API_PORT}` (or `skcomms serve`). The unit shipped in
+`contrib/systemd/skcomms-api.service` sets those to `127.0.0.1` / `9384`; see the exposure
+subsection below for what `.158` actually runs, which is **not** that.
 
 ### Front-end / Exposure
 
@@ -101,26 +119,74 @@ Per sk-standards
 - **Ingress tier:** `0 Direct (Tailscale Funnel :443 path-route)`. Single node,
   federation endpoints mounted straight onto Funnel — no reverse proxy. This is how
   `.158` and `.41` run today.
-- **Public `:443` route(s)** — the *only* internet-facing surface (path-preserved Funnel
-  mounts onto `skcomms.api`), every request self-authenticating at the envelope layer:
-  - `POST /api/v1/inbox` — S2S signed-envelope receive (routed to `inbox/<agent>`).
-  - `GET|POST /api/v1/prekey` — hybrid-KEM prekey publish/fetch.
-  - `GET /.well-known/skfed/directory` — CapAuth-signed per-realm directory.
-  - `POST /api/v1/skfed/announce` — gated self-announce into the realm directory.
-- **Bind addresses (NEVER an internet-exposed port):**
-  - **S2S inbox / API — `127.0.0.1:9384`** (`skcomms.api`, default `--host 127.0.0.1`).
-    Reached from the internet *only* via the Funnel `:443` mount above; the socket itself
-    is loopback.
-  - **Prekey / inbox daemon-proxy — `:8765`** (`node_registry.py` `DEFAULT_DAEMON_PORT`,
-    `transports/websocket.py` default `ws://localhost:8765/skcomms/ws`). Serves
-    `/api/v1/inbox` + `/api/v1/prekey` to peers **over the tailnet** (e.g.
-    `http://100.x.x.x:8765/...`) — **not** Funnel-exposed, **never** bound to a public
-    interface.
-  - **CoT / TAK stream — `cot_service.py`** defaults to `0.0.0.0` on the **tailnet only**
-    (real ATAK/iTAK clients); it is a separate, non-federation surface and is **not**
-    Funnel-exposed. Keep it firewalled to the tailscale interface.
-- **Rule:** Funnel `:443` is the sole ingress. No skcomms socket is ever published to a
-  public interface directly.
+- **Internet-facing surface: Tailscale Funnel only.** Funnel publishes `:443` (plus the
+  raw TCP forwards `:8443` and `:10000`, both of which land on `localhost:443`). This
+  host has no public interface of its own, so Funnel is the only path from the internet.
+  The Funnel `:443` mount that reaches skcomms is a **single path**:
+  - `GET /.well-known/skfed/directory` -> `http://localhost:9384/.well-known/skfed/directory`
+    (the CapAuth-signed per-realm directory). **This is the only skcomms route Funnel serves.**
+  - The other federation routes (`POST /api/v1/inbox`, `GET|POST /api/v1/prekey`,
+    `POST /api/v1/skfed/announce`) are **S2S over the tailnet**, not Funnel-mounted on
+    this node. Every one of them self-authenticates at the envelope layer, which is what
+    actually protects them; reachability is not the control.
+
+#### Bind addresses: DOCUMENTED DEFAULT vs WHAT `.158` ACTUALLY RUNS
+
+> ⚠️ **Read this before quoting a bind address as a security control.** Earlier revisions
+> of this SOP asserted "bind addresses (NEVER an internet-exposed port)" and said of
+> `:9384` that "the socket itself is loopback". **That described the code default, not
+> the deployment, and it was false of the running service.** Verified 2026-08-15 on
+> `.158` with `ss -tlnp`: `0.0.0.0:9384`. This is **unit drift, not a code bug**. See
+> the table below.
+
+| Surface | Code / shipped-unit default | Live on `.158` (2026-08-15) | Verdict |
+|---|---|---|---|
+| S2S inbox / API `:9384` | `127.0.0.1` (`cli.py` `serve` `--host` default; `contrib/systemd/skcomms-api.service` sets `SKCOMMS_API_HOST=127.0.0.1`) | **`0.0.0.0:9384`** | ❌ **DRIFTED** |
+| Signaling broker `:9390` | `127.0.0.1:9384` (`transports/broker_server.py` `SKCOMMS_BROKER_HOST`/`_PORT` defaults) | **`0.0.0.0:9390`** | ❌ **DRIFTED + previously undeclared** |
+| sk-access `:9386` | tailnet | `100.108.59.57:9386` | ✅ correct |
+| daemon-proxy `:8765` | not a skcomms socket (see below) | `0.0.0.0:8765` (+ `0.0.0.0:8766`) | ❌ **DRIFTED**, owned by skchat |
+
+**How `:9384` drifted.** The repo ships a correct unit. `.158` does not use it: the
+hand-written `~/.config/systemd/user/skcomms-api.service` hardcodes
+`--host 0.0.0.0 --port 9384` in `ExecStart`, so the `SKCOMMS_API_HOST` indirection is
+bypassed entirely. Same story for the broker: `skcomms-signaling-broker.service` sets
+`SKCOMMS_BROKER_HOST=0.0.0.0`, `SKCOMMS_BROKER_PORT=9390`.
+
+**Measured blast radius (do not overstate this).** `:9384` is exposed to the **LAN
+`192.168.0.0/16` and the tailnet**. It is **NOT** exposed to the internet:
+`curl http://192.168.0.158:9384/health` returns **200** from the LAN, while Funnel
+publishes only `:443`/`:8443`/`:10000` and proxies exactly **one** path to 9384. The
+service's own `/openapi.json` reports **63** routes. **So the effect of the drift is that
+Funnel's one-path allowlist is bypassed for anyone on the LAN: 1 route intended, 63
+reachable.** That includes the loopback-gated operator surfaces described under
+*Browser origins / CORS* below, whose client-IP trust assumption a LAN peer now sits
+inside. Envelope signatures still gate the federation routes; the operator routes are
+the exposure that matters.
+
+**Remediation (not yet applied, needs an operator pass).** Either install the shipped
+`contrib/systemd/skcomms-api.service` (which reads `SKCOMMS_API_HOST=127.0.0.1`), or add
+a drop-in that pins `--host 127.0.0.1`, then confirm with `ss -tlnp | grep 9384`. Same
+for the broker. Do this before treating any bind address in this document as a control.
+
+**Per-surface notes:**
+
+- **Prekey / inbox daemon-proxy `:8765`** (`node_registry.py` `DEFAULT_DAEMON_PORT`,
+  `transports/websocket.py` default `ws://localhost:8765/skcomms/ws`). skcomms **dials**
+  this port, it does not serve it. The listener is **skchat's webui**, and on `.158` it
+  binds `0.0.0.0:8765` (lumina) plus a second agent instance on `0.0.0.0:8766` (opus),
+  both via `SKCHAT_HOST=0.0.0.0` in `~/.config/skchat/webui-*.env`. The previous claim
+  here ("**never** bound to a public interface") was false; see
+  [skchat SOP.md §5](https://github.com/smilinTux/skchat/blob/main/SOP.md).
+- **Signaling broker `:9390`** (`transports/broker_server.py`, unit
+  `skcomms-signaling-broker.service`) backs the `webrtc` and `websocket` rails;
+  `capabilities.py` probes it at `9390`. Note the **code default port is `9384`**, which
+  collides with the API port; every real deployment must set `SKCOMMS_BROKER_PORT`.
+- **sk-access `:9386`** (`skcomms-access.service`) is the capauth-gated knowledge/file
+  MCP, correctly bound to the tailnet address `100.108.59.57:9386`, not `0.0.0.0`. This is the
+  shape the other two should have.
+- **Rule (aspirational, currently violated):** Funnel `:443` is meant to be the sole
+  ingress and no skcomms socket is meant to be published beyond loopback/tailnet. Two are.
+  Treat the rule as the target state, not as a description of `.158`.
 
 #### Browser origins / CORS
 
@@ -293,7 +359,8 @@ capabilities `GET /api/v1/capabilities`; federation routes per §5. CLI:
 | Funnel path 404 | each federation path mounted at its *full* target path (`--set-path` preserves path) |
 | Peer can't reach `:8765` | daemon-proxy binds the tailnet, not loopback-only; verify tailscale up + firewall allows tailscale0 |
 | PQ leg unavailable | `liboqs` / `oqs` importable; otherwise negotiation falls back to the classical suite (expected, logged) |
-| CoT/TAK client can't connect | `cot_service.py` bound to tailnet iface; confirm ATAK/iTAK points at the tailscale IP, not the Funnel host |
+| CoT/TAK client can't connect | **Not a skcomms problem any more.** CoT/TAK lives in the standalone **skcot** repo (`skcot.service`); `skcomms-cot`/`skcomms-cot-agent` are disabled. Debug it there |
+| WebRTC / websocket rail reports down | `capabilities.py` probes the signaling broker on `9390`. Check `skcomms-signaling-broker.service` and that `SKCOMMS_BROKER_PORT=9390` is set (the code default is `9384`, which collides with the API) |
 | Outbox / archive growing unbounded, Syncthing pegged | daemon housekeeping loop running? (`housekeeping.enabled`, `api.lifespan` log line "Housekeeping loop started"); run `skcomms housekeep --json-out` for an immediate sweep; see §6 retention table |
 | `dead_letter_growth` alert fired / `skcomms_dead_letter_depth` climbing | run the dead-letter triage runbook below |
 | Sends "succeed" but the peer never receives; a stranded outbox is filling | envelopes spooled into a home nothing drains (pre-fix `default_outbox_dir()` misroute, or the bare `~/.skcomms/outbox`); run the orphaned-outbox drain runbook below |
@@ -387,8 +454,8 @@ payload-wrap surface; T3 (Hybrid sig) in progress.** Honest, surface-scoped basi
   (ML-DSA-65 + Ed25519, FIPS 204) is wired (`HYBRID_SIG_SUITE`), but the **default
   `sig_suite` is still classical `ed25519-v1`**. Signatures are therefore
   classically forgeable post-quantum — a *future-forgery* risk (deferrable, not HNDL).
-- **T4 — Transport-closed: not claimed.** Tailnet / media / CoT legs are classical and
-  documented as such in §5.
+- **T4, Transport-closed: not claimed.** Tailnet, media, and the LAN-exposed `:9384` /
+  `:9390` legs are classical and documented as such in §5.
 - **Symmetric/hash floor:** AES-256-GCM bulk + SHA-256 integrity are quantum-acceptable
   (Grover-only, ≥128-bit). AES-256 is **not** "broken" by quantum.
 
@@ -401,7 +468,13 @@ Forbidden words ("quantum-proof", "quantum-safe", "unbreakable", "CNSA 2.0", "FI
 + single-gate negotiation with downgrade-detection — see
 [CRYPTO_AGILITY_STANDARD.md](https://github.com/smilinTux/sk-standards/blob/main/standards/CRYPTO_AGILITY_STANDARD.md).
 
-**Version:** SemVer per `pyproject.toml` (`0.1.6`). VERSION_LIFECYCLE phase: **Active**
+**Version:** there is **no** SemVer literal in `pyproject.toml` to quote. The version is
+**derived by setuptools-scm from the newest `v[0-9]*` git tag** (`dynamic = ["version"]`
++ `[tool.setuptools_scm]` with a `tag_regex` that ignores this repo's non-SemVer tags).
+Read the real value with `python -c "import importlib.metadata as m;
+print(m.version('skcomms'))"` or `git describe --tags --match 'v[0-9]*'`. A prior revision
+of this section quoted `0.1.6`, which was already stale by several minor versions.
+VERSION_LIFECYCLE phase: **Active**
 (pre-1.0 `0.x`; only the latest published `0.x` line gets security fixes). Experimental,
 self-built reference implementation — **not** independently security-audited; see
 [SECURITY.md](SECURITY.md).
@@ -447,8 +520,11 @@ curl -fsS http://127.0.0.1:9384/health && echo ' OK'   # /healthz works identica
 systemctl --user list-timers skcomms-housekeep.timer
 ```
 
-The API binds loopback only (`127.0.0.1:9384`, per section 5). To make it
-internet-reachable, run the Funnel mounts the bootstrap printed **on the public node**:
+Installed from `contrib/systemd/`, the API binds loopback (`127.0.0.1:9384`). ⚠️ Confirm
+it, do not assume it: `ss -tlnp | grep 9384` must show `127.0.0.1:9384`, not `0.0.0.0`.
+`.158` currently shows `0.0.0.0` because it runs a hand-written unit instead of the
+shipped one (section 5). To make the node internet-reachable, run the Funnel mounts the
+bootstrap printed **on the public node**:
 
 ```bash
 tailscale funnel --bg --set-path /api/v1/inbox   http://127.0.0.1:9384/api/v1/inbox
@@ -457,8 +533,8 @@ tailscale funnel --bg --set-path /.well-known/skfed/directory http://127.0.0.1:9
 tailscale funnel --bg --set-path /api/v1/skfed/announce      http://127.0.0.1:9384/api/v1/skfed/announce
 ```
 
-Funnel `:443` is the sole ingress; no skcomms socket is ever published to a public
-interface directly (section 5).
+Funnel `:443` is the intended sole ingress. Section 5 records where `.158` currently
+departs from that (`:9384` and `:9390` bound `0.0.0.0`, LAN-reachable) and how to fix it.
 
 ### Where secrets come from (PATHS only, never values)
 
@@ -623,3 +699,42 @@ one as a TOFU CONFLICT until re-pinned.
 7. **New backup.** The old archives restore the OLD key. Immediately:
    `skcomms identity backup -o <new archive>`, distribute per the backup
    section, and only then delete archives of the compromised key.
+
+---
+
+## Verification notes for this document
+
+Every fact in section 5's bind-address table came from the live node on 2026-08-15
+(`ss -tlnp`, `systemctl --user show`, `tailscale funnel status`, `curl`), not from the
+previous revision of this file. Live facts cannot be re-checked by CI, so the
+`docs-evidence` block below pins the **repo-local** halves of those claims: the code
+defaults, the shipped unit's values, the port constants, and the absence of the extracted
+CoT modules. If any of those drift, the gate fails and this document must be re-verified.
+
+**Deliberately NOT an evidence check:** "SOP.md contains no forbidden crypto word".
+Section 9 lists those words verbatim *in order to disclaim them*, so a naive
+`grep`-for-forbidden-words check would fail on the very text that makes the document
+honest. Reviewers should read section 9, not regex it.
+
+<!-- docs-evidence
+verified: 2026-08-15
+checks:
+  - name: serve host default is still loopback (the value section 5 documents as the CODE default)
+    run: grep -qE '^@click\.option\("--host", default="127\.0\.0\.1",' src/skcomms/cli.py
+  - name: serve port default is still 9384
+    run: grep -qE '^@click\.option\("--port", "-p", default=9384,' src/skcomms/cli.py
+  - name: shipped systemd unit still binds 127.0.0.1:9384 (the value .158 drifted away from)
+    run: grep -qxF 'Environment=SKCOMMS_API_HOST=127.0.0.1' contrib/systemd/skcomms-api.service && grep -qxF 'Environment=SKCOMMS_API_PORT=9384' contrib/systemd/skcomms-api.service
+  - name: signaling broker probe port is still 9390
+    run: grep -qE '^ +"webrtc": 9390,' src/skcomms/capabilities.py && grep -qE '^ +"websocket": 9390,' src/skcomms/capabilities.py
+  - name: broker env var names and code defaults unchanged (127.0.0.1:9384, overridden by the unit)
+    run: grep -qF 'os.getenv("SKCOMMS_BROKER_HOST", "127.0.0.1")' src/skcomms/transports/broker_server.py && grep -qF 'os.getenv("SKCOMMS_BROKER_PORT", "9384")' src/skcomms/transports/broker_server.py
+  - name: sk-access port constant is still 9386
+    run: grep -qE '^ +"sk-access": 9386,' src/skcomms/capabilities.py
+  - name: console entry points unchanged
+    run: grep -qxF 'skcomms = "skcomms.cli:main"' pyproject.toml && grep -qxF 'skcomms-mcp = "skcomms.mcp_server:main"' pyproject.toml
+  - name: CoT modules are still extracted to the skcot repo (section 1 says skcomms does not own them)
+    run: test ! -e src/skcomms/cot.py && test ! -e src/skcomms/cot_service.py
+  - name: version is setuptools-scm derived, with no SemVer literal to go stale
+    run: grep -qxF 'dynamic = ["version"]' pyproject.toml && grep -qxF '[tool.setuptools_scm]' pyproject.toml && ! grep -qE '^version[[:space:]]*=' pyproject.toml
+-->
