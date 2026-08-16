@@ -13,7 +13,7 @@ A **replaceable** Nostr event (NIP-33 parameterised-replaceable range)::
     kind    = 30079                 (DIRECTORY_KIND, "skfed-directory")
     tags    = [["d", "<fqid>"]]     d-tag = fqid (one replaceable slot per agent)
     content = JSON {
-        "fqid":      "lumina@chef.skworld",
+        "fqid":      "lumina@chef.skworld.io",
         "node":      "noroc2027",                  # home-node hostname
         "inbox_url": "https://<node>/api/v1/inbox", # https-s2s S2S rail
         "pubkey":    "-----BEGIN PGP PUBLIC KEY BLOCK----- ...",  # capauth armored

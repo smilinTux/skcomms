@@ -114,7 +114,7 @@ class NodeResolver:
 
     A *node id* may be:
       * a dotted short id (``".158"``, ``".41"``) — the form knowledge hits use,
-      * a peer fqid (``lumina@chef.skworld``) or bare peer name (``lumina``),
+      * a peer fqid (``lumina@chef.skworld.io``) or bare peer name (``lumina``),
       * an explicit ``host`` / ``host:port`` (returned verbatim, port defaulted).
 
     The tailnet address + access port are discovered from the

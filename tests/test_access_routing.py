@@ -61,7 +61,7 @@ def _gen_key(uid: str):
 
 @pytest.fixture(scope="module")
 def caller_keys():
-    return _gen_key("caller <lumina@chef.skworld>")
+    return _gen_key("caller <lumina@chef.skworld.io>")
 
 
 # --- a peer store backed by a tmp dir --------------------------------------
@@ -74,7 +74,7 @@ def peer_store(tmp_path):
     store.add(
         PeerInfo(
             name="jarvis",
-            fqid="jarvis@chef.skworld",
+            fqid="jarvis@chef.skworld.io",
             transports=[
                 PeerTransport(
                     transport="access",
@@ -87,7 +87,7 @@ def peer_store(tmp_path):
     store.add(
         PeerInfo(
             name="comfy",
-            fqid="comfy@chef.skworld",
+            fqid="comfy@chef.skworld.io",
             transports=[
                 PeerTransport(transport="tailscale", settings={"tailscale_ip": "100.64.0.100"}),
             ],
@@ -98,7 +98,7 @@ def peer_store(tmp_path):
 
 @pytest.fixture
 def resolver(peer_store):
-    cfg = AccessConfig(node_name=".158", node_fqid="lumina@chef.skworld", port=9386)
+    cfg = AccessConfig(node_name=".158", node_fqid="lumina@chef.skworld.io", port=9386)
     return NodeResolver(config=cfg, peer_store=peer_store)
 
 
@@ -107,14 +107,14 @@ def resolver(peer_store):
 
 def test_resolve_access_transport(resolver):
     assert resolver.resolve(".41") == "http://100.64.0.41:9386"
-    assert resolver.resolve("jarvis@chef.skworld") == "http://100.64.0.41:9386"
+    assert resolver.resolve("jarvis@chef.skworld.io") == "http://100.64.0.41:9386"
     assert resolver.resolve("jarvis") == "http://100.64.0.41:9386"
 
 
 def test_resolve_tailscale_fallback(resolver):
     # No `access` transport -> falls back to tailscale_ip on the default port.
     assert resolver.resolve("comfy") == "http://100.64.0.100:9386"
-    assert resolver.resolve("comfy@chef.skworld") == "http://100.64.0.100:9386"
+    assert resolver.resolve("comfy@chef.skworld.io") == "http://100.64.0.100:9386"
 
 
 def test_resolve_raw_host_and_url(resolver):
@@ -133,7 +133,7 @@ def test_resolve_unknown_node_errors(resolver):
     with pytest.raises(NodeNotFoundError):
         resolver.resolve(".999")
     with pytest.raises(NodeNotFoundError):
-        resolver.resolve("nope@chef.skworld")
+        resolver.resolve("nope@chef.skworld.io")
 
 
 # --- local / self ----------------------------------------------------------
@@ -143,7 +143,7 @@ def test_is_local(resolver):
     assert resolver.is_local(None) is True
     assert resolver.is_local("") is True
     assert resolver.is_local(".158") is True
-    assert resolver.is_local("lumina@chef.skworld") is True
+    assert resolver.is_local("lumina@chef.skworld.io") is True
     assert resolver.is_local(".41") is False
 
 
@@ -190,7 +190,7 @@ def test_remote_call_signs_and_posts(resolver, caller_keys, monkeypatch):
     monkeypatch.setattr(
         routing,
         "resolve_self_identity",
-        lambda agent=None: {"agent": "lumina", "fqid": "lumina@chef.skworld"},
+        lambda agent=None: {"agent": "lumina", "fqid": "lumina@chef.skworld.io"},
     )
 
     def _fake_post(base_url, signed_bytes, *, timeout):
@@ -204,7 +204,7 @@ def test_remote_call_signs_and_posts(resolver, caller_keys, monkeypatch):
 
     assert posted["url"] == "http://100.64.0.41:9386"
     env = posted["signed"]["envelope"]
-    assert env["from_fqid"] == "lumina@chef.skworld"
+    assert env["from_fqid"] == "lumina@chef.skworld.io"
     assert posted["signed"]["signature"]  # actually signed
     body = json.loads(env["body"])
     assert body == {"tool": "file_read", "arguments": {"path": "/home/x/y.py"}}
@@ -222,14 +222,14 @@ def test_remote_call_accepted_by_peer_gate(resolver, caller_keys, monkeypatch):
     monkeypatch.setattr(
         routing,
         "resolve_self_identity",
-        lambda agent=None: {"agent": "lumina", "fqid": "lumina@chef.skworld"},
+        lambda agent=None: {"agent": "lumina", "fqid": "lumina@chef.skworld.io"},
     )
 
     # A peer-side server that grants the caller read scope + a dummy file_read.
     peer_cfg = AccessConfig(
         node_name=".41",
         port=9386,
-        scope_grants={"lumina@chef.skworld": {Scope.READ}},
+        scope_grants={"lumina@chef.skworld.io": {Scope.READ}},
     )
     peer_reg = AccessRegistry()
     srv = AccessServer(
@@ -237,7 +237,7 @@ def test_remote_call_accepted_by_peer_gate(resolver, caller_keys, monkeypatch):
         registry=peer_reg,
         peer_store=PeerStore(peers_dir=resolver.peer_store.peers_dir),
     )
-    srv.trust_key("lumina@chef.skworld", pub)
+    srv.trust_key("lumina@chef.skworld.io", pub)
     srv.registry.register(
         "file_read",
         lambda args, ctx: {"path": args["path"], "served_by": ".41"},
@@ -318,7 +318,7 @@ def test_remote_http_error(resolver, caller_keys, monkeypatch):
     monkeypatch.setattr(
         routing,
         "resolve_self_identity",
-        lambda agent=None: {"agent": "lumina", "fqid": "lumina@chef.skworld"},
+        lambda agent=None: {"agent": "lumina", "fqid": "lumina@chef.skworld.io"},
     )
 
     class _Err(urllib.error.HTTPError):

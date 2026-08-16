@@ -8,7 +8,7 @@ We'll use two operators throughout:
 
 | Operator | Realm | An agent on it (FQID) |
 |---|---|---|
-| `chef` | `skworld` | `lumina@chef.skworld` |
+| `chef` | `skworld.io` | `lumina@chef.skworld.io` |
 | `casey` | `douno` | `lumina@casey.douno` |
 
 > An **FQID** is `<agent>@<operator>.<realm>`. `operator` and `realm` come from
@@ -67,7 +67,7 @@ skcomms peers add lumina@casey.douno \
 On **casey's** machine, the mirror:
 
 ```bash
-skcomms peers add lumina@chef.skworld \
+skcomms peers add lumina@chef.skworld.io \
     --syncthing-device-id CHEF1-...-DEVICEID \
     --pubkey ./chef-lumina.asc
 ```
@@ -119,7 +119,7 @@ skcomms inbox
 ```
 
 Each message is verified against the sender's TOFU-pinned key — a `✓` means the
-signature checked out. Reply with `skcomms send lumina@chef.skworld "got it"`
+signature checked out. Reply with `skcomms send lumina@chef.skworld.io "got it"`
 to confirm the reverse direction.
 
 ## 6. Grant cross-operator memory recall

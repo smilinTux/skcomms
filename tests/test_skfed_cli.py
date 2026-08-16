@@ -16,13 +16,13 @@ def test_skfed_announce_dry_run(monkeypatch):
     monkeypatch.setenv("SKFED_BASE_URL", "https://node.ts.net")
     monkeypatch.setattr(
         "skcomms.identity.resolve_self_identity",
-        lambda agent=None: {"fqid": "jarvis@chef.skworld"},
+        lambda agent=None: {"fqid": "jarvis@chef.skworld.io"},
     )
     runner = CliRunner()
     res = runner.invoke(cli.main, ["skfed", "announce", "--dry-run", "--cap", "dm"])
     assert res.exit_code == 0, res.output
     assert "DRY-RUN" in res.output
-    assert "jarvis@chef.skworld" in res.output
+    assert "jarvis@chef.skworld.io" in res.output
     assert "https://node.ts.net/api/v1/inbox" in res.output
     assert "https://node.ts.net/api/v1/prekey" in res.output
 
@@ -45,7 +45,7 @@ def test_skfed_announce_invokes_announce_self(monkeypatch):
     monkeypatch.setattr(skfed_announce, "announce_self", fake_announce_self)
     monkeypatch.setattr(
         "skcomms.identity.resolve_self_identity",
-        lambda agent=None: {"fqid": "lumina@chef.skworld"},
+        lambda agent=None: {"fqid": "lumina@chef.skworld.io"},
     )
     runner = CliRunner()
     res = runner.invoke(
@@ -67,7 +67,7 @@ def test_skfed_announce_invokes_announce_self(monkeypatch):
     assert captured["agent"] == "lumina"
     assert captured["base"] == "https://l.ts.net"
     assert captured["caps"] == ["dm", "files"]
-    assert "announced lumina@chef.skworld" in res.output
+    assert "announced lumina@chef.skworld.io" in res.output
 
 
 def test_skfed_show_empty(tmp_path, monkeypatch):
@@ -91,7 +91,7 @@ def test_skfed_show_lists_entries(tmp_path, monkeypatch):
         operator="chef",
         entries=[
             DirectoryEntry(
-                fqid="jarvis@chef.skworld",
+                fqid="jarvis@chef.skworld.io",
                 inbox_url="https://j.ts.net/api/v1/inbox",
                 prekey_url="https://j.ts.net/api/v1/prekey",
                 caps=["dm"],
@@ -103,7 +103,7 @@ def test_skfed_show_lists_entries(tmp_path, monkeypatch):
     runner = CliRunner()
     res = runner.invoke(cli.main, ["skfed", "show"])
     assert res.exit_code == 0, res.output
-    assert "jarvis@chef.skworld" in res.output
+    assert "jarvis@chef.skworld.io" in res.output
     assert "https://j.ts.net/api/v1/inbox" in res.output
 
     res_json = runner.invoke(cli.main, ["skfed", "show", "--json"])

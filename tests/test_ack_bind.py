@@ -335,7 +335,7 @@ def test_end_to_end_signed_ack_verifies_with_real_pgp(tmp_path):
 
     key = pgpy.PGPKey.new(PubKeyAlgorithm.RSAEncryptOrSign, 1024)
     key.add_uid(
-        pgpy.PGPUID.new("bob <bob@chef.skworld>"),
+        pgpy.PGPUID.new("bob <bob@chef.skworld.io>"),
         usage={KeyFlags.Sign, KeyFlags.EncryptCommunications},
         hashes=[HashAlgorithm.SHA256],
         ciphers=[SymmetricKeyAlgorithm.AES256],

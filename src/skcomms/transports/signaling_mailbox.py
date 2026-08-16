@@ -62,7 +62,7 @@ class MailboxSignaling:
 
     Usage:
         chan = MailboxSignaling(agent="opus")
-        chan.send_signal("lumina@chef.skworld", "offer", {"type": "offer", "sdp": ...})
+        chan.send_signal("lumina@chef.skworld.io", "offer", {"type": "offer", "sdp": ...})
         for sig in chan.poll_signals():
             # sig = {"from_fqid", "kind", "payload", "id"}
             ...

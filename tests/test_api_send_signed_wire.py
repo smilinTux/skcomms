@@ -30,8 +30,8 @@ from skcomms.transport import (
     TransportStatus,
 )
 
-JARVIS_FQID = "jarvis@chef.skworld"
-LUMINA_FQID = "lumina@chef.skworld"
+JARVIS_FQID = "jarvis@chef.skworld.io"
+LUMINA_FQID = "lumina@chef.skworld.io"
 
 
 def _gen_key(uid: str):
@@ -57,7 +57,7 @@ def _gen_key(uid: str):
 
 @pytest.fixture(scope="module")
 def jarvis_keys():
-    return _gen_key("jarvis <jarvis@chef.skworld>")
+    return _gen_key("jarvis <jarvis@chef.skworld.io>")
 
 
 class CaptureTransport(Transport):

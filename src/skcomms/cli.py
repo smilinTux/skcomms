@@ -697,9 +697,9 @@ def send(
 
     Examples:
 
-        skcomms send opus@chef.skworld "sync complete"
+        skcomms send opus@chef.skworld.io "sync complete"
 
-        skcomms send jarvis@chef.skworld "review please" --subject PR
+        skcomms send jarvis@chef.skworld.io "review please" --subject PR
     """
     from .mailbox import send_message
 

@@ -47,7 +47,7 @@ def _gen_key(uid: str):
 
 @pytest.fixture(scope="module")
 def jarvis_keys():
-    return _gen_key("jarvis <jarvis@chef.skworld>")
+    return _gen_key("jarvis <jarvis@chef.skworld.io>")
 
 
 @pytest.fixture(scope="module")
@@ -55,8 +55,8 @@ def evil_keys():
     return _gen_key("evil <evil@attacker.realm>")
 
 
-JARVIS_FQID = "jarvis@chef.skworld"
-LUMINA_FQID = "lumina@chef.skworld"
+JARVIS_FQID = "jarvis@chef.skworld.io"
+LUMINA_FQID = "lumina@chef.skworld.io"
 
 
 @pytest.fixture

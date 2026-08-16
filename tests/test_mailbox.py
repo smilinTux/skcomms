@@ -43,15 +43,15 @@ def _gen_key(uid: str):
 
 @pytest.fixture(scope="module")
 def lumina_keys():
-    return _gen_key("lumina <lumina@chef.skworld>")
+    return _gen_key("lumina <lumina@chef.skworld.io>")
 
 
 @pytest.fixture
 def cluster_env(tmp_path, monkeypatch):
-    """Tmp SKCOMMS_HOME + fixture cluster.json (realm=skworld, operator=chef)."""
+    """Tmp SKCOMMS_HOME + fixture cluster.json (realm=skworld.io, operator=chef)."""
     monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "home"))
     cluster_file = tmp_path / "cluster.json"
-    cluster_file.write_text(json.dumps({"realm": "skworld", "operator": "chef"}))
+    cluster_file.write_text(json.dumps({"realm": "skworld.io", "operator": "chef"}))
     from skcomms import cluster as cm
 
     original = cm._CLUSTER_LOOKUP
@@ -68,7 +68,7 @@ def signing_patch(lumina_keys):
 
     ident = {
         "agent": "lumina",
-        "fqid": "lumina@chef.skworld",
+        "fqid": "lumina@chef.skworld.io",
         "fingerprint": EnvelopeSigner(priv, "").fingerprint,
     }
     with (
@@ -92,7 +92,7 @@ class TestSend:
         from skcomms.mailbox import send_message
 
         scaffold(agent="lumina")
-        result = send_message("opus@chef.skworld", "hello opus")
+        result = send_message("opus@chef.skworld.io", "hello opus")
 
         # sender outbox record exists; it is sealed at rest (the operator
         # subtree, including outbox/, is Syncthing-published to peers) and is
@@ -121,8 +121,8 @@ class TestSend:
         records = read_outbox(agent="lumina")
         assert len(records) == 1
         env, verification = records[0]
-        assert env.from_fqid == "lumina@chef.skworld"
-        assert env.to_fqid == "opus@chef.skworld"
+        assert env.from_fqid == "lumina@chef.skworld.io"
+        assert env.to_fqid == "opus@chef.skworld.io"
         assert env.body == "hello opus"
         assert verification.valid, verification.reason
 
@@ -145,7 +145,7 @@ class TestInbox:
 
         scaffold(agent="lumina")
         # send to self so it lands in lumina's own inbox (same key verifies)
-        send_message("lumina@chef.skworld", "note to self")
+        send_message("lumina@chef.skworld.io", "note to self")
 
         items = read_inbox(agent="lumina")
         assert len(items) == 1
@@ -158,7 +158,7 @@ class TestInbox:
         from skcomms.mailbox import read_inbox, send_message
 
         info = scaffold(agent="lumina")
-        send_message("lumina@chef.skworld", "original")
+        send_message("lumina@chef.skworld.io", "original")
 
         # The inbox file is now SEALED at rest. Unseal it, tamper the signed
         # envelope body, then re-seal so read_inbox decrypts a tampered-but-
@@ -193,13 +193,13 @@ class TestPeers:
         from skcomms.mailbox import list_peers, send_message
 
         scaffold(agent="lumina")
-        send_message("opus@chef.skworld", "hi")
-        send_message("jarvis@chef.skworld", "yo")
+        send_message("opus@chef.skworld.io", "hi")
+        send_message("jarvis@chef.skworld.io", "yo")
 
         peers = list_peers()
         fqids = {p["fqid"] for p in peers}
         # the two recipients now have inbox dirs in the tree
-        assert "opus@chef.skworld" in fqids
-        assert "jarvis@chef.skworld" in fqids
+        assert "opus@chef.skworld.io" in fqids
+        assert "jarvis@chef.skworld.io" in fqids
         # self should not be listed as a peer
-        assert "lumina@chef.skworld" not in fqids
+        assert "lumina@chef.skworld.io" not in fqids

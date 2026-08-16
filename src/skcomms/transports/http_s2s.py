@@ -482,7 +482,7 @@ class HttpS2STransport(Transport):
 
         try:
             # Use the fqid-aware resolver (S5): handles recipient given as a
-            # full fqid ("lumina@chef.skworld") OR a bare name ("lumina"),
+            # full fqid ("lumina@chef.skworld.io") OR a bare name ("lumina"),
             # which name-only PeerStore.get() does not.
             from skcomms.discovery import inbox_url_for
 

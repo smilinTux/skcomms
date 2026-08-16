@@ -144,7 +144,7 @@ def test_signed_path_still_uses_https_s2s(monkeypatch, tmp_path):
     transports = [FakeTransport("https-s2s", priority=1, send_log=log, succeed=True)]
     r = Router(transports=transports)
 
-    report = r.route_bytes(b"signed-envelope-bytes", "jarvis@chef.skworld")
+    report = r.route_bytes(b"signed-envelope-bytes", "jarvis@chef.skworld.io")
 
     assert log == ["https-s2s"]
     assert report.delivered is True

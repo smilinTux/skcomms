@@ -40,7 +40,7 @@ def _gen_key(uid: str):
 @pytest.fixture(scope="module")
 def operator_keys():
     """The realm operator's signing key (signs the directory)."""
-    return _gen_key("chef <chef@chef.skworld>")
+    return _gen_key("chef <chef@chef.skworld.io>")
 
 
 @pytest.fixture(scope="module")
@@ -50,8 +50,8 @@ def attacker_keys():
 
 REALM = "skworld"
 OPERATOR = "chef"
-JARVIS_FQID = "jarvis@chef.skworld"
-LUMINA_FQID = "lumina@chef.skworld"
+JARVIS_FQID = "jarvis@chef.skworld.io"
+LUMINA_FQID = "lumina@chef.skworld.io"
 
 
 @pytest.fixture(autouse=True)

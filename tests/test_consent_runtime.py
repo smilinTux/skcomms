@@ -45,12 +45,12 @@ def _gen_key(uid: str):
     return str(key), str(key.pubkey)
 
 
-PUB = "mod@trust-a.skworld"
+PUB = "mod@trust-a.skworld.io"
 
 
 @pytest.fixture(scope="module")
 def pub_keys():
-    return _gen_key("mod-a <mod@trust-a.skworld>")
+    return _gen_key("mod-a <mod@trust-a.skworld.io>")
 
 
 @pytest.fixture(autouse=True)

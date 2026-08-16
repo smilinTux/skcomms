@@ -40,13 +40,13 @@ def _gen_key(uid: str):
 @pytest.fixture(scope="module")
 def pub_a_keys():
     """Publisher A's ban-feed signing key."""
-    return _gen_key("mod-a <mod@trust-a.skworld>")
+    return _gen_key("mod-a <mod@trust-a.skworld.io>")
 
 
 @pytest.fixture(scope="module")
 def pub_b_keys():
     """Publisher B's ban-feed signing key."""
-    return _gen_key("mod-b <mod@trust-b.skworld>")
+    return _gen_key("mod-b <mod@trust-b.skworld.io>")
 
 
 @pytest.fixture(scope="module")
@@ -54,8 +54,8 @@ def attacker_keys():
     return _gen_key("evil <evil@attacker.realm>")
 
 
-PUB_A = "mod@trust-a.skworld"
-PUB_B = "mod@trust-b.skworld"
+PUB_A = "mod@trust-a.skworld.io"
+PUB_B = "mod@trust-b.skworld.io"
 
 
 def _build_feed(publisher, priv, entries):
@@ -140,7 +140,7 @@ def test_glob_match_star_and_question(pub_a_keys):
     assert sub.is_banned("bot7@spam.io") is True
     assert sub.is_banned("bot77@spam.io") is False  # two chars -> no match
     # unrelated fqid is clean
-    assert sub.is_banned("friend@chef.skworld") is False
+    assert sub.is_banned("friend@chef.skworld.io") is False
 
 
 # --- blend across two feeds ------------------------------------------------

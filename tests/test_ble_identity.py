@@ -8,7 +8,7 @@ from skcomms.transports.ble.identity import (
 
 
 def test_id_hash_is_first_8_of_sha256_of_fqid():
-    fqid = "lumina@chef.skworld"
+    fqid = "lumina@chef.skworld.io"
     expected = hashlib.sha256(fqid.encode()).digest()[:8]
     assert id_hash(fqid) == expected
     assert len(id_hash(fqid)) == 8

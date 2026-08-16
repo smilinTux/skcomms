@@ -43,7 +43,7 @@ def _gen_key(uid: str):
     return str(key), str(key.pubkey)
 
 
-CALLER_FQID = "lumina@chef.skworld"
+CALLER_FQID = "lumina@chef.skworld.io"
 
 
 @pytest.fixture(scope="module")

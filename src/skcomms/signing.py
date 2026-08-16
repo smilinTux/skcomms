@@ -18,7 +18,7 @@ Usage:
     signed = signer.sign(envelope)            # Envelope -> SignedEnvelope
 
     verifier = EnvelopeVerifier()
-    verifier.add_key("lumina@chef.skworld", lumina_public_armor)
+    verifier.add_key("lumina@chef.skworld.io", lumina_public_armor)
     result = verifier.verify(signed)
 """
 
@@ -265,7 +265,7 @@ class EnvelopeVerifier:
 
     Usage:
         verifier = EnvelopeVerifier()
-        verifier.add_key("lumina@chef.skworld", pub_armor)
+        verifier.add_key("lumina@chef.skworld.io", pub_armor)
         result = verifier.verify(signed_envelope)
     """
 

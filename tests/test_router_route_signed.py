@@ -65,7 +65,7 @@ def isolate_retry_queue(tmp_path, monkeypatch):
 
 def _signed() -> SignedEnvelope:
     env = Envelope(
-        from_fqid="jarvis@chef.skworld", to_fqid="lumina@chef.skworld", body="hello over s2s"
+        from_fqid="jarvis@chef.skworld.io", to_fqid="lumina@chef.skworld.io", body="hello over s2s"
     )
     return SignedEnvelope(envelope=env, signature="sig", signer_fingerprint="FP")
 
@@ -79,7 +79,7 @@ def test_route_signed_sends_signed_bytes_to_to_fqid():
     assert report.delivered is True
     assert log == ["https-s2s"]
     recipient, wire = t.sent[0]
-    assert recipient == "lumina@chef.skworld"  # routed by inner to_fqid
+    assert recipient == "lumina@chef.skworld.io"  # routed by inner to_fqid
     assert wire == signed.to_bytes()  # verbatim signed bytes
 
 
@@ -107,6 +107,6 @@ def test_route_bytes_no_candidates_not_delivered():
     log: list[str] = []
     t = FakeTransport("https-s2s", 1, log, available=False)
     r = Router(transports=[t])
-    report = r.route_bytes(b"x", "lumina@chef.skworld")
+    report = r.route_bytes(b"x", "lumina@chef.skworld.io")
     assert report.delivered is False
     assert log == []  # nothing attempted

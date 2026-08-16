@@ -43,8 +43,8 @@ def _keypair():
     return kp.public_key, kp.private_key
 
 
-def _signed(to_fqid="bob@chef.skworld", body="x") -> SignedEnvelope:
-    env = Envelope(from_fqid="alice@chef.skworld", to_fqid=to_fqid, body=body)
+def _signed(to_fqid="bob@chef.skworld.io", body="x") -> SignedEnvelope:
+    env = Envelope(from_fqid="alice@chef.skworld.io", to_fqid=to_fqid, body=body)
     return SignedEnvelope(envelope=env, signature="sig", signer_fingerprint="FP")
 
 
@@ -62,8 +62,8 @@ def test_wrapped_body_is_length_normalised_to_a_bucket():
     size-hiding property, end to end.
     """
     pub, _ = _keypair()
-    short = _signed(to_fqid="bob@chef.skworld", body="hi")
-    longer = _signed(to_fqid="bob@chef.skworld", body="a" * 1000)
+    short = _signed(to_fqid="bob@chef.skworld.io", body="hi")
+    longer = _signed(to_fqid="bob@chef.skworld.io", body="a" * 1000)
     # sanity: the un-padded envelope bytes differ a lot in length
     assert abs(len(longer.to_bytes()) - len(short.to_bytes())) > 500
 
@@ -78,7 +78,7 @@ def test_wrapped_padded_roundtrips_and_records_suite():
     """Padding under the seal still recovers the exact signed envelope, and the
     sealed inner metadata advertises the pad suite (self-describing)."""
     pub, priv = _keypair()
-    signed = _signed(to_fqid="bob@chef.skworld", body="sensitive body")
+    signed = _signed(to_fqid="bob@chef.skworld.io", body="sensitive body")
     wire = wrap_signed(
         signed,
         dest_hybrid_pub=pub,
@@ -88,7 +88,7 @@ def test_wrapped_padded_roundtrips_and_records_suite():
     )
     inner_meta, recovered = unwrap_signed(wire, priv)
     assert recovered.to_bytes() == signed.to_bytes()
-    assert inner_meta["final_dest"] == "bob@chef.skworld"
+    assert inner_meta["final_dest"] == "bob@chef.skworld.io"
     assert inner_meta["flags"] == ["urgent"]
     # self-describing: the inner advertises that the content was padded
     assert inner_meta["pad"] == PAD_SUITE
@@ -99,7 +99,7 @@ def test_oversize_body_pads_to_next_bucket_multiple_and_roundtrips():
     still round-trips byte-for-byte."""
     pub, priv = _keypair()
     big_body = "Z" * (PAD_LADDER[0] + 5_000)  # > first bucket
-    signed = _signed(to_fqid="bob@chef.skworld", body=big_body)
+    signed = _signed(to_fqid="bob@chef.skworld.io", body=big_body)
     wire = wrap_signed(signed, dest_hybrid_pub=pub, next_hop="r", enabled=True)
     _meta, recovered = unwrap_signed(wire, priv)
     assert recovered.to_bytes() == signed.to_bytes()
@@ -184,11 +184,11 @@ def test_router_route_signed_off_path_byte_identical(monkeypatch, _isolate_retry
     from skcomms.router import Router
 
     t = _FakeTransport()
-    signed = _signed(to_fqid="bob@chef.skworld", body="hello")
+    signed = _signed(to_fqid="bob@chef.skworld.io", body="hello")
     report = Router(transports=[t]).route_signed(signed)
     assert report.delivered is True
     recipient, wire = t.sent[0]
-    assert recipient == "bob@chef.skworld"
+    assert recipient == "bob@chef.skworld.io"
     assert wire == signed.to_bytes()
     assert not is_pqrouted(wire)
 
@@ -200,8 +200,8 @@ def test_router_route_signed_pqroute_pads_and_recovers(_isolate_retry_queue):
     from skcomms.router import Router
 
     pub, priv = _keypair()
-    short = _signed(to_fqid="SECRET-bob@chef.skworld", body="hi")
-    longer = _signed(to_fqid="SECRET-bob@chef.skworld", body="a" * 1000)
+    short = _signed(to_fqid="SECRET-bob@chef.skworld.io", body="hi")
+    longer = _signed(to_fqid="SECRET-bob@chef.skworld.io", body="a" * 1000)
 
     t1, t2 = _FakeTransport(), _FakeTransport()
     Router(transports=[t1]).route_signed(

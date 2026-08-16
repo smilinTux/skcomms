@@ -15,10 +15,10 @@ import pytest
 from skcomms.consent_moderation import Report, ReportLog, ShadowBlockSet
 
 GID = "skfed-builders"
-OWNER = "lumina@chef.skworld"
-ALICE = "alice@chef.skworld"
-BOB = "bob@chef.skworld"
-MALLORY = "mallory@evil.skworld"
+OWNER = "lumina@chef.skworld.io"
+ALICE = "alice@chef.skworld.io"
+BOB = "bob@chef.skworld.io"
+MALLORY = "mallory@evil.skworld.io"
 
 
 @pytest.fixture(autouse=True)

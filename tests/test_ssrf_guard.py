@@ -325,7 +325,7 @@ def test_fetch_peer_from_did_blocks_private_urls(url, tmp_path):
 # SignedEnvelope shape: passes the structural gate so the send reaches the
 # HTTP layer (mirrors tests/test_http_s2s_transport.py).
 SIGNED_ENVELOPE = (
-    b'{"envelope": {"id": "env-ssrf", "from_fqid": "opus@chef.skworld", '
+    b'{"envelope": {"id": "env-ssrf", "from_fqid": "opus@chef.skworld.io", '
     b'"to_fqid": "evil@boss.evilrealm", "body": "hi"}, "signature": "sig"}'
 )
 

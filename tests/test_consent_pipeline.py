@@ -7,7 +7,7 @@ from skcomms.consent_greylist import Greylist
 from skcomms.consent_pipeline import ConsentPipeline
 
 S = "stranger@x.y"
-O = "opus@chef.skworld"
+O = "opus@chef.skworld.io"
 
 
 @pytest.fixture(autouse=True)

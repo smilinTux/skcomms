@@ -52,12 +52,12 @@ def _gen_key(uid: str):
 
 @pytest.fixture(scope="module")
 def admin_keys():
-    return _gen_key("admin <lumina@chef.skworld>")
+    return _gen_key("admin <lumina@chef.skworld.io>")
 
 
 @pytest.fixture(scope="module")
 def reader_keys():
-    return _gen_key("reader <guest@chef.skworld>")
+    return _gen_key("reader <guest@chef.skworld.io>")
 
 
 @pytest.fixture(scope="module")
@@ -73,11 +73,11 @@ def _config(**kw) -> AccessConfig:
         host="127.0.0.1",
         port=9386,
         scope_grants={
-            "lumina@chef.skworld": {Scope.READ, Scope.WRITE, Scope.EXEC},
-            "guest@chef.skworld": {Scope.READ},
+            "lumina@chef.skworld.io": {Scope.READ, Scope.WRITE, Scope.EXEC},
+            "guest@chef.skworld.io": {Scope.READ},
         },
         node_name="testnode",
-        node_fqid="testnode@chef.skworld",
+        node_fqid="testnode@chef.skworld.io",
     )
     for k, v in kw.items():
         setattr(cfg, k, v)
@@ -91,14 +91,14 @@ def _server(**kw) -> AccessServer:
     return srv
 
 
-def _signed_token(keys, *, frm="lumina@chef.skworld", tool="health", arguments=None):
+def _signed_token(keys, *, frm="lumina@chef.skworld.io", tool="health", arguments=None):
     """Build a capauth-signed envelope token authorizing a tool call."""
     priv, _ = keys
     import json as _json
 
     env = Envelope(
         from_fqid=frm,
-        to_fqid="testnode@chef.skworld",
+        to_fqid="testnode@chef.skworld.io",
         content_type="application/x-skaccess-call",
         body=_json.dumps({"tool": tool, "arguments": arguments or {}}),
     )
@@ -150,7 +150,7 @@ class TestCapauthGate:
     def test_signed_trusted_call_succeeds(self, admin_keys):
         _, pub = admin_keys
         srv = _server()
-        srv.trust_key("lumina@chef.skworld", pub)
+        srv.trust_key("lumina@chef.skworld.io", pub)
         token = _signed_token(admin_keys, tool="health")
         result = _run(srv.call_tool(token, "health"))
         assert result["status"] == "ok"
@@ -159,13 +159,13 @@ class TestCapauthGate:
     def test_unsigned_rejected(self, admin_keys):
         _, pub = admin_keys
         srv = _server()
-        srv.trust_key("lumina@chef.skworld", pub)
+        srv.trust_key("lumina@chef.skworld.io", pub)
         from skcomms.envelope import SignedEnvelope
 
         bare = SignedEnvelope(
             envelope=Envelope(
-                from_fqid="lumina@chef.skworld",
-                to_fqid="testnode@chef.skworld",
+                from_fqid="lumina@chef.skworld.io",
+                to_fqid="testnode@chef.skworld.io",
                 body="{}",
             )
         )  # no signature
@@ -176,15 +176,15 @@ class TestCapauthGate:
         # Server only trusts admin's key for that fqid; stranger signs.
         _, admin_pub = admin_keys
         srv = _server()
-        srv.trust_key("lumina@chef.skworld", admin_pub)
-        token = _signed_token(stranger_keys, frm="lumina@chef.skworld", tool="health")
+        srv.trust_key("lumina@chef.skworld.io", admin_pub)
+        token = _signed_token(stranger_keys, frm="lumina@chef.skworld.io", tool="health")
         with pytest.raises(AccessAuthError):
             _run(srv.call_tool(token, "health"))
 
     def test_replay_rejected(self, admin_keys):
         _, pub = admin_keys
         srv = _server()
-        srv.trust_key("lumina@chef.skworld", pub)
+        srv.trust_key("lumina@chef.skworld.io", pub)
         token = _signed_token(admin_keys, tool="health")
         _run(srv.call_tool(token, "health"))
         with pytest.raises(AccessAuthError):
@@ -205,8 +205,8 @@ class TestScopeEnforcement:
         srv = _server()
         _, admin_pub = admin_keys
         _, reader_pub = reader_keys
-        srv.trust_key("lumina@chef.skworld", admin_pub)
-        srv.trust_key("guest@chef.skworld", reader_pub)
+        srv.trust_key("lumina@chef.skworld.io", admin_pub)
+        srv.trust_key("guest@chef.skworld.io", reader_pub)
 
         async def _writer(args, ctx):
             return {"wrote": args.get("path", "?")}
@@ -216,19 +216,19 @@ class TestScopeEnforcement:
 
     def test_write_denied_to_reader(self, admin_keys, reader_keys):
         srv = self._server_with_write_tool(admin_keys, reader_keys)
-        token = _signed_token(reader_keys, frm="guest@chef.skworld", tool="file_write")
+        token = _signed_token(reader_keys, frm="guest@chef.skworld.io", tool="file_write")
         with pytest.raises(AccessScopeError):
             _run(srv.call_tool(token, "file_write", {"path": "/x"}))
 
     def test_write_allowed_to_admin(self, admin_keys, reader_keys):
         srv = self._server_with_write_tool(admin_keys, reader_keys)
-        token = _signed_token(admin_keys, frm="lumina@chef.skworld", tool="file_write")
+        token = _signed_token(admin_keys, frm="lumina@chef.skworld.io", tool="file_write")
         result = _run(srv.call_tool(token, "file_write", {"path": "/x"}))
         assert result == {"wrote": "/x"}
 
     def test_reader_can_call_read_tool(self, admin_keys, reader_keys):
         srv = self._server_with_write_tool(admin_keys, reader_keys)
-        token = _signed_token(reader_keys, frm="guest@chef.skworld", tool="node_info")
+        token = _signed_token(reader_keys, frm="guest@chef.skworld.io", tool="node_info")
         result = _run(srv.call_tool(token, "node_info"))
         assert result["node"] == "testnode"
 
@@ -246,11 +246,11 @@ class TestBuiltins:
     def test_node_info_contents(self, admin_keys):
         _, pub = admin_keys
         srv = _server()
-        srv.trust_key("lumina@chef.skworld", pub)
+        srv.trust_key("lumina@chef.skworld.io", pub)
         token = _signed_token(admin_keys, tool="node_info")
         info = _run(srv.call_tool(token, "node_info"))
         assert info["node"] == "testnode"
-        assert info["fqid"] == "testnode@chef.skworld"
+        assert info["fqid"] == "testnode@chef.skworld.io"
         assert info["public_bind"] is False
         assert info["security"]["tailnet_only"] is True
         assert info["security"]["capauth_gated"] is True
@@ -260,14 +260,14 @@ class TestBuiltins:
     def test_health(self, admin_keys):
         _, pub = admin_keys
         srv = _server()
-        srv.trust_key("lumina@chef.skworld", pub)
+        srv.trust_key("lumina@chef.skworld.io", pub)
         token = _signed_token(admin_keys, tool="health")
         assert _run(srv.call_tool(token, "health"))["status"] == "ok"
 
     def test_unknown_tool(self, admin_keys):
         _, pub = admin_keys
         srv = _server()
-        srv.trust_key("lumina@chef.skworld", pub)
+        srv.trust_key("lumina@chef.skworld.io", pub)
         token = _signed_token(admin_keys, tool="nope")
         with pytest.raises(ToolNotFoundError):
             _run(srv.call_tool(token, "nope"))
@@ -280,7 +280,7 @@ class TestRegistrationSeam:
     def test_register_and_invoke_custom_tool(self, admin_keys):
         _, pub = admin_keys
         srv = _server()
-        srv.trust_key("lumina@chef.skworld", pub)
+        srv.trust_key("lumina@chef.skworld.io", pub)
 
         async def _pg_search(args, ctx):
             return {"q": args["query"], "caller": ctx.identity, "hits": []}
@@ -295,7 +295,7 @@ class TestRegistrationSeam:
         token = _signed_token(admin_keys, tool="pg_search", arguments={"query": "bug"})
         result = _run(srv.call_tool(token, "pg_search", {"query": "bug"}))
         assert result["q"] == "bug"
-        assert result["caller"] == "lumina@chef.skworld"
+        assert result["caller"] == "lumina@chef.skworld.io"
 
     def test_duplicate_registration_rejected(self):
         reg = AccessRegistry()

@@ -41,13 +41,13 @@ def _gen_key(uid: str):
 
 @pytest.fixture(scope="module")
 def operator_keys():
-    return _gen_key("chef <chef@chef.skworld>")
+    return _gen_key("chef <chef@chef.skworld.io>")
 
 
 REALM = "skworld"
 OPERATOR = "chef"
-LUMINA_FQID = "lumina@chef.skworld"
-JARVIS_FQID = "jarvis@chef.skworld"
+LUMINA_FQID = "lumina@chef.skworld.io"
+JARVIS_FQID = "jarvis@chef.skworld.io"
 
 # The leaky funnel host that leaks the machine hostname.
 LEAKY_HOST = "cbrd21-laptop12thgenintelcore.tail204f0c.ts.net"
@@ -85,8 +85,8 @@ def _seed_directory(operator_priv, entries):
 def test_agent_label_from_fqid():
     from skcomms.skfed_readdr import agent_label
 
-    assert agent_label("lumina@chef.skworld") == "lumina"
-    assert agent_label("Jarvis@chef.skworld") == "jarvis"
+    assert agent_label("lumina@chef.skworld.io") == "lumina"
+    assert agent_label("Jarvis@chef.skworld.io") == "jarvis"
 
 
 def test_neutral_host_for():

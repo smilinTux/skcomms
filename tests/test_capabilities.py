@@ -139,7 +139,7 @@ class TestNodeIdentityStrictFallback:
     absent/unresolvable), build_capabilities() falls back to minting the fqid
     from cluster.json. That fallback must be strict (require_realm/
     require_operator), so a missing cluster.json produces a loudly logged
-    ``null`` node id instead of silently minting "unknown@chef.skworld"
+    ``null`` node id instead of silently minting "unknown@chef.skworld.io"
     style identities. The document stays well-formed either way (this is a
     status endpoint, not a security-store write)."""
 
@@ -149,7 +149,7 @@ class TestNodeIdentityStrictFallback:
         from skcomms import cluster as cm
 
         cluster_file = tmp_path / "cluster.json"
-        cluster_file.write_text(json.dumps(data or {"realm": "skworld", "operator": "chef"}))
+        cluster_file.write_text(json.dumps(data or {"realm": "skworld.io", "operator": "chef"}))
         monkeypatch.setattr(cm, "_CLUSTER_LOOKUP", [cluster_file])
 
     def test_valid_cluster_json_mints_correct_fqid(self, tmp_path, monkeypatch):
@@ -161,12 +161,12 @@ class TestNodeIdentityStrictFallback:
             side_effect=ImportError("capauth absent"),
         ):
             doc = _build_with_file_only(tmp_path)
-        assert doc["node"]["id"] == "unknown@chef.skworld"
+        assert doc["node"]["id"] == "unknown@chef.skworld.io"
 
     def test_missing_cluster_json_yields_null_id_not_wrong_fqid(self, tmp_path, monkeypatch):
         """The heart of the fix: no cluster.json must never mint an id that
-        looks plausible but is wrong (e.g. "unknown@chef.skworld" when the
-        real realm is "skworld.io"). It must come back None instead."""
+        looks plausible but is wrong (e.g. "unknown@chef.skworld.io" when no
+        realm is configured at all). It must come back None instead."""
         from unittest.mock import patch
 
         from skcomms import cluster as cm

@@ -42,17 +42,17 @@ def _make_key(uid: str):
 def _env(from_fqid: str) -> Envelope:
     return Envelope(
         from_fqid=from_fqid,
-        to_fqid="opus@chef.skworld",
+        to_fqid="opus@chef.skworld.io",
         body="authorize: exec rm -rf /",
     )
 
 
 def test_legit_sender_still_verifies():
     lumina = _make_key("lumina")
-    signed = EnvelopeSigner(str(lumina), "").sign(_env("lumina@chef.skworld"))
+    signed = EnvelopeSigner(str(lumina), "").sign(_env("lumina@chef.skworld.io"))
 
     v = EnvelopeVerifier()
-    v.add_key("lumina@chef.skworld", str(lumina.pubkey))
+    v.add_key("lumina@chef.skworld.io", str(lumina.pubkey))
     assert v.verify(signed).valid is True
 
 
@@ -62,11 +62,11 @@ def test_forged_from_fqid_signed_with_own_key_is_rejected():
     lumina = _make_key("lumina")
     bob = _make_key("bob")
 
-    forged = EnvelopeSigner(str(bob), "").sign(_env("lumina@chef.skworld"))
+    forged = EnvelopeSigner(str(bob), "").sign(_env("lumina@chef.skworld.io"))
 
     v = EnvelopeVerifier()
-    v.add_key("lumina@chef.skworld", str(lumina.pubkey))  # victim, exec-granted
-    v.add_key("bob@chef.skworld", str(bob.pubkey))  # attacker, low-priv
+    v.add_key("lumina@chef.skworld.io", str(lumina.pubkey))  # victim, exec-granted
+    v.add_key("bob@chef.skworld.io", str(bob.pubkey))  # attacker, low-priv
 
     res = v.verify(forged)
     assert res.valid is False  # must NOT verify against bob's key for a lumina claim
@@ -76,10 +76,10 @@ def test_claimed_identity_with_no_registered_key_is_unknown_signer():
     # Attacker's key is pinned (by fingerprint), but the forged identity is not
     # registered → unknown signer, never a fingerprint-fallback pass.
     bob = _make_key("bob")
-    forged = EnvelopeSigner(str(bob), "").sign(_env("ghost@chef.skworld"))
+    forged = EnvelopeSigner(str(bob), "").sign(_env("ghost@chef.skworld.io"))
 
     v = EnvelopeVerifier()
-    v.add_key("bob@chef.skworld", str(bob.pubkey))
+    v.add_key("bob@chef.skworld.io", str(bob.pubkey))
 
     res = v.verify(forged)
     assert res.valid is False

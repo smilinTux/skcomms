@@ -46,8 +46,8 @@ REALM_PEERS = {
             "pgp_fingerprint": "AAAA1111BBBB2222CCCC3333DDDD4444EEEE5555",
             "syncthing_device_id": "ABCDEF1-2345678-ABCDEF1-2345678-ABCDEF1-2345678-ABCDEF1-2345678",
         },
-        "jarvis@chef.skworld": {
-            "fqid": "jarvis@chef.skworld",
+        "jarvis@chef.skworld.io": {
+            "fqid": "jarvis@chef.skworld.io",
             "pgp_fingerprint": "1111222233334444555566667777888899990000",
         },
     }
@@ -124,7 +124,7 @@ class TestPeerRecord:
         from skcomms.registry import PeerRecord
 
         a = PeerRecord(fqid="opus@casey.douno")
-        b = PeerRecord(fqid="jarvis@chef.skworld")
+        b = PeerRecord(fqid="jarvis@chef.skworld.io")
         with pytest.raises(ValueError):
             a.merge(b)
 
@@ -165,7 +165,7 @@ class TestSyncthingSharedBackend:
 
         recs = SyncthingSharedBackend().list()
         fqids = {r.fqid for r in recs}
-        assert fqids == {"opus@casey.douno", "jarvis@chef.skworld"}
+        assert fqids == {"opus@casey.douno", "jarvis@chef.skworld.io"}
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +234,7 @@ class TestHttpsBackend:
         )
         assert {r.fqid for r in be.list()} == {
             "opus@casey.douno",
-            "jarvis@chef.skworld",
+            "jarvis@chef.skworld.io",
         }
 
 
@@ -450,7 +450,7 @@ class TestPeerRegistryResolve:
 
         reg = PeerRegistry(backends=[SyncthingSharedBackend()])
         fqids = {r.fqid for r in reg.list()}
-        assert fqids == {"opus@casey.douno", "jarvis@chef.skworld"}
+        assert fqids == {"opus@casey.douno", "jarvis@chef.skworld.io"}
 
 
 # ---------------------------------------------------------------------------

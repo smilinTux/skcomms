@@ -30,7 +30,7 @@ from skcomms.consent import ContactStore
 from skcomms.consent_pipeline import ConsentPipeline
 
 SELF_AGENT = "lumina"
-SENDER = "mallory@evil.skworld"
+SENDER = "mallory@evil.skworld.io"
 
 
 @pytest.fixture(autouse=True)
@@ -204,7 +204,7 @@ def test_write_to_inbox_drops_blocked_sender_in_mode_off(api_mod, monkeypatch, t
 
     class _Env:
         id = "env-banned-1"
-        to_fqid = f"{SELF_AGENT}@chef.skworld"
+        to_fqid = f"{SELF_AGENT}@chef.skworld.io"
         from_fqid = SENDER
         body = "let me in"
         consent_token = None

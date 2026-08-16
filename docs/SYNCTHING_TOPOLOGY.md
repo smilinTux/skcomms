@@ -6,7 +6,7 @@
 > sharing.
 
 skcomms is the **canonical FQID comms layer**. An FQID is
-`<agent>@<operator>.<realm>` (e.g. `lumina@chef.skworld`). Messages are plain
+`<agent>@<operator>.<realm>` (e.g. `lumina@chef.skworld.io`). Messages are plain
 files dropped into per-agent `outbox/`/`inbox/` directories; **Syncthing is the
 transport** that carries those files between machines and between operators. No
 server, no broker — just folder replication over the Syncthing mesh.
@@ -34,7 +34,7 @@ honors `SKCOMMS_HOME` and otherwise defaults to `~/.skcomms`:
 
 `realm` and `operator` come from `cluster.json` (via `skcomms.cluster`); `agent`
 is the agent component of the resolved FQID (`skcomms.identity`). For
-`lumina@chef.skworld` the self tree is:
+`lumina@chef.skworld.io` the self tree is:
 
 ```
 ~/.skcomms/skworld/chef/lumina/{outbox,inbox}
@@ -111,7 +111,7 @@ straight back to FQIDs:
 | Folder ID  | `skcomms-<realm>-<operator>`                   | `skcomms-skworld-chef`        |
 
 - The **Label** uses the same `<operator>.<realm>` ordering as the suffix of an
-  FQID (`...@chef.skworld`), so it reads naturally.
+  FQID (`...@chef.skworld.io`), so it reads naturally.
 - The **Folder ID** is path-safe (`-` separated, no `@`/`.`) and is identical on
   both the publisher (Send-Only) and every subscriber (Receive-Only) of that
   operator's tree — Syncthing requires the Folder ID to match across a share.
@@ -284,7 +284,7 @@ a compromised relay box or a stray backup of the tree exposes routing metadata
 
 Two operators want their agents to message each other:
 
-- Operator **chef**, realm **skworld**, agent **lumina** → `lumina@chef.skworld`
+- Operator **chef**, realm **skworld.io**, agent **lumina** → `lumina@chef.skworld.io`
 - Operator **casey**, realm **douno**, agent **opus** → `opus@casey.douno`
 
 ### 6.1 Each side scaffolds + records the peer
@@ -302,7 +302,7 @@ On **casey**'s machine, the mirror:
 
 ```bash
 skcomms init                     # builds ~/.skcomms/douno/casey/opus/{outbox,inbox} + .stignore
-skcomms peers add lumina@chef.skworld \
+skcomms peers add lumina@chef.skworld.io \
     --syncthing-device-id CHEF-DEVICE-ID-...-2345678 \
     --pubkey ./lumina.pub.asc
 ```
@@ -372,7 +372,7 @@ machine, where it lands under casey's authoritative inbox. On casey:
 
 ```bash
 skcomms inbox     # reads opus's inbox, verifies each signature against the
-                  # TOFU-pinned fingerprint recorded for lumina@chef.skworld
+                  # TOFU-pinned fingerprint recorded for lumina@chef.skworld.io
 ```
 
 A `✓` means the message was authored by the same PGP key chef pinned via

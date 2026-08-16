@@ -48,7 +48,7 @@ def _gen_key(uid: str):
 
 @pytest.fixture(scope="module")
 def chef_keys():
-    return _gen_key("chef <lumina@chef.skworld>")
+    return _gen_key("chef <lumina@chef.skworld.io>")
 
 
 @pytest.fixture(scope="module")
@@ -64,13 +64,13 @@ def home(tmp_path, monkeypatch):
 
 @pytest.fixture
 def granter_patch(chef_keys):
-    """Patch identity + signer so 'self' is lumina@chef.skworld with chef's key."""
+    """Patch identity + signer so 'self' is lumina@chef.skworld.io with chef's key."""
     priv, pub = chef_keys
     from skcomms.signing import EnvelopeSigner
 
     ident = {
         "agent": "lumina",
-        "fqid": "lumina@chef.skworld",
+        "fqid": "lumina@chef.skworld.io",
         "fingerprint": EnvelopeSigner(priv, "").fingerprint,
     }
     with (
@@ -101,7 +101,7 @@ class TestMintVerify:
         )
         assert token["collection"] == "chef.skworld/journal"
         assert token["granted_to"] == "opus@casey.douno"
-        assert token["granted_by"] == "lumina@chef.skworld"
+        assert token["granted_by"] == "lumina@chef.skworld.io"
         assert token["signature"]
         # expires resolved to an iso8601 string in the future
         exp = datetime.fromisoformat(token["expires"])
@@ -116,7 +116,7 @@ class TestMintVerify:
         tok = ConsentToken(
             collection="chef.skworld/journal",
             granted_to="opus@casey.douno",
-            granted_by="lumina@chef.skworld",
+            granted_by="lumina@chef.skworld.io",
             expires=_iso_in(30),
             signature="THIS-SHOULD-NOT-AFFECT-CANONICAL",
         )
@@ -190,7 +190,7 @@ class TestAcceptAndList:
         }
         assert landed["collection"] == "chef.skworld/journal"
         assert landed["granted_to"] == "opus@casey.douno"
-        assert landed["granted_by"] == "lumina@chef.skworld"
+        assert landed["granted_by"] == "lumina@chef.skworld.io"
         assert landed["signature"]
 
     def test_accept_is_idempotent(self, home, granter_patch):
@@ -241,7 +241,7 @@ class TestGrantCLI:
         from skcomms.signing import EnvelopeSigner
         from skcomms.tofu import record_fingerprint
 
-        record_fingerprint("lumina@chef.skworld", EnvelopeSigner(priv, "").fingerprint, pubkey=pub)
+        record_fingerprint("lumina@chef.skworld.io", EnvelopeSigner(priv, "").fingerprint, pubkey=pub)
 
         runner = CliRunner()
         # mint to stdout
@@ -260,7 +260,7 @@ class TestGrantCLI:
         )
         assert mint.exit_code == 0, mint.output
         token = json.loads(mint.output)
-        assert token["granted_by"] == "lumina@chef.skworld"
+        assert token["granted_by"] == "lumina@chef.skworld.io"
 
         # accept from stdin
         accept = runner.invoke(main, ["grants", "accept", "-"], input=json.dumps(token))

@@ -105,10 +105,10 @@ class WireToReceiver(Transport):
 
 @pytest.fixture
 def two_nodes(monkeypatch):
-    j_priv, j_pub, j_fp = _gen_key("jarvis <jarvis@chef.skworld>")
+    j_priv, j_pub, j_fp = _gen_key("jarvis <jarvis@chef.skworld.io>")
     # lumina's node verifies jarvis's signature -> pin jarvis pubkey
     v = EnvelopeVerifier()
-    v.add_key("jarvis@chef.skworld", j_pub)
+    v.add_key("jarvis@chef.skworld.io", j_pub)
     node_lumina = ReceiverNode(v)
     # jarvis's sender stack
     monkeypatch.setattr(
@@ -116,7 +116,7 @@ def two_nodes(monkeypatch):
         "resolve_self_identity",
         lambda *a, **k: {
             "agent": "jarvis",
-            "fqid": "jarvis@chef.skworld",
+            "fqid": "jarvis@chef.skworld.io",
             "fingerprint": j_fp,
             "capauth_uri": "capauth:jarvis@skworld.io",
         },
@@ -133,12 +133,12 @@ def two_nodes(monkeypatch):
 
 def test_federated_send_delivers_and_verifies(two_nodes):
     jarvis, lumina, _ = two_nodes
-    report = jarvis.send_federated("lumina@chef.skworld", "federated hello")
+    report = jarvis.send_federated("lumina@chef.skworld.io", "federated hello")
     assert report.delivered is True
     assert len(lumina.inbox) == 1
     env = lumina.inbox[0]
-    assert env.from_fqid == "jarvis@chef.skworld"
-    assert env.to_fqid == "lumina@chef.skworld"
+    assert env.from_fqid == "jarvis@chef.skworld.io"
+    assert env.to_fqid == "lumina@chef.skworld.io"
     assert env.body == "federated hello"
 
 
@@ -153,7 +153,7 @@ def test_federated_replay_rejected(two_nodes):
         return orig(b, r)
 
     jarvis.router.transports[0].send = spy
-    jarvis.send_federated("lumina@chef.skworld", "once")
+    jarvis.send_federated("lumina@chef.skworld.io", "once")
     assert len(lumina.inbox) == 1
     # replay the identical signed envelope
     assert lumina.receive(sent[0]) is False
@@ -167,7 +167,7 @@ def test_federated_tampered_body_rejected(two_nodes):
     jarvis.router.transports[0].send = lambda b, r, _o=jarvis.router.transports[0].send: (
         sent.append(b) or _o(b, r)
     )
-    jarvis.send_federated("lumina@chef.skworld", "real")
+    jarvis.send_federated("lumina@chef.skworld.io", "real")
     signed = SignedEnvelope.from_bytes(sent[0])
     signed.envelope.body = "tampered"  # mutate after signing
     assert lumina.receive(signed.to_bytes()) is False
@@ -176,17 +176,17 @@ def test_federated_tampered_body_rejected(two_nodes):
 
 def test_federated_untrusted_sender_rejected(monkeypatch):
     # a node that does NOT know jarvis's key rejects his message
-    j_priv, j_pub, j_fp = _gen_key("jarvis <jarvis@chef.skworld>")
+    j_priv, j_pub, j_fp = _gen_key("jarvis <jarvis@chef.skworld.io>")
     node = ReceiverNode(EnvelopeVerifier())  # empty verifier
     monkeypatch.setattr(
         identity_mod,
         "resolve_self_identity",
-        lambda *a, **k: {"fqid": "jarvis@chef.skworld", "fingerprint": j_fp},
+        lambda *a, **k: {"fqid": "jarvis@chef.skworld.io", "fingerprint": j_fp},
     )
     jarvis = SKComms(
         router=Router(transports=[WireToReceiver(node)]), crypto=EnvelopeCrypto(j_priv, "", j_fp)
     )
-    report = jarvis.send_federated("lumina@chef.skworld", "hi")
+    report = jarvis.send_federated("lumina@chef.skworld.io", "hi")
     assert report.delivered is False
     assert node.inbox == [] and "SignatureError" in node.rejected
 

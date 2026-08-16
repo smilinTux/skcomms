@@ -34,7 +34,7 @@ def _isolate_skcomms_home(tmp_path, monkeypatch):
     test_key_exchange_transport_scoping), so a plain ``pytest tests/`` was
     minting real approved DeviceRecords into the operator's live security
     store. Measured: running test_public_pairing.py alone added 2 records,
-    and 58 accumulated records for ``opus@chef.skworld`` trace to this.
+    and 58 accumulated records for ``opus@chef.skworld.io`` trace to this.
     """
     monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "skcomms-home"))
     monkeypatch.setenv("SKCOMMS_PAIRING_KERNEL_BASE", str(tmp_path / "capauth-pairing"))

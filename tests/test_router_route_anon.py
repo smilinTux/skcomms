@@ -108,12 +108,12 @@ def test_route_signed_byte_identical_even_with_anon_env_on(monkeypatch):
     log: list[str] = []
     t = FakeTransport("https-s2s", 1, log)
     r = Router(transports=[t])
-    env = Envelope(from_fqid="jarvis@chef.skworld", to_fqid="lumina@chef.skworld", body="hi")
+    env = Envelope(from_fqid="jarvis@chef.skworld.io", to_fqid="lumina@chef.skworld.io", body="hi")
     signed = SignedEnvelope(envelope=env, signature="sig", signer_fingerprint="FP")
     report = r.route_signed(signed)
     assert report.delivered is True
     recipient, wire = t.sent[0]
-    assert recipient == "lumina@chef.skworld"
+    assert recipient == "lumina@chef.skworld.io"
     assert wire == signed.to_bytes()  # verbatim — anon never leaks in
 
 
