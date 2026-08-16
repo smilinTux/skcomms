@@ -241,7 +241,9 @@ class TestGrantCLI:
         from skcomms.signing import EnvelopeSigner
         from skcomms.tofu import record_fingerprint
 
-        record_fingerprint("lumina@chef.skworld.io", EnvelopeSigner(priv, "").fingerprint, pubkey=pub)
+        record_fingerprint(
+            "lumina@chef.skworld.io", EnvelopeSigner(priv, "").fingerprint, pubkey=pub
+        )
 
         runner = CliRunner()
         # mint to stdout

@@ -65,13 +65,23 @@ def test_poll_signals_returns_only_verified_self_addressed(monkeypatch):
     inbox = [
         # valid offer addressed to us → kept
         (
-            _env(SUBJECT_OFFER, "opus@chef.skworld.io", "lumina@chef.skworld.io", {"sdp": "A"}, "offer"),
+            _env(
+                SUBJECT_OFFER,
+                "opus@chef.skworld.io",
+                "lumina@chef.skworld.io",
+                {"sdp": "A"},
+                "offer",
+            ),
             SimpleNamespace(valid=True),
         ),
         # invalid signature → dropped
         (
             _env(
-                SUBJECT_ANSWER, "opus@chef.skworld.io", "lumina@chef.skworld.io", {"sdp": "B"}, "answer"
+                SUBJECT_ANSWER,
+                "opus@chef.skworld.io",
+                "lumina@chef.skworld.io",
+                {"sdp": "B"},
+                "answer",
             ),
             SimpleNamespace(valid=False),
         ),

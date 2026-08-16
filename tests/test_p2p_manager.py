@@ -43,7 +43,9 @@ class _FakeSignaling:
 async def test_manager_call_and_auto_answer():
     bus = _Bus()
     incoming: list = []
-    opus = P2PSessionManager(signaling=_FakeSignaling("opus@chef.skworld.io", bus), poll_interval=0.1)
+    opus = P2PSessionManager(
+        signaling=_FakeSignaling("opus@chef.skworld.io", bus), poll_interval=0.1
+    )
     lumina = P2PSessionManager(
         signaling=_FakeSignaling("lumina@chef.skworld.io", bus),
         poll_interval=0.1,

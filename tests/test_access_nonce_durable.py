@@ -199,7 +199,9 @@ class TestReplayAcrossRestart:
         with pytest.raises(AccessAuthError):
             reborn.authenticate(token)
         # A genuinely fresh call still passes.
-        assert reborn.authenticate(_signed_token(caller_keys)).identity == ("lumina@chef.skworld.io")
+        assert reborn.authenticate(_signed_token(caller_keys)).identity == (
+            "lumina@chef.skworld.io"
+        )
 
     def test_memory_mode_still_replays_after_restart(self, home, caller_keys, monkeypatch):
         """Documents WHY memory mode is opt-in only: restart forgets nonces."""

@@ -506,7 +506,9 @@ class TestTofuRepin:
         assert "repinned_at" in entry
 
         assert fingerprint_for("lumina@chef.skworld.io") == FP_NEW
-        assert verify_fingerprint("lumina@chef.skworld.io", FP_NEW).status == TofuStatus.TRUST_MATCH
+        assert (
+            verify_fingerprint("lumina@chef.skworld.io", FP_NEW).status == TofuStatus.TRUST_MATCH
+        )
         # the OLD (lost/compromised) fingerprint is now the conflicting one
         assert verify_fingerprint("lumina@chef.skworld.io", FP_OLD).status == TofuStatus.CONFLICT
 

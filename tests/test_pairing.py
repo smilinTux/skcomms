@@ -147,7 +147,10 @@ def test_accept_rejects_fingerprint_mismatch(tmp_path, monkeypatch):
     other = _gen_pubkey()
     uri = to_skp_uri(
         PairingBundle(
-            fqid="opus@chef.skworld.io", fingerprint="00" * 20, syncthing_device_id="D", pubkey=other
+            fqid="opus@chef.skworld.io",
+            fingerprint="00" * 20,
+            syncthing_device_id="D",
+            pubkey=other,
         )
     )
     with pytest.raises(ValueError):
