@@ -11,9 +11,9 @@ import pytest
 
 from skcomms.consent_tokens import TokenStore
 
-L = "lumina@chef.skworld"
-O = "opus@chef.skworld"
-J = "jarvis@chef.skworld"
+L = "lumina@chef.skworld.io"
+O = "opus@chef.skworld.io"
+J = "jarvis@chef.skworld.io"
 
 
 @pytest.fixture

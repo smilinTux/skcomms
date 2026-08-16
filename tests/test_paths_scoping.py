@@ -195,8 +195,8 @@ def test_s2s_write_lands_in_reader_inbox_under_custom_home(monkeypatch, tmp_path
     from skcomms.envelope import Envelope
 
     env = Envelope(
-        from_fqid="jarvis@chef.skworld",
-        to_fqid="lumina@chef.skworld",
+        from_fqid="jarvis@chef.skworld.io",
+        to_fqid="lumina@chef.skworld.io",
         body="hello across the seam",
     )
     written = Path(api._write_to_recipient_inbox(env))
@@ -220,7 +220,7 @@ def test_traversal_to_fqid_fails_closed_to_base_inbox(monkeypatch, tmp_path):
     from skcomms.envelope import Envelope
 
     env = Envelope(
-        from_fqid="jarvis@chef.skworld",
+        from_fqid="jarvis@chef.skworld.io",
         to_fqid="../../evil@x.y",
         body="escape attempt",
     )

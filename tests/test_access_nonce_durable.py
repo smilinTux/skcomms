@@ -62,16 +62,16 @@ def _gen_key(uid: str):
 
 @pytest.fixture(scope="module")
 def caller_keys():
-    return _gen_key("caller <lumina@chef.skworld>")
+    return _gen_key("caller <lumina@chef.skworld.io>")
 
 
 def _config() -> AccessConfig:
     return AccessConfig(
         host="127.0.0.1",
         port=9386,
-        scope_grants={"lumina@chef.skworld": {Scope.READ}},
+        scope_grants={"lumina@chef.skworld.io": {Scope.READ}},
         node_name="testnode",
-        node_fqid="testnode@chef.skworld",
+        node_fqid="testnode@chef.skworld.io",
     )
 
 
@@ -82,8 +82,8 @@ def _server(**kw) -> AccessServer:
 def _signed_token(keys, *, tool="health"):
     priv, _ = keys
     env = Envelope(
-        from_fqid="lumina@chef.skworld",
-        to_fqid="testnode@chef.skworld",
+        from_fqid="lumina@chef.skworld.io",
+        to_fqid="testnode@chef.skworld.io",
         content_type="application/x-skaccess-call",
         body=json.dumps({"tool": tool, "arguments": {}}),
     )
@@ -162,12 +162,12 @@ class TestDefaultWiring:
     def test_legacy_synced_db_migrated_once(self, home, local_state):
         """Replay history from the old synced location carries over."""
         legacy = DurableNonceCache(home / "state" / "access_nonce_cache.db")
-        assert legacy.check_and_add("lumina@chef.skworld", "n-legacy") is True
+        assert legacy.check_and_add("lumina@chef.skworld.io", "n-legacy") is True
         legacy.close()
 
         srv = _server()
         assert srv.nonce_cache.path == local_state / "access_nonce_cache.db"
-        assert srv.nonce_cache.check_and_add("lumina@chef.skworld", "n-legacy") is False
+        assert srv.nonce_cache.check_and_add("lumina@chef.skworld.io", "n-legacy") is False
 
     def test_unopenable_store_fails_closed(self, home, monkeypatch):
         """No silent downgrade to in-memory when the durable store is broken."""
@@ -188,18 +188,20 @@ class TestReplayAcrossRestart:
         token = _signed_token(caller_keys)
 
         first = _server()
-        first.trust_key("lumina@chef.skworld", pub)
+        first.trust_key("lumina@chef.skworld.io", pub)
         ctx = first.authenticate(token)
-        assert ctx.identity == "lumina@chef.skworld"
+        assert ctx.identity == "lumina@chef.skworld.io"
         first.nonce_cache.close()
 
         # Simulated daemon restart: fresh server, same node (same home).
         reborn = _server()
-        reborn.trust_key("lumina@chef.skworld", pub)
+        reborn.trust_key("lumina@chef.skworld.io", pub)
         with pytest.raises(AccessAuthError):
             reborn.authenticate(token)
         # A genuinely fresh call still passes.
-        assert reborn.authenticate(_signed_token(caller_keys)).identity == ("lumina@chef.skworld")
+        assert reborn.authenticate(_signed_token(caller_keys)).identity == (
+            "lumina@chef.skworld.io"
+        )
 
     def test_memory_mode_still_replays_after_restart(self, home, caller_keys, monkeypatch):
         """Documents WHY memory mode is opt-in only: restart forgets nonces."""
@@ -208,10 +210,10 @@ class TestReplayAcrossRestart:
         token = _signed_token(caller_keys)
 
         first = _server()
-        first.trust_key("lumina@chef.skworld", pub)
+        first.trust_key("lumina@chef.skworld.io", pub)
         first.authenticate(token)
 
         reborn = _server()
-        reborn.trust_key("lumina@chef.skworld", pub)
+        reborn.trust_key("lumina@chef.skworld.io", pub)
         # In-memory cache forgot the nonce: replay sails through.
-        assert reborn.authenticate(token).identity == "lumina@chef.skworld"
+        assert reborn.authenticate(token).identity == "lumina@chef.skworld.io"

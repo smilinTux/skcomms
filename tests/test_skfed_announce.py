@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import pytest
 
-JARVIS_FQID = "jarvis@chef.skworld"
-LUMINA_FQID = "lumina@chef.skworld"
+JARVIS_FQID = "jarvis@chef.skworld.io"
+LUMINA_FQID = "lumina@chef.skworld.io"
 REALM = "skworld"
 OPERATOR = "chef"
 
@@ -46,7 +46,7 @@ def _gen_key(uid: str):
 
 @pytest.fixture(scope="module")
 def operator_keys():
-    return _gen_key("chef <chef@chef.skworld>")
+    return _gen_key("chef <chef@chef.skworld.io>")
 
 
 @pytest.fixture(autouse=True)
@@ -93,7 +93,7 @@ def test_announce_self_derives_inbox_and_prekey_from_base():
         signer="SIG",
         base_resolver=lambda: None,
     )
-    assert sd == "signed-directory-for:jarvis@chef.skworld"
+    assert sd == "signed-directory-for:jarvis@chef.skworld.io"
     call = pub.calls[0]
     assert call["fqid"] == JARVIS_FQID
     assert call["inbox_url"] == "https://node.tailXYZ.ts.net/api/v1/inbox"
@@ -273,7 +273,7 @@ def test_refresh_all_accepts_plain_agent_names(monkeypatch):
     monkeypatch.setattr(
         sa,
         "resolve_self_identity",
-        lambda agent=None: {"fqid": f"{agent}@chef.skworld"},
+        lambda agent=None: {"fqid": f"{agent}@chef.skworld.io"},
     )
     pub = _CapturingPublisher()
     sa.refresh_all(

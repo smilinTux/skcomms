@@ -26,8 +26,8 @@ from skcomms.signing import EnvelopeVerifier, HybridEnvelopeSigner
 
 def _env() -> Envelope:
     return Envelope(
-        from_fqid="lumina@chef.skworld",
-        to_fqid="opus@chef.skworld",
+        from_fqid="lumina@chef.skworld.io",
+        to_fqid="opus@chef.skworld.io",
         body="quantum-resistant per-message auth",
     )
 
@@ -43,7 +43,7 @@ pq = pytest.mark.skipif(not pqsig.is_available(), reason="liboqs (oqs) not avail
 def _bound_verifier(kp) -> EnvelopeVerifier:
     """A verifier with the hybrid signer pinned to the envelope's from_fqid."""
     v = EnvelopeVerifier()
-    v.add_hybrid_key("lumina@chef.skworld", kp.mldsa_pub)
+    v.add_hybrid_key("lumina@chef.skworld.io", kp.mldsa_pub)
     return v
 
 
@@ -100,7 +100,7 @@ def test_hybrid_forged_inline_keys_impersonation_is_rejected():
     # Attacker forges a message "from" the victim, signed with attacker's keys.
     forged = HybridEnvelopeSigner(keypair=attacker_kp, signer_id="attacker").sign(_env())
     v = EnvelopeVerifier()
-    v.add_hybrid_key("lumina@chef.skworld", victim_kp.mldsa_pub)  # victim's real key
+    v.add_hybrid_key("lumina@chef.skworld.io", victim_kp.mldsa_pub)  # victim's real key
     res = v.verify(forged)
     assert res.valid is False
     assert "mismatch" in res.reason.lower()

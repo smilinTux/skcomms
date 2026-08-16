@@ -40,17 +40,17 @@ def _gen_key(uid: str):
 
 @pytest.fixture(scope="module")
 def operator_keys():
-    return _gen_key("chef <chef@chef.skworld>")
+    return _gen_key("chef <chef@chef.skworld.io>")
 
 
 @pytest.fixture(scope="module")
 def jarvis_keys():
-    return _gen_key("jarvis <jarvis@chef.skworld>")
+    return _gen_key("jarvis <jarvis@chef.skworld.io>")
 
 
 REALM = "skworld"
 OPERATOR = "chef"
-JARVIS_FQID = "jarvis@chef.skworld"
+JARVIS_FQID = "jarvis@chef.skworld.io"
 
 
 @pytest.fixture(autouse=True)
@@ -126,7 +126,7 @@ def _signed_announce(
     )
     env = Envelope(
         from_fqid=from_fqid or fqid,
-        to_fqid="directory@chef.skworld",
+        to_fqid="directory@chef.skworld.io",
         body=body,
         content_type="application/skfed-announce+json",
     )
@@ -201,7 +201,7 @@ def test_announce_cannot_announce_other_agent(client, jarvis_keys):
     _pin(JARVIS_FQID, j_pub)
 
     # Signed by jarvis but the body announces lumina -> 403.
-    raw = _signed_announce(j_priv, fqid="lumina@chef.skworld", from_fqid=JARVIS_FQID)
+    raw = _signed_announce(j_priv, fqid="lumina@chef.skworld.io", from_fqid=JARVIS_FQID)
     resp = client.post("/api/v1/skfed/announce", content=raw)
     assert resp.status_code == 403, resp.text
 

@@ -59,7 +59,7 @@ def mirror_pairing(fqid: str, pubkey: str) -> None:
     no-op. Without that guard every accept minted ANOTHER approved DeviceRecord,
     and because each accept presents a freshly generated key, TOFU pinned
     nothing: the subject simply accumulated approved devices. Observed on
-    ``opus@chef.skworld``, 22 records in one afternoon, every one a distinct
+    ``opus@chef.skworld.io``, 22 records in one afternoon, every one a distinct
     fingerprint, in pairs because both :func:`skcomms.pairing.accept_pairing`
     and the public-pairing path mirror the same accept.
 

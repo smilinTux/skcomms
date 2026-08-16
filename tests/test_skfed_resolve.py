@@ -40,13 +40,13 @@ def _gen_key(uid: str):
 
 @pytest.fixture(scope="module")
 def operator_keys():
-    return _gen_key("chef <chef@chef.skworld>")
+    return _gen_key("chef <chef@chef.skworld.io>")
 
 
-REALM = "skworld"
+REALM = "skworld.io"
 OPERATOR = "chef"
-JARVIS_FQID = "jarvis@chef.skworld"
-LUMINA_FQID = "lumina@chef.skworld"
+JARVIS_FQID = "jarvis@chef.skworld.io"
+LUMINA_FQID = "lumina@chef.skworld.io"
 DIR_BASE = "https://dir.chef.skworld"
 
 
@@ -189,7 +189,7 @@ def test_resolve_agent_unknown_agent_returns_none(tmp_path, monkeypatch, operato
     dns = FakeDns(srv={f"_skfed._tcp.{REALM}": [("dir.chef.skworld", 443)]})
 
     rec = resolve_agent(
-        "ghost@chef.skworld",
+        "ghost@chef.skworld.io",
         http_get=_http_get_for(sd),
         dns=dns,
         verifier=_verifier_for(pub),

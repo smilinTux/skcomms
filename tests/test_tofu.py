@@ -40,8 +40,8 @@ class TestRecordAndLookup:
     def test_record_then_lookup(self, tofu_home):
         from skcomms.tofu import fingerprint_for, record_fingerprint
 
-        record_fingerprint("lumina@chef.skworld", FP_A)
-        assert fingerprint_for("lumina@chef.skworld") == FP_A
+        record_fingerprint("lumina@chef.skworld.io", FP_A)
+        assert fingerprint_for("lumina@chef.skworld.io") == FP_A
 
     def test_lookup_unknown_returns_none(self, tofu_home):
         from skcomms.tofu import fingerprint_for
@@ -51,12 +51,12 @@ class TestRecordAndLookup:
     def test_record_persists_pubkey(self, tofu_home):
         from skcomms.tofu import record_fingerprint
 
-        record_fingerprint("lumina@chef.skworld", FP_A, pubkey="-----PGP PUB-----")
+        record_fingerprint("lumina@chef.skworld.io", FP_A, pubkey="-----PGP PUB-----")
         store_file = tofu_home / "known_fingerprints.json"
         data = json.loads(store_file.read_text())
-        assert data["lumina@chef.skworld"]["fingerprint"] == FP_A
-        assert data["lumina@chef.skworld"]["pubkey"] == "-----PGP PUB-----"
-        assert "first_seen" in data["lumina@chef.skworld"]
+        assert data["lumina@chef.skworld.io"]["fingerprint"] == FP_A
+        assert data["lumina@chef.skworld.io"]["pubkey"] == "-----PGP PUB-----"
+        assert "first_seen" in data["lumina@chef.skworld.io"]
 
 
 # ---------------------------------------------------------------------------
@@ -68,34 +68,34 @@ class TestVerifyFingerprint:
     def test_first_sight_records_and_returns_trust_new(self, tofu_home):
         from skcomms.tofu import TofuStatus, fingerprint_for, verify_fingerprint
 
-        result = verify_fingerprint("opus@chef.skworld", FP_A)
+        result = verify_fingerprint("opus@chef.skworld.io", FP_A)
         assert result.status == TofuStatus.TRUST_NEW
         assert result.trusted
         # first sight records it (TOFU)
-        assert fingerprint_for("opus@chef.skworld") == FP_A
+        assert fingerprint_for("opus@chef.skworld.io") == FP_A
 
     def test_second_sight_match_returns_trust_match(self, tofu_home):
         from skcomms.tofu import TofuStatus, verify_fingerprint
 
-        verify_fingerprint("opus@chef.skworld", FP_A)  # TRUST_NEW
-        result = verify_fingerprint("opus@chef.skworld", FP_A)
+        verify_fingerprint("opus@chef.skworld.io", FP_A)  # TRUST_NEW
+        result = verify_fingerprint("opus@chef.skworld.io", FP_A)
         assert result.status == TofuStatus.TRUST_MATCH
         assert result.trusted
 
     def test_mismatch_returns_conflict_and_does_not_overwrite(self, tofu_home):
         from skcomms.tofu import TofuStatus, fingerprint_for, verify_fingerprint
 
-        verify_fingerprint("opus@chef.skworld", FP_A)  # records FP_A
-        result = verify_fingerprint("opus@chef.skworld", FP_B)
+        verify_fingerprint("opus@chef.skworld.io", FP_A)  # records FP_A
+        result = verify_fingerprint("opus@chef.skworld.io", FP_B)
         assert result.status == TofuStatus.CONFLICT
         assert not result.trusted
         # stored value MUST be unchanged — never silently overwritten
-        assert fingerprint_for("opus@chef.skworld") == FP_A
+        assert fingerprint_for("opus@chef.skworld.io") == FP_A
         assert result.stored_fingerprint == FP_A
 
     def test_store_honors_skcomms_home(self, tofu_home):
         from skcomms.tofu import record_fingerprint, store_path
 
-        record_fingerprint("lumina@chef.skworld", FP_A)
+        record_fingerprint("lumina@chef.skworld.io", FP_A)
         assert store_path() == tofu_home / "known_fingerprints.json"
         assert store_path().exists()

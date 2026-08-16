@@ -21,8 +21,8 @@ def _under_home(monkeypatch, tmp_path):
 
 def test_legit_fqid_resolves_under_home(monkeypatch, tmp_path):
     _under_home(monkeypatch, tmp_path)
-    p = home.peer_inbox("lumina@chef.skworld")
-    assert p == (tmp_path / "skworld" / "chef" / "lumina" / "inbox").resolve()
+    p = home.peer_inbox("lumina@chef.skworld.io")
+    assert p == (tmp_path / "skworld.io" / "chef" / "lumina" / "inbox").resolve()
     assert tmp_path.resolve() in p.parents
 
 

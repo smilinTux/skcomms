@@ -13,8 +13,8 @@ import pytest
 
 from skcomms.consent_greylist import Greylist
 
-S = "spammer@nowhere.skworld"
-L = "lumina@chef.skworld"
+S = "spammer@nowhere.skworld.io"
+L = "lumina@chef.skworld.io"
 
 
 @pytest.fixture
@@ -71,7 +71,7 @@ def test_sightings_are_tracked_and_persisted(greylist, tmp_path):
 
 
 def test_unknown_sender_has_no_record(greylist):
-    assert greylist.record("ghost@void.skworld") is None
+    assert greylist.record("ghost@void.skworld.io") is None
 
 
 def test_per_agent_isolation(tmp_path, monkeypatch):

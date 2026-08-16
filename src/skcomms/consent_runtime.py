@@ -15,7 +15,7 @@ by env. Schema (every key optional)::
 
     mode: public                # delivery mode; SKCOMMS_CONSENT_MODE env wins
     ban_feeds:                  # gate-3 trusted, pinned ban-feed publishers
-      - publisher: mod@trust-a.skworld
+      - publisher: mod@trust-a.skworld.io
         pubkey: |               # the publisher's pinned ASCII-armored PGP pubkey
           -----BEGIN PGP PUBLIC KEY BLOCK-----
           ...

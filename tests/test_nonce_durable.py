@@ -31,9 +31,9 @@ from skcomms.federation import DurableNonceCache, NonceCache
 class TestDurableContract:
     def test_first_seen_then_replay(self, tmp_path):
         c = DurableNonceCache(tmp_path / "nonce.db")
-        assert c.check_and_add("jarvis@chef.skworld", "n1") is True
-        assert c.check_and_add("jarvis@chef.skworld", "n1") is False  # replay
-        assert c.check_and_add("lumina@chef.skworld", "n1") is True  # per-sender
+        assert c.check_and_add("jarvis@chef.skworld.io", "n1") is True
+        assert c.check_and_add("jarvis@chef.skworld.io", "n1") is False  # replay
+        assert c.check_and_add("lumina@chef.skworld.io", "n1") is True  # per-sender
 
     def test_ttl_eviction_re_accepts_and_bounds_store(self, tmp_path):
         c = DurableNonceCache(tmp_path / "nonce.db", ttl_s=10)
@@ -59,22 +59,22 @@ class TestSurvivesRestart:
         """A restarted daemon (new cache instance, same file) rejects replays."""
         db = tmp_path / "nonce.db"
         first = DurableNonceCache(db)
-        assert first.check_and_add("jarvis@chef.skworld", "n1") is True
+        assert first.check_and_add("jarvis@chef.skworld.io", "n1") is True
         first.close()
 
         reborn = DurableNonceCache(db)  # simulated restart
-        assert reborn.check_and_add("jarvis@chef.skworld", "n1") is False
-        assert reborn.check_and_add("jarvis@chef.skworld", "n2") is True
+        assert reborn.check_and_add("jarvis@chef.skworld.io", "n1") is False
+        assert reborn.check_and_add("jarvis@chef.skworld.io", "n2") is True
 
     def test_second_concurrent_instance_shares_state(self, tmp_path):
         """Two live handles on the same file (second process on the node)."""
         db = tmp_path / "nonce.db"
         a = DurableNonceCache(db)
         b = DurableNonceCache(db)
-        assert a.check_and_add("jarvis@chef.skworld", "n1") is True
-        assert b.check_and_add("jarvis@chef.skworld", "n1") is False
-        assert b.check_and_add("jarvis@chef.skworld", "n2") is True
-        assert a.check_and_add("jarvis@chef.skworld", "n2") is False
+        assert a.check_and_add("jarvis@chef.skworld.io", "n1") is True
+        assert b.check_and_add("jarvis@chef.skworld.io", "n1") is False
+        assert b.check_and_add("jarvis@chef.skworld.io", "n2") is True
+        assert a.check_and_add("jarvis@chef.skworld.io", "n2") is False
 
 
 # --- api wiring ---------------------------------------------------------------
@@ -198,12 +198,12 @@ class TestLegacyMigration:
         is still rejected by the new node-local store."""
         api = self._fresh_api(monkeypatch, tmp_path)
         legacy = DurableNonceCache(tmp_path / "synced-home" / "state" / "nonce_cache.db")
-        assert legacy.check_and_add("jarvis@chef.skworld", "n-legacy") is True
+        assert legacy.check_and_add("jarvis@chef.skworld.io", "n-legacy") is True
         legacy.close()
 
         cache = api._get_nonce_cache()
         assert cache.path == tmp_path / "local-state" / "nonce_cache.db"
-        assert cache.check_and_add("jarvis@chef.skworld", "n-legacy") is False
+        assert cache.check_and_add("jarvis@chef.skworld.io", "n-legacy") is False
         # Legacy file is left in place (ops cleanup), just never written again.
         assert (tmp_path / "synced-home" / "state" / "nonce_cache.db").exists()
 
@@ -219,7 +219,7 @@ class TestLegacyMigration:
         cache = api._get_nonce_cache()  # must not raise
         assert isinstance(cache, DurableNonceCache)
         assert cache.path == tmp_path / "local-state" / "nonce_cache.db"
-        assert cache.check_and_add("jarvis@chef.skworld", "n-fresh") is True
+        assert cache.check_and_add("jarvis@chef.skworld.io", "n-fresh") is True
 
     def test_existing_local_db_wins_no_remigration(self, monkeypatch, tmp_path):
         """Once a local store exists, the legacy file is never consulted again
@@ -261,8 +261,8 @@ def _gen_key(uid: str):
     return str(key), str(key.pubkey)
 
 
-JARVIS_FQID = "jarvis@chef.skworld"
-LUMINA_FQID = "lumina@chef.skworld"
+JARVIS_FQID = "jarvis@chef.skworld.io"
+LUMINA_FQID = "lumina@chef.skworld.io"
 
 
 class TestInboxReplayAcrossRestart:
@@ -281,7 +281,7 @@ class TestInboxReplayAcrossRestart:
         api._fed_nonce_cache = None
         api._fed_rate_limiter = None
 
-        priv, pub = _gen_key("jarvis <jarvis@chef.skworld>")
+        priv, pub = _gen_key("jarvis <jarvis@chef.skworld.io>")
 
         # Pin the sender's pubkey TOFU-style so the inbox verifier trusts it.
         from skcomms import tofu

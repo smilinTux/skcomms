@@ -13,7 +13,7 @@ import pytest
 from skcomms.transports.signaling_base import SignalingChannel
 from skcomms.transports.signaling_broker import BrokerSignaling
 
-_FP = {"opus@chef.skworld": "OPUSFP", "lumina@chef.skworld": "LUMFP"}
+_FP = {"opus@chef.skworld.io": "OPUSFP", "lumina@chef.skworld.io": "LUMFP"}
 _FQID = {v: k for k, v in _FP.items()}
 
 
@@ -46,7 +46,7 @@ def test_conforms_to_protocol():
 async def test_send_formats_broker_message():
     ws = _MockWS()
     chan = _make(ws)
-    await chan.send_signal("lumina@chef.skworld", "offer", {"sdp": "A"})
+    await chan.send_signal("lumina@chef.skworld.io", "offer", {"sdp": "A"})
     assert ws.sent == [
         {"type": "signal", "to": "LUMFP", "data": {"kind": "offer", "payload": {"sdp": "A"}}}
     ]
@@ -73,7 +73,7 @@ async def test_reader_maps_inbound_and_poll_drains():
 
     sigs = await _wait()
     assert len(sigs) == 1
-    assert sigs[0]["from_fqid"] == "opus@chef.skworld"
+    assert sigs[0]["from_fqid"] == "opus@chef.skworld.io"
     assert sigs[0]["kind"] == "answer"
     assert sigs[0]["payload"] == {"sdp": "B"}
     # drained

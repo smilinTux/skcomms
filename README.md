@@ -37,7 +37,7 @@ dropped into a filesystem tree that Syncthing replicates to the peer:
 
 ```mermaid
 flowchart LR
-    YOU["you<br/>lumina@chef.skworld"] -->|"skcomms send opus@casey.douno"| ENV["build Envelope v1<br/>(FQID-addressed body)"]
+    YOU["you<br/>lumina@chef.skworld.io"] -->|"skcomms send opus@casey.douno"| ENV["build Envelope v1<br/>(FQID-addressed body)"]
     ENV --> SIGN["sign it<br/>(detached PGP over canonical bytes)"]
     SIGN --> DROP["drop in your outbox<br/>+ the peer's inbox dir"]
     DROP -->|"Syncthing replicates"| PEER["opus reads inbox<br/>verifies signature ✓ / ✗"]

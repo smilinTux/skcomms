@@ -77,9 +77,9 @@ def _populate(iso_env: dict, with_private: bool = True) -> None:
 
     skhome.mkdir(parents=True, exist_ok=True)
     (skhome / "known_fingerprints.json").write_text(
-        json.dumps({"peer@chef.skworld": {"fingerprint": FP_OLD, "first_seen": "x"}})
+        json.dumps({"peer@chef.skworld.io": {"fingerprint": FP_OLD, "first_seen": "x"}})
     )
-    (skhome / "peers.json").write_text(json.dumps({"peer@chef.skworld": {"device": "abc"}}))
+    (skhome / "peers.json").write_text(json.dumps({"peer@chef.skworld.io": {"device": "abc"}}))
 
     pending = skhome / "outbox" / "pending"
     pending.mkdir(parents=True, exist_ok=True)
@@ -241,7 +241,7 @@ class TestRestoreBackup:
         assert priv.read_text() == PRIV
         assert stat.S_IMODE(priv.stat().st_mode) == 0o600
         tofu = fresh["skhome"] / "known_fingerprints.json"
-        assert json.loads(tofu.read_text())["peer@chef.skworld"]["fingerprint"] == FP_OLD
+        assert json.loads(tofu.read_text())["peer@chef.skworld.io"]["fingerprint"] == FP_OLD
         pending = fresh["skhome"] / "outbox" / "pending" / "msg-1.json"
         assert pending.is_file()
         assert identity_check()["private_key_present"] is True
@@ -484,8 +484,8 @@ class TestTofuRepin:
     def test_verify_still_conflicts_without_repin(self, iso):
         from skcomms.tofu import TofuStatus, record_fingerprint, verify_fingerprint
 
-        record_fingerprint("lumina@chef.skworld", FP_OLD)
-        result = verify_fingerprint("lumina@chef.skworld", FP_NEW)
+        record_fingerprint("lumina@chef.skworld.io", FP_OLD)
+        result = verify_fingerprint("lumina@chef.skworld.io", FP_NEW)
         assert result.status == TofuStatus.CONFLICT
         assert not result.trusted
 
@@ -498,23 +498,25 @@ class TestTofuRepin:
             verify_fingerprint,
         )
 
-        record_fingerprint("lumina@chef.skworld", FP_OLD)
-        entry = repin_fingerprint("lumina@chef.skworld", FP_NEW, reason="key loss drill")
+        record_fingerprint("lumina@chef.skworld.io", FP_OLD)
+        entry = repin_fingerprint("lumina@chef.skworld.io", FP_NEW, reason="key loss drill")
         assert entry["fingerprint"] == FP_NEW
         assert entry["previous_fingerprint"] == FP_OLD
         assert entry["repin_reason"] == "key loss drill"
         assert "repinned_at" in entry
 
-        assert fingerprint_for("lumina@chef.skworld") == FP_NEW
-        assert verify_fingerprint("lumina@chef.skworld", FP_NEW).status == TofuStatus.TRUST_MATCH
+        assert fingerprint_for("lumina@chef.skworld.io") == FP_NEW
+        assert (
+            verify_fingerprint("lumina@chef.skworld.io", FP_NEW).status == TofuStatus.TRUST_MATCH
+        )
         # the OLD (lost/compromised) fingerprint is now the conflicting one
-        assert verify_fingerprint("lumina@chef.skworld", FP_OLD).status == TofuStatus.CONFLICT
+        assert verify_fingerprint("lumina@chef.skworld.io", FP_OLD).status == TofuStatus.CONFLICT
 
     def test_repin_drops_stale_pubkey(self, iso):
         from skcomms.tofu import record_fingerprint, repin_fingerprint
 
-        record_fingerprint("lumina@chef.skworld", FP_OLD, pubkey="OLD KEY BLOCK")
-        entry = repin_fingerprint("lumina@chef.skworld", FP_NEW)
+        record_fingerprint("lumina@chef.skworld.io", FP_OLD, pubkey="OLD KEY BLOCK")
+        entry = repin_fingerprint("lumina@chef.skworld.io", FP_NEW)
         assert "pubkey" not in entry
 
     def test_repin_on_unknown_fqid_records_fresh(self, iso):
@@ -597,13 +599,13 @@ class TestIdentityCli:
         from skcomms.cli import main
         from skcomms.tofu import fingerprint_for, record_fingerprint
 
-        record_fingerprint("lumina@chef.skworld", FP_OLD)
+        record_fingerprint("lumina@chef.skworld.io", FP_OLD)
         result = self._runner().invoke(
             main,
             [
                 "identity",
                 "repin",
-                "lumina@chef.skworld",
+                "lumina@chef.skworld.io",
                 FP_NEW,
                 "--yes",
                 "--reason",
@@ -611,17 +613,17 @@ class TestIdentityCli:
             ],
         )
         assert result.exit_code == 0, result.output
-        assert fingerprint_for("lumina@chef.skworld") == FP_NEW
+        assert fingerprint_for("lumina@chef.skworld.io") == FP_NEW
 
     def test_repin_aborts_without_confirmation(self, iso):
         from skcomms.cli import main
         from skcomms.tofu import fingerprint_for, record_fingerprint
 
-        record_fingerprint("lumina@chef.skworld", FP_OLD)
+        record_fingerprint("lumina@chef.skworld.io", FP_OLD)
         result = self._runner().invoke(
             main,
-            ["identity", "repin", "lumina@chef.skworld", FP_NEW],
+            ["identity", "repin", "lumina@chef.skworld.io", FP_NEW],
             input="n\n",
         )
         assert result.exit_code == 1
-        assert fingerprint_for("lumina@chef.skworld") == FP_OLD
+        assert fingerprint_for("lumina@chef.skworld.io") == FP_OLD

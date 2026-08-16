@@ -55,8 +55,8 @@ async def test_fake_bind_then_resolve_fqid_roundtrip():
     )
     # Unknown before binding.
     assert await a.resolve_fqid(pid) is None
-    await a.bind_fqid(pid, "lumina@chef.skworld", "trusted")
-    assert await a.resolve_fqid(pid) == "lumina@chef.skworld"
+    await a.bind_fqid(pid, "lumina@chef.skworld.io", "trusted")
+    assert await a.resolve_fqid(pid) == "lumina@chef.skworld.io"
 
 
 @pytest.mark.asyncio

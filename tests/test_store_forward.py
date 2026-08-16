@@ -63,7 +63,7 @@ def _gen_key(uid: str):
 
 @pytest.fixture(scope="module")
 def alice_keys():
-    return _gen_key("alice <jarvis@chef.skworld>")
+    return _gen_key("alice <jarvis@chef.skworld.io>")
 
 
 @pytest.fixture(scope="module")
@@ -71,8 +71,8 @@ def mallory_keys():
     return _gen_key("mallory <evil@attacker.realm>")
 
 
-FROM_FQID = "jarvis@chef.skworld"
-TO_FQID = "lumina@chef.skworld"
+FROM_FQID = "jarvis@chef.skworld.io"
+TO_FQID = "lumina@chef.skworld.io"
 
 
 def _signed(priv: str, body="hi", **kw) -> SignedEnvelope:

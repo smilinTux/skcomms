@@ -71,7 +71,7 @@ flowchart TD
     classDef mixed fill:#fef5d4,stroke:#b7950b,color:#7d6608;
     classDef ok fill:#d5f5e3,stroke:#1e8449,color:#145a32;
 
-    A["sender agent<br/>FQID lumina@chef.skworld"]
+    A["sender agent<br/>FQID lumina@chef.skworld.io"]
     B["build Envelope v1<br/>(envelope.py)"]
     C["sign: detached PGP Ed25519/RSA<br/>over canonical_bytes (signing.py)"]:::vuln
     H["content_hash: SHA-256<br/>(signing.py:115)"]:::ok

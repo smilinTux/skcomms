@@ -9,7 +9,7 @@ transport.
 
 Log: ``~/.skcapstone/skcomms/logs/access-audit.log`` — one JSON object per line::
 
-    {"ts":"2026-06-22T...Z","transport":"sse","identity":"lumina@chef.skworld",
+    {"ts":"2026-06-22T...Z","transport":"sse","identity":"lumina@chef.skworld.io",
      "fingerprint":"AAAA...","tool":"file_write","scope":"write",
      "decision":"allow","reason":null,"node":"noroc2027"}
 

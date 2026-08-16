@@ -45,8 +45,8 @@ def _keypair():
     return kp.public_key, kp.private_key
 
 
-def _signed(to_fqid="bob@chef.skworld", body="sensitive body bytes") -> SignedEnvelope:
-    env = Envelope(from_fqid="alice@chef.skworld", to_fqid=to_fqid, body=body)
+def _signed(to_fqid="bob@chef.skworld.io", body="sensitive body bytes") -> SignedEnvelope:
+    env = Envelope(from_fqid="alice@chef.skworld.io", to_fqid=to_fqid, body=body)
     return SignedEnvelope(envelope=env, signature="sig", signer_fingerprint="FP")
 
 
@@ -103,7 +103,7 @@ def test_enabled_but_no_prekey_falls_back(monkeypatch):
 
 def test_routed_roundtrip_through_wrapper():
     pub, priv = _keypair()
-    signed = _signed(to_fqid="bob@chef.skworld", body="sensitive body bytes")
+    signed = _signed(to_fqid="bob@chef.skworld.io", body="sensitive body bytes")
     wire = wrap_signed(
         signed,
         dest_hybrid_pub=pub,
@@ -118,7 +118,7 @@ def test_routed_roundtrip_through_wrapper():
     # the whole signed envelope is recovered byte-for-byte
     assert recovered.to_bytes() == signed.to_bytes()
     # the sensitive metadata is what was sealed inside
-    assert inner_meta["final_dest"] == "bob@chef.skworld"
+    assert inner_meta["final_dest"] == "bob@chef.skworld.io"
     assert inner_meta["flags"] == ["urgent", "e2e"]
 
 
@@ -129,7 +129,7 @@ def test_routed_roundtrip_through_wrapper():
 
 def test_relay_reads_only_next_hop():
     pub, priv = _keypair()
-    signed = _signed(to_fqid="SECRET-bob@chef.skworld", body="SECRET-BODY")
+    signed = _signed(to_fqid="SECRET-bob@chef.skworld.io", body="SECRET-BODY")
     wire = wrap_signed(
         signed,
         dest_hybrid_pub=pub,
@@ -211,11 +211,11 @@ def test_router_route_signed_default_unchanged(monkeypatch, _isolate_retry_queue
     from skcomms.router import Router
 
     t = _FakeTransport()
-    signed = _signed(to_fqid="bob@chef.skworld")
+    signed = _signed(to_fqid="bob@chef.skworld.io")
     report = Router(transports=[t]).route_signed(signed)
     assert report.delivered is True
     recipient, wire = t.sent[0]
-    assert recipient == "bob@chef.skworld"  # routed by inner to_fqid
+    assert recipient == "bob@chef.skworld.io"  # routed by inner to_fqid
     assert wire == signed.to_bytes()  # verbatim bytes
 
 
@@ -226,7 +226,7 @@ def test_router_route_signed_pqroute_seals_and_routes_to_next_hop(_isolate_retry
 
     pub, priv = _keypair()
     t = _FakeTransport()
-    signed = _signed(to_fqid="SECRET-bob@chef.skworld", body="SECRET-BODY")
+    signed = _signed(to_fqid="SECRET-bob@chef.skworld.io", body="SECRET-BODY")
     report = Router(transports=[t]).route_signed(
         signed,
         pqroute=True,
@@ -245,5 +245,5 @@ def test_router_route_signed_pqroute_seals_and_routes_to_next_hop(_isolate_retry
     # destination can recover everything
     inner_meta, recovered = unwrap_signed(wire, priv)
     assert recovered.to_bytes() == signed.to_bytes()
-    assert inner_meta["final_dest"] == "SECRET-bob@chef.skworld"
+    assert inner_meta["final_dest"] == "SECRET-bob@chef.skworld.io"
     assert inner_meta["flags"] == ["urgent"]

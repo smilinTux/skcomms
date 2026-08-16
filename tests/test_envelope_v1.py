@@ -45,19 +45,19 @@ def _gen_key(uid: str):
 
 @pytest.fixture(scope="module")
 def alice_keys():
-    return _gen_key("alice <alice@chef.skworld>")
+    return _gen_key("alice <alice@chef.skworld.io>")
 
 
 @pytest.fixture(scope="module")
 def bob_keys():
-    return _gen_key("bob <bob@chef.skworld>")
+    return _gen_key("bob <bob@chef.skworld.io>")
 
 
 @pytest.fixture
 def sample_envelope() -> Envelope:
     return Envelope(
-        from_fqid="lumina@chef.skworld",
-        to_fqid="opus@chef.skworld",
+        from_fqid="lumina@chef.skworld.io",
+        to_fqid="opus@chef.skworld.io",
         content_type="text/plain",
         body="hello sovereign world",
         subject="greetings",
@@ -75,8 +75,8 @@ class TestEnvelopeSchema:
         assert env.version == "1"
         assert env.id  # uuid auto-assigned
         assert env.created_at  # iso timestamp auto-assigned
-        assert env.from_fqid == "lumina@chef.skworld"
-        assert env.to_fqid == "opus@chef.skworld"
+        assert env.from_fqid == "lumina@chef.skworld.io"
+        assert env.to_fqid == "opus@chef.skworld.io"
         assert env.content_type == "text/plain"
         assert env.body == "hello sovereign world"
         assert env.subject == "greetings"
@@ -87,9 +87,9 @@ class TestEnvelopeSchema:
 
     def test_requires_from_and_to(self):
         with pytest.raises(Exception):
-            Envelope(to_fqid="opus@chef.skworld", body="x", content_type="text/plain")
+            Envelope(to_fqid="opus@chef.skworld.io", body="x", content_type="text/plain")
         with pytest.raises(Exception):
-            Envelope(from_fqid="lumina@chef.skworld", body="x", content_type="text/plain")
+            Envelope(from_fqid="lumina@chef.skworld.io", body="x", content_type="text/plain")
 
     def test_created_at_is_utc_iso(self, sample_envelope):
         # parseable ISO-8601 with timezone
@@ -105,8 +105,8 @@ class TestCanonicalBytes:
 
     def test_independent_of_field_order(self):
         a = Envelope(
-            from_fqid="a@chef.skworld",
-            to_fqid="b@chef.skworld",
+            from_fqid="a@chef.skworld.io",
+            to_fqid="b@chef.skworld.io",
             content_type="text/plain",
             body="hi",
             id="fixed-id",
@@ -115,9 +115,9 @@ class TestCanonicalBytes:
         )
         b = Envelope(
             body="hi",
-            to_fqid="b@chef.skworld",
+            to_fqid="b@chef.skworld.io",
             content_type="text/plain",
-            from_fqid="a@chef.skworld",
+            from_fqid="a@chef.skworld.io",
             created_at="2026-01-01T00:00:00+00:00",
             nonce="fixed-nonce",
             id="fixed-id",
@@ -153,7 +153,7 @@ class TestSignVerify:
         assert signed.signer_fingerprint == signer.fingerprint
 
         verifier = EnvelopeVerifier()
-        verifier.add_key("lumina@chef.skworld", pub)
+        verifier.add_key("lumina@chef.skworld.io", pub)
         result = verifier.verify(signed)
         assert result.valid, result.reason
 
@@ -169,7 +169,7 @@ class TestSignVerify:
         tampered = signed.model_copy(update={"envelope": tampered_env})
 
         verifier = EnvelopeVerifier()
-        verifier.add_key("lumina@chef.skworld", pub)
+        verifier.add_key("lumina@chef.skworld.io", pub)
         result = verifier.verify(tampered)
         assert not result.valid
 
@@ -183,6 +183,6 @@ class TestSignVerify:
 
         # verifier only knows bob's key, registered under the sender's fqid
         verifier = EnvelopeVerifier()
-        verifier.add_key("lumina@chef.skworld", bob_pub)
+        verifier.add_key("lumina@chef.skworld.io", bob_pub)
         result = verifier.verify(signed)
         assert not result.valid

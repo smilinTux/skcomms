@@ -26,14 +26,14 @@ def build_fqid(agent: str, operator: str, realm: str) -> str:
     Args:
         agent:    Short agent name (e.g. ``"lumina"``).
         operator: Operator name from cluster.json (e.g. ``"chef"``).
-        realm:    Realm name from cluster.json (e.g. ``"skworld"``).
+        realm:    Realm name from cluster.json (e.g. ``"skworld.io"``).
 
     Returns:
-        FQID string (e.g. ``"lumina@chef.skworld"``).
+        FQID string (e.g. ``"lumina@chef.skworld.io"``).
 
     Examples:
-        >>> build_fqid("lumina", "chef", "skworld")
-        'lumina@chef.skworld'
+        >>> build_fqid("lumina", "chef", "skworld.io")
+        'lumina@chef.skworld.io'
     """
     return f"{agent}@{operator}.{realm}"
 
@@ -54,7 +54,7 @@ def resolve_fqid(agent: Optional[str] = None) -> Optional[str]:
     Examples:
         >>> import os; os.environ["SKAGENT"] = "lumina"
         >>> resolve_fqid()   # doctest: +SKIP
-        'lumina@chef.skworld'
+        'lumina@chef.skworld.io'
     """
     # T2 delegate — capauth is the canonical resolver
     try:

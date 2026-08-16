@@ -154,7 +154,7 @@ def _store_with_peer(tmp_path, inbox_url):
     store.add(
         PeerInfo(
             name="jarvis",
-            fqid="jarvis@chef.skworld",
+            fqid="jarvis@chef.skworld.io",
             transports=[PeerTransport(transport="https-s2s", settings={"inbox_url": inbox_url})],
         )
     )
@@ -166,7 +166,7 @@ def test_inbox_url_for_prefers_registry_over_transport(tmp_path):
 
     store = _store_with_peer(tmp_path, inbox_url="http://10.0.0.99:8765/api/v1/inbox")
     reg = NodeRegistry(entries={"jarvis": NodeEntry(ts_ip="100.86.156.5")})
-    url = inbox_url_for("jarvis@chef.skworld", store=store, registry=reg)
+    url = inbox_url_for("jarvis@chef.skworld.io", store=store, registry=reg)
     assert url == "http://100.86.156.5:8765/api/v1/inbox"
 
 
@@ -175,7 +175,7 @@ def test_inbox_url_for_falls_back_to_transport_when_registry_silent(tmp_path):
 
     store = _store_with_peer(tmp_path, inbox_url="http://10.0.0.99:8765/api/v1/inbox")
     reg = NodeRegistry(entries={})  # registry knows nothing
-    url = inbox_url_for("jarvis@chef.skworld", store=store, registry=reg)
+    url = inbox_url_for("jarvis@chef.skworld.io", store=store, registry=reg)
     assert url == "http://10.0.0.99:8765/api/v1/inbox"
 
 
@@ -184,7 +184,7 @@ def test_inbox_url_for_returns_none_when_neither_resolves(tmp_path):
 
     empty_store = PeerStore(peers_dir=tmp_path / "peers")
     reg = NodeRegistry(entries={})
-    assert inbox_url_for("ghost@chef.skworld", store=empty_store, registry=reg) is None
+    assert inbox_url_for("ghost@chef.skworld.io", store=empty_store, registry=reg) is None
 
 
 def test_inbox_url_for_registry_lookup_by_bare_name(tmp_path):

@@ -53,13 +53,13 @@ class _FakeSignaling:
 async def test_connectors_establish_data_channel_over_signaling():
     bus = _Bus()
     opus = P2PConnector(
-        peer_fqid="lumina@chef.skworld",
-        signaling=_FakeSignaling("opus@chef.skworld", bus),
+        peer_fqid="lumina@chef.skworld.io",
+        signaling=_FakeSignaling("opus@chef.skworld.io", bus),
         poll_interval=0.1,
     )
     lumina = P2PConnector(
-        peer_fqid="opus@chef.skworld",
-        signaling=_FakeSignaling("lumina@chef.skworld", bus),
+        peer_fqid="opus@chef.skworld.io",
+        signaling=_FakeSignaling("lumina@chef.skworld.io", bus),
         poll_interval=0.1,
     )
     try:

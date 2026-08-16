@@ -72,13 +72,13 @@ class CapTransport(Transport):
 
 
 def test_send_federated_builds_signs_routes(monkeypatch):
-    priv, pub, fp = _gen_key("jarvis <jarvis@chef.skworld>")
+    priv, pub, fp = _gen_key("jarvis <jarvis@chef.skworld.io>")
     monkeypatch.setattr(
         identity_mod,
         "resolve_self_identity",
         lambda *a, **k: {
             "agent": "jarvis",
-            "fqid": "jarvis@chef.skworld",
+            "fqid": "jarvis@chef.skworld.io",
             "fingerprint": fp,
             "capauth_uri": "capauth:jarvis@skworld.io",
         },
@@ -86,27 +86,27 @@ def test_send_federated_builds_signs_routes(monkeypatch):
     t = CapTransport()
     comm = SKComms(router=Router(transports=[t]), crypto=EnvelopeCrypto(priv, "", fp))
 
-    report = comm.send_federated("lumina@chef.skworld", "hi over s2s")
+    report = comm.send_federated("lumina@chef.skworld.io", "hi over s2s")
 
     assert report.delivered is True
     recipient, wire = t.sent[0]
-    assert recipient == "lumina@chef.skworld"  # routed by to_fqid
+    assert recipient == "lumina@chef.skworld.io"  # routed by to_fqid
     # wire bytes are a real SignedEnvelope from jarvis, verifiable with jarvis's pubkey
     signed = SignedEnvelope.from_bytes(wire)
-    assert signed.envelope.from_fqid == "jarvis@chef.skworld"
-    assert signed.envelope.to_fqid == "lumina@chef.skworld"
+    assert signed.envelope.from_fqid == "jarvis@chef.skworld.io"
+    assert signed.envelope.to_fqid == "lumina@chef.skworld.io"
     assert signed.envelope.body == "hi over s2s"
     assert signed.envelope.nonce  # anti-replay nonce present
     v = EnvelopeVerifier()
-    v.add_key("jarvis@chef.skworld", pub)
+    v.add_key("jarvis@chef.skworld.io", pub)
     assert v.verify(signed).valid is True  # signature valid
 
 
 def test_send_federated_no_key_raises(monkeypatch):
     monkeypatch.setattr(
-        identity_mod, "resolve_self_identity", lambda *a, **k: {"fqid": "jarvis@chef.skworld"}
+        identity_mod, "resolve_self_identity", lambda *a, **k: {"fqid": "jarvis@chef.skworld.io"}
     )
     monkeypatch.setattr(EnvelopeCrypto, "from_capauth", classmethod(lambda cls, *a, **k: None))
     comm = SKComms(router=Router(transports=[CapTransport()]), crypto=None)
     with pytest.raises(RuntimeError):
-        comm.send_federated("lumina@chef.skworld", "hi")
+        comm.send_federated("lumina@chef.skworld.io", "hi")

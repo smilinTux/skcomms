@@ -14,7 +14,7 @@ Tiers
 2. ``operator`` — human running this instance (``chef``, ``casey``)
 3. ``agent``    — AI persona (``jarvis``, ``lumina``, ``opus``)
 
-Display fqid: ``<agent>@<operator>.<realm>`` (e.g. ``lumina@chef.skworld``).
+Display fqid: ``<agent>@<operator>.<realm>`` (e.g. ``lumina@chef.skworld.io``).
 
 Canonical identity is the PGP fingerprint at
 ``~/.skcapstone/agents/<agent>/identity/agent.pub`` — fqid is the

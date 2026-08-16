@@ -6,7 +6,7 @@ from skcomms.pairing import PairingBundle, parse_skp_uri, to_skp_uri
 def test_bundle_carries_noise_static_pubkey_through_uri():
     raw_pub = bytes(range(32))
     b = PairingBundle(
-        fqid="lumina@chef.skworld",
+        fqid="lumina@chef.skworld.io",
         fingerprint="a" * 64,
         noise_static_pubkey=base64.urlsafe_b64encode(raw_pub).decode(),
     )

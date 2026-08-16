@@ -1,7 +1,7 @@
 """Persistent scope-grants store + CLI for the sk-access plane (P7 / A6).
 
 RBAC for the access plane is **per-identity scope grants**: an identity (an fqid
-like ``lumina@chef.skworld``, or the ``"*"`` wildcard) is granted a set of
+like ``lumina@chef.skworld.io``, or the ``"*"`` wildcard) is granted a set of
 :class:`~skcomms.access.registry.Scope` (``read`` | ``write`` | ``exec``). The
 access server's :meth:`AccessConfig.granted_scopes` consults the merged grants;
 a verified identity with no grant falls back to ``"*"`` then to ``{READ}``.
@@ -15,8 +15,8 @@ This module owns the **persistent** half of that picture, kept separate from the
 Layout::
 
     grants:
-      "lumina@chef.skworld": [read, write, exec]
-      "guest@chef.skworld":  [read]
+      "lumina@chef.skworld.io": [read, write, exec]
+      "guest@chef.skworld.io":  [read]
       "*":                   [read]
 
 :func:`load_grants` reads it; :func:`merge_grants` folds it into an
@@ -265,12 +265,12 @@ def build_parser() -> argparse.ArgumentParser:
     pl.set_defaults(func=_cmd_list)
 
     pg = sub.add_parser("grant", help="grant scope(s) to an identity (fqid or '*')")
-    pg.add_argument("identity", help="fqid, e.g. lumina@chef.skworld, or '*'")
+    pg.add_argument("identity", help="fqid, e.g. lumina@chef.skworld.io, or '*'")
     pg.add_argument("scopes", nargs="+", help="one or more of: read write exec")
     pg.set_defaults(func=_cmd_grant)
 
     pr = sub.add_parser("revoke", help="revoke scope(s) from an identity")
-    pr.add_argument("identity", help="fqid, e.g. lumina@chef.skworld, or '*'")
+    pr.add_argument("identity", help="fqid, e.g. lumina@chef.skworld.io, or '*'")
     pr.add_argument("scopes", nargs="+", help="one or more of: read write exec")
     pr.set_defaults(func=_cmd_revoke)
 

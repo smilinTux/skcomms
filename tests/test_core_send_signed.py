@@ -97,11 +97,11 @@ class CaptureTransport(Transport):
 @pytest.fixture
 def keyed_comm(monkeypatch, tmp_path):
     """An SKComms with a real in-process signing key and a capture rail."""
-    priv, pub, fp = _gen_key("jarvis <jarvis@chef.skworld>")
+    priv, pub, fp = _gen_key("jarvis <jarvis@chef.skworld.io>")
     monkeypatch.setattr(
         identity_mod,
         "resolve_self_identity",
-        lambda *a, **k: {"agent": "jarvis", "fqid": "jarvis@chef.skworld", "fingerprint": fp},
+        lambda *a, **k: {"agent": "jarvis", "fqid": "jarvis@chef.skworld.io", "fingerprint": fp},
     )
     t = CaptureTransport()
     comm = SKComms(router=Router(transports=[t]), crypto=EnvelopeCrypto(priv, "", fp))
@@ -117,22 +117,22 @@ def test_plain_send_emits_signed_envelope_wire(keyed_comm):
     federation inbox gate parses (acceptance: SignedEnvelope.from_bytes)."""
     comm, t, pub = keyed_comm
 
-    report = comm.send("lumina@chef.skworld", "hello over the primary rail")
+    report = comm.send("lumina@chef.skworld.io", "hello over the primary rail")
 
     assert report.delivered is True
     recipient, wire = t.sent[0]
-    assert recipient == "lumina@chef.skworld"
+    assert recipient == "lumina@chef.skworld.io"
 
     # The exact bytes on the wire parse as a SignedEnvelope, classify as
     # "signed" (so https-s2s's structural gate admits them), and verify.
     signed = SignedEnvelope.from_bytes(wire)
     assert classify_envelope_json(wire.decode("utf-8")) == "signed"
-    assert signed.envelope.from_fqid == "jarvis@chef.skworld"
-    assert signed.envelope.to_fqid == "lumina@chef.skworld"
+    assert signed.envelope.from_fqid == "jarvis@chef.skworld.io"
+    assert signed.envelope.to_fqid == "lumina@chef.skworld.io"
     assert signed.envelope.body == "hello over the primary rail"
     assert signed.envelope.nonce
     v = EnvelopeVerifier()
-    v.add_key("jarvis@chef.skworld", pub)
+    v.add_key("jarvis@chef.skworld.io", pub)
     assert v.verify(signed).valid is True
 
     # Delivery report keeps the legacy envelope_id (= Envelope v1 id).
@@ -144,7 +144,7 @@ def test_plain_send_metadata_rides_in_headers_and_round_trips(keyed_comm):
     comm, t, _pub = keyed_comm
 
     comm.send(
-        "lumina@chef.skworld",
+        "lumina@chef.skworld.io",
         "typed",
         message_type=MessageType.COMMAND,
         thread_id="th-1",
@@ -186,17 +186,17 @@ def test_plain_send_heartbeat_is_signed(keyed_comm):
 
 def test_plain_send_failure_enqueues_signed_wire_to_outbox(monkeypatch, tmp_path):
     """A failed signed send queues the SIGNED wire shape (outbox owns retry)."""
-    priv, _pub, fp = _gen_key("jarvis <jarvis@chef.skworld>")
+    priv, _pub, fp = _gen_key("jarvis <jarvis@chef.skworld.io>")
     monkeypatch.setattr(
         identity_mod,
         "resolve_self_identity",
-        lambda *a, **k: {"agent": "jarvis", "fqid": "jarvis@chef.skworld", "fingerprint": fp},
+        lambda *a, **k: {"agent": "jarvis", "fqid": "jarvis@chef.skworld.io", "fingerprint": fp},
     )
     t = CaptureTransport(succeed=False)
     comm = SKComms(router=Router(transports=[t]), crypto=EnvelopeCrypto(priv, "", fp))
     comm._outbox = PersistentOutbox(outbox_dir=tmp_path / "outbox", router=comm._router)
 
-    report = comm.send("lumina@chef.skworld", "will fail")
+    report = comm.send("lumina@chef.skworld.io", "will fail")
 
     assert report.delivered is False
     assert comm._outbox.pending_count == 1
@@ -257,11 +257,11 @@ def test_receive_parses_signed_wire_from_local_rails(monkeypatch, tmp_path):
     """A signed plain send over the file rail still delivers via receive()."""
     from skcomms.transports.file import create_transport as make_file
 
-    priv, _pub, fp = _gen_key("solo <solo@chef.skworld>")
+    priv, _pub, fp = _gen_key("solo <solo@chef.skworld.io>")
     monkeypatch.setattr(
         identity_mod,
         "resolve_self_identity",
-        lambda *a, **k: {"agent": "solo", "fqid": "solo@chef.skworld", "fingerprint": fp},
+        lambda *a, **k: {"agent": "solo", "fqid": "solo@chef.skworld.io", "fingerprint": fp},
     )
 
     # One shared drop dir: what send writes is exactly what receive reads.
@@ -276,5 +276,5 @@ def test_receive_parses_signed_wire_from_local_rails(monkeypatch, tmp_path):
     envelopes = comm.receive()
     assert any(e.payload.content == "note to self, now signed" for e in envelopes)
     got = next(e for e in envelopes if e.payload.content == "note to self, now signed")
-    assert got.sender == "solo@chef.skworld"
+    assert got.sender == "solo@chef.skworld.io"
     assert got.recipient == "solo"

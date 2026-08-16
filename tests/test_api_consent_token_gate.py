@@ -20,7 +20,7 @@ import importlib
 import pytest
 
 SELF_AGENT = "lumina"
-SENDER = "jarvis@chef.skworld"
+SENDER = "jarvis@chef.skworld.io"
 
 
 @pytest.fixture
@@ -77,7 +77,7 @@ def test_write_to_inbox_lifts_envelope_consent_token(api_mod, monkeypatch):
 
     class _Env:
         id = "env-xyz"
-        to_fqid = f"{SELF_AGENT}@chef.skworld"
+        to_fqid = f"{SELF_AGENT}@chef.skworld.io"
         from_fqid = SENDER
         body = "hi"
         consent_token = token

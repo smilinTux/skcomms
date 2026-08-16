@@ -26,9 +26,9 @@ from skcomms.outbox_migrate import (
 # ---------------------------------------------------------------------------
 
 
-def _signed_entry(to_fqid: str = "jarvis@chef.skworld") -> OutboxEntry:
+def _signed_entry(to_fqid: str = "jarvis@chef.skworld.io") -> OutboxEntry:
     """Build an OutboxEntry carrying a (unsigned) SignedEnvelope."""
-    env = Envelope(from_fqid="lumina@chef.skworld", to_fqid=to_fqid, body="hi")
+    env = Envelope(from_fqid="lumina@chef.skworld.io", to_fqid=to_fqid, body="hi")
     signed = SignedEnvelope(envelope=env, signature="-----FAKE SIG-----")
     return OutboxEntry(
         envelope_id=env.id,
@@ -333,7 +333,7 @@ def test_attempt_delivery_routes_signed_envelope(tmp_path):
     assert outcome.delivered is True
     assert outcome.throttled is False
     assert len(router.routed_signed) == 1
-    assert router.routed_signed[0].envelope.to_fqid == "jarvis@chef.skworld"
+    assert router.routed_signed[0].envelope.to_fqid == "jarvis@chef.skworld.io"
 
 
 def test_attempt_delivery_routes_signed_via_bytes_router(tmp_path):
@@ -346,7 +346,7 @@ def test_attempt_delivery_routes_signed_via_bytes_router(tmp_path):
     assert outcome.delivered is True
     assert len(router.routed_bytes) == 1
     data, recipient = router.routed_bytes[0]
-    assert recipient == "jarvis@chef.skworld"
+    assert recipient == "jarvis@chef.skworld.io"
     # bytes are a serialized SignedEnvelope
     assert classify_envelope_json(data.decode("utf-8")) == "signed"
 
@@ -381,7 +381,7 @@ def test_attempt_delivery_corrupt_does_not_crash(tmp_path):
     outbox = PersistentOutbox(outbox_dir=tmp_path, router=router)
     entry = OutboxEntry(
         envelope_id="corrupt-1",
-        recipient="jarvis@chef.skworld",
+        recipient="jarvis@chef.skworld.io",
         envelope_json="{ not json ",
     )
 

@@ -21,8 +21,8 @@ import pytest
 
 from skcomms.consent_policy import InvitePolicy
 
-L = "lumina@chef.skworld"  # server = chef.skworld
-O = "opus@chef.skworld"  # server = chef.skworld
+L = "lumina@chef.skworld.io"  # server = chef.skworld.io
+O = "opus@chef.skworld.io"  # server = chef.skworld.io
 SPAM = "bot01@spam.relay"  # server = spam.relay
 ANON = "k7x9q@anon.relay"  # server = anon.relay
 
@@ -86,7 +86,7 @@ def test_user_allow_beats_block(home):
 
 
 def test_server_allow(home):
-    p = InvitePolicy("lumina", enabled=True, allowed_servers={"chef.skworld"})
+    p = InvitePolicy("lumina", enabled=True, allowed_servers={"chef.skworld.io"})
     assert p.evaluate(L) == "allow"
 
 
@@ -112,7 +112,9 @@ def test_server_allow_beats_block(home):
 
 def test_user_allow_beats_server_block(home):
     # block the whole realm, but explicitly allow one user on it → user wins.
-    p = InvitePolicy("lumina", enabled=True, allowed_users={L}, blocked_servers={"chef.skworld"})
+    p = InvitePolicy(
+        "lumina", enabled=True, allowed_users={L}, blocked_servers={"chef.skworld.io"}
+    )
     assert p.evaluate(L) == "allow"
     # a *different* user on the blocked server still gets blocked.
     assert p.evaluate(O) == "block"
@@ -120,13 +122,17 @@ def test_user_allow_beats_server_block(home):
 
 def test_user_block_beats_server_allow(home):
     # trust the realm, but a single user is blocked → user wins.
-    p = InvitePolicy("lumina", enabled=True, blocked_users={O}, allowed_servers={"chef.skworld"})
+    p = InvitePolicy(
+        "lumina", enabled=True, blocked_users={O}, allowed_servers={"chef.skworld.io"}
+    )
     assert p.evaluate(O) == "block"
     assert p.evaluate(L) == "allow"
 
 
 def test_user_ignore_beats_server_allow(home):
-    p = InvitePolicy("lumina", enabled=True, ignored_users={O}, allowed_servers={"chef.skworld"})
+    p = InvitePolicy(
+        "lumina", enabled=True, ignored_users={O}, allowed_servers={"chef.skworld.io"}
+    )
     assert p.evaluate(O) == "ignore"
 
 

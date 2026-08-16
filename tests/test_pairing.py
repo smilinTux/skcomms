@@ -3,7 +3,7 @@ from skcomms.pairing import PairingBundle, to_skp_uri, parse_skp_uri
 
 def test_uri_round_trip_compact():
     b = PairingBundle(
-        fqid="lumina@chef.skworld",
+        fqid="lumina@chef.skworld.io",
         fingerprint="AB" * 20,
         syncthing_device_id="DEV-1",
         tailscale="lumina.ts.net",
@@ -16,7 +16,7 @@ def test_uri_round_trip_compact():
 
 def test_uri_round_trip_embedded_key():
     b = PairingBundle(
-        fqid="opus@chef.skworld",
+        fqid="opus@chef.skworld.io",
         fingerprint="CD" * 20,
         pubkey="-----BEGIN PGP PUBLIC KEY BLOCK-----\nabc\n-----END-----\n",
     )
@@ -43,11 +43,11 @@ def test_bundle_from_self(monkeypatch, tmp_path):
     monkeypatch.setattr(
         P,
         "resolve_self_identity",
-        lambda agent=None: {"fqid": "lumina@chef.skworld", "fingerprint": "AB" * 20},
+        lambda agent=None: {"fqid": "lumina@chef.skworld.io", "fingerprint": "AB" * 20},
     )
     monkeypatch.setattr(P, "_self_hints", lambda fqid: {"syncthing_device_id": "DEV-9"})
     b = P.bundle_from_self()
-    assert b.fqid == "lumina@chef.skworld"
+    assert b.fqid == "lumina@chef.skworld.io"
     assert b.syncthing_device_id == "DEV-9"
     assert b.pubkey is None
 
@@ -58,7 +58,7 @@ def test_bundle_from_self_embed_key(monkeypatch):
     monkeypatch.setattr(
         P,
         "resolve_self_identity",
-        lambda agent=None: {"fqid": "lumina@chef.skworld", "fingerprint": "AB" * 20},
+        lambda agent=None: {"fqid": "lumina@chef.skworld.io", "fingerprint": "AB" * 20},
     )
     monkeypatch.setattr(P, "_self_hints", lambda fqid: {})
     monkeypatch.setattr(
@@ -113,16 +113,16 @@ def test_accept_embedded_key_adds_peer(tmp_path, monkeypatch):
     fp = fingerprint_from_pubkey(pub)
     uri = to_skp_uri(
         PairingBundle(
-            fqid="opus@chef.skworld", fingerprint=fp, syncthing_device_id="DEV-2", pubkey=pub
+            fqid="opus@chef.skworld.io", fingerprint=fp, syncthing_device_id="DEV-2", pubkey=pub
         )
     )
     rec = accept_pairing(uri)
-    assert rec["fqid"] == "opus@chef.skworld"
+    assert rec["fqid"] == "opus@chef.skworld.io"
     # appears in the peer store
     from skcomms.peers import list_peers
 
     peers = list_peers()
-    assert "opus@chef.skworld" in peers
+    assert "opus@chef.skworld.io" in peers
 
 
 def test_accept_compact_fetches_then_verifies(tmp_path, monkeypatch):
@@ -133,10 +133,10 @@ def test_accept_compact_fetches_then_verifies(tmp_path, monkeypatch):
     pub = _gen_pubkey()
     fp = fingerprint_from_pubkey(pub)
     uri = to_skp_uri(
-        PairingBundle(fqid="opus@chef.skworld", fingerprint=fp, syncthing_device_id="DEV-3")
+        PairingBundle(fqid="opus@chef.skworld.io", fingerprint=fp, syncthing_device_id="DEV-3")
     )  # no embedded key
     rec = accept_pairing(uri, fetcher=lambda b: pub)  # injected: returns the pubkey
-    assert rec["fqid"] == "opus@chef.skworld"
+    assert rec["fqid"] == "opus@chef.skworld.io"
 
 
 def test_accept_rejects_fingerprint_mismatch(tmp_path, monkeypatch):
@@ -147,7 +147,10 @@ def test_accept_rejects_fingerprint_mismatch(tmp_path, monkeypatch):
     other = _gen_pubkey()
     uri = to_skp_uri(
         PairingBundle(
-            fqid="opus@chef.skworld", fingerprint="00" * 20, syncthing_device_id="D", pubkey=other
+            fqid="opus@chef.skworld.io",
+            fingerprint="00" * 20,
+            syncthing_device_id="D",
+            pubkey=other,
         )
     )
     with pytest.raises(ValueError):
@@ -190,7 +193,7 @@ def test_embed_key_bundle_fingerprint_matches_embedded_key(tmp_path, monkeypatch
     monkeypatch.setattr(
         P,
         "resolve_self_identity",
-        lambda agent=None: {"fqid": "lumina@chef.skworld", "fingerprint": fp},
+        lambda agent=None: {"fqid": "lumina@chef.skworld.io", "fingerprint": fp},
     )
     monkeypatch.setattr(P, "_self_hints", lambda fqid: {})
     b = P.bundle_from_self(embed_key=True)
@@ -210,7 +213,7 @@ def test_default_fetcher_resolves_local_agent_key(tmp_path, monkeypatch):
     d.mkdir(parents=True)
     (d / "public.asc").write_text(pub)
     monkeypatch.setenv("HOME", str(tmp_path))
-    b = P.PairingBundle(fqid="opus@chef.skworld", fingerprint=fp, syncthing_device_id="X")
+    b = P.PairingBundle(fqid="opus@chef.skworld.io", fingerprint=fp, syncthing_device_id="X")
     assert P._default_fetcher(b) == pub
 
 
@@ -229,7 +232,7 @@ def test_accept_compact_local_agent_pairs(tmp_path, monkeypatch):
     d.mkdir(parents=True)
     (d / "public.asc").write_text(pub)
     uri = P.to_skp_uri(
-        P.PairingBundle(fqid="opus@chef.skworld", fingerprint=fp, syncthing_device_id="DEV-7")
+        P.PairingBundle(fqid="opus@chef.skworld.io", fingerprint=fp, syncthing_device_id="DEV-7")
     )  # compact
     res = P.accept_pairing(uri)  # no fetcher, no embedded key
-    assert res["fqid"] == "opus@chef.skworld"
+    assert res["fqid"] == "opus@chef.skworld.io"

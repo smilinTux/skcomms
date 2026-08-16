@@ -28,8 +28,8 @@ from skcomms.transports.http_s2s import (
 INBOX_URL = "https://noroc2027.ts.net/api/v1/inbox"
 # The wire shape https-s2s carries: SignedEnvelope JSON (nested Envelope v1).
 ENVELOPE = (
-    b'{"envelope": {"id": "env-123", "from_fqid": "opus@chef.skworld", '
-    b'"to_fqid": "jarvis@chef.skworld", "body": "hi"}, "signature": "sig"}'
+    b'{"envelope": {"id": "env-123", "from_fqid": "opus@chef.skworld.io", '
+    b'"to_fqid": "jarvis@chef.skworld.io", "body": "hi"}, "signature": "sig"}'
 )
 # Legacy MessageEnvelope JSON: the inbox gate would 422 this shape.
 LEGACY_ENVELOPE = (

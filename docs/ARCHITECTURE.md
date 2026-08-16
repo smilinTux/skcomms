@@ -53,7 +53,7 @@ An FQID has three tiers, resolved from two sources:
 | `operator` | `chef`, `casey` | `~/.skcapstone/cluster.json` |
 | `agent` | `lumina`, `opus` | capauth resolver (`identity.py`) |
 
-Display form: `<agent>@<operator>.<realm>` (e.g. `lumina@chef.skworld`).
+Display form: `<agent>@<operator>.<realm>` (e.g. `lumina@chef.skworld.io`).
 
 The handle is *human-readable*, but **the canonical identity is the PGP
 fingerprint**. `identity.resolve_self_identity()` delegates to

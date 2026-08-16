@@ -26,7 +26,7 @@ from skcomms.realm import build_fqid, resolve_fqid
 class TestLoadCluster:
     def test_loads_from_path(self, tmp_path: Path):
         cluster_file = tmp_path / "cluster.json"
-        cluster_file.write_text(json.dumps({"realm": "skworld", "operator": "chef"}))
+        cluster_file.write_text(json.dumps({"realm": "skworld.io", "operator": "chef"}))
         from skcomms import cluster as cm
 
         original = cm._CLUSTER_LOOKUP
@@ -34,7 +34,7 @@ class TestLoadCluster:
             cm._CLUSTER_LOOKUP = [cluster_file]
             data = load_cluster()
             assert data is not None
-            assert data["realm"] == "skworld"
+            assert data["realm"] == "skworld.io"
         finally:
             cm._CLUSTER_LOOKUP = original
 
@@ -89,7 +89,7 @@ class TestLoadCluster:
 
 class TestBuildFqid:
     def test_standard(self):
-        assert build_fqid("lumina", "chef", "skworld") == "lumina@chef.skworld"
+        assert build_fqid("lumina", "chef", "skworld.io") == "lumina@chef.skworld.io"
 
     def test_alternative_operator(self):
         assert build_fqid("opus", "casey", "douno") == "opus@casey.douno"
@@ -103,15 +103,15 @@ class TestResolveFqid:
         mock_ident = AgentIdentity(
             agent="lumina",
             capauth_uri="capauth:lumina@skworld.io",
-            fqid="lumina@chef.skworld",
+            fqid="lumina@chef.skworld.io",
         )
         with patch("capauth.agent_identity.resolve_agent_identity", return_value=mock_ident):
-            assert resolve_fqid("lumina") == "lumina@chef.skworld"
+            assert resolve_fqid("lumina") == "lumina@chef.skworld.io"
 
     def test_fallback_to_cluster_helpers(self, tmp_path: Path):
         """Falls back to cluster helpers when capauth is absent."""
         cluster_file = tmp_path / "cluster.json"
-        cluster_file.write_text(json.dumps({"realm": "skworld", "operator": "chef"}))
+        cluster_file.write_text(json.dumps({"realm": "skworld.io", "operator": "chef"}))
         from skcomms import cluster as cm
 
         original = cm._CLUSTER_LOOKUP
@@ -122,7 +122,7 @@ class TestResolveFqid:
                 side_effect=ImportError("capauth absent"),
             ):
                 fqid = resolve_fqid("lumina")
-                assert fqid == "lumina@chef.skworld"
+                assert fqid == "lumina@chef.skworld.io"
         finally:
             cm._CLUSTER_LOOKUP = original
 
@@ -148,7 +148,7 @@ class TestResolveFqid:
     def test_missing_cluster_json_never_mints_short_realm(self, tmp_path: Path):
         """Coord card 076d49cd: with an agent name given, capauth absent, AND
         cluster.json missing, resolve_fqid must degrade to None (fail
-        closed), never mint "agent@chef.skworld" from the lenient default.
+        closed), never mint "agent@chef.skworld.io" from the lenient default.
         """
         from skcomms import cluster as cm
 
@@ -196,7 +196,7 @@ class TestResolveSelfIdentity:
         mock_ident = AgentIdentity(
             agent="lumina",
             capauth_uri="capauth:lumina@skworld.io",
-            fqid="lumina@chef.skworld",
+            fqid="lumina@chef.skworld.io",
             fingerprint="02BC0EB3CAD31DB691A753C70C5629AB893F9746",
         )
         with patch("capauth.agent_identity.resolve_agent_identity", return_value=mock_ident):
@@ -204,7 +204,7 @@ class TestResolveSelfIdentity:
 
             d = resolve_self_identity("lumina")
             assert d["capauth_uri"] == "capauth:lumina@skworld.io"
-            assert d["fqid"] == "lumina@chef.skworld"
+            assert d["fqid"] == "lumina@chef.skworld.io"
             assert d["fingerprint"] == "02BC0EB3CAD31DB691A753C70C5629AB893F9746"
 
     def test_fallback_when_capauth_absent(self):

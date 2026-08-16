@@ -51,14 +51,14 @@ def _gen_key(uid: str):
 
 @pytest.fixture(scope="module")
 def lumina_keys():
-    return _gen_key("lumina <lumina@chef.skworld>")
+    return _gen_key("lumina <lumina@chef.skworld.io>")
 
 
 @pytest.fixture
 def cluster_env(tmp_path, monkeypatch):
     monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "home"))
     cluster_file = tmp_path / "cluster.json"
-    cluster_file.write_text(json.dumps({"realm": "skworld", "operator": "chef"}))
+    cluster_file.write_text(json.dumps({"realm": "skworld.io", "operator": "chef"}))
     from skcomms import cluster as cm
 
     original = cm._CLUSTER_LOOKUP
@@ -77,7 +77,7 @@ def signing_patch(lumina_keys):
 
     ident = {
         "agent": "lumina",
-        "fqid": "lumina@chef.skworld",
+        "fqid": "lumina@chef.skworld.io",
         "fingerprint": EnvelopeSigner(priv, "").fingerprint,
     }
     with (
@@ -99,7 +99,7 @@ def signing_patch_real_recipient_lookup(lumina_keys):
 
     ident = {
         "agent": "lumina",
-        "fqid": "lumina@chef.skworld",
+        "fqid": "lumina@chef.skworld.io",
         "fingerprint": EnvelopeSigner(priv, "").fingerprint,
     }
     with (
@@ -120,7 +120,7 @@ class TestNotPlaintextAtRest:
         from skcomms.mailbox import send_message
 
         scaffold(agent="lumina")
-        result = send_message("opus@chef.skworld", SECRET)
+        result = send_message("opus@chef.skworld.io", SECRET)
 
         peer_path = Path(result["peer_inbox_path"])
         raw = peer_path.read_bytes()
@@ -139,7 +139,7 @@ class TestRoundTrip:
         from skcomms.mailbox import read_inbox, send_message
 
         scaffold(agent="lumina")
-        send_message("lumina@chef.skworld", SECRET)
+        send_message("lumina@chef.skworld.io", SECRET)
 
         # On-disk inbox file is ciphertext...
         inbox = scaffold(agent="lumina")["inbox"]
@@ -164,7 +164,7 @@ class TestFailClosed:
         # Override the recipient-key lookup to report NO key for the recipient.
         with patch("skcomms.mailbox._load_recipient_key", return_value=None):
             with pytest.raises(Exception):
-                send_message("opus@chef.skworld", SECRET)
+                send_message("opus@chef.skworld.io", SECRET)
 
         # No plaintext leaked into the peer inbox on the failed send.
         home = scaffold(agent="lumina")  # re-scaffold is idempotent
@@ -182,7 +182,7 @@ class TestIdempotency:
 
         scaffold(agent="lumina")
         sealed_body = "pqdm1:x25519-mlkem768:QUJDRA=="
-        result = send_message("opus@chef.skworld", sealed_body)
+        result = send_message("opus@chef.skworld.io", sealed_body)
 
         peer_path = Path(result["peer_inbox_path"])
         raw = peer_path.read_bytes()
@@ -209,7 +209,7 @@ class TestOutboxSealedAtRest:
         from skcomms.mailbox import send_message
 
         scaffold(agent="lumina")
-        result = send_message("opus@chef.skworld", SECRET)
+        result = send_message("opus@chef.skworld.io", SECRET)
 
         raw = Path(result["outbox_path"]).read_bytes()
         assert SECRET.encode("utf-8") not in raw, "outbox record written in plaintext!"
@@ -221,13 +221,13 @@ class TestOutboxSealedAtRest:
         from skcomms.mailbox import read_outbox, send_message
 
         scaffold(agent="lumina")
-        send_message("opus@chef.skworld", SECRET)
+        send_message("opus@chef.skworld.io", SECRET)
 
         records = read_outbox(agent="lumina")
         assert len(records) == 1
         env, verification = records[0]
         assert env.body == SECRET
-        assert env.to_fqid == "opus@chef.skworld"
+        assert env.to_fqid == "opus@chef.skworld.io"
         assert verification.valid, verification.reason
 
     def test_plaintext_opt_out_env_var(self, cluster_env, signing_patch, monkeypatch):
@@ -239,7 +239,7 @@ class TestOutboxSealedAtRest:
 
         monkeypatch.setenv("SKCOMMS_MAILBOX_OUTBOX_PLAINTEXT", "1")
         scaffold(agent="lumina")
-        result = send_message("opus@chef.skworld", SECRET)
+        result = send_message("opus@chef.skworld.io", SECRET)
 
         out_signed = SignedEnvelope.from_bytes(Path(result["outbox_path"]).read_bytes())
         assert out_signed.envelope.body == SECRET
@@ -324,7 +324,7 @@ class TestRecipientKeyResolution:
 
         scaffold(agent="lumina")
         # cluster fixture is operator=chef realm=skworld, so this matches.
-        result = send_message("zz-no-such-agent@chef.skworld", SECRET)
+        result = send_message("zz-no-such-agent@chef.skworld.io", SECRET)
         raw = Path(result["peer_inbox_path"]).read_bytes()
         assert SECRET.encode("utf-8") not in raw
 
@@ -377,7 +377,7 @@ class TestRecipientKeyResolution:
 
         scaffold(agent="lumina")
         # cluster fixture is operator=chef realm=skworld, so opus is same-box.
-        result = send_message("opus@chef.skworld", SECRET)
+        result = send_message("opus@chef.skworld.io", SECRET)
         raw = Path(result["peer_inbox_path"]).read_bytes()
         assert SECRET.encode("utf-8") not in raw
 
@@ -405,7 +405,7 @@ class TestPlaintextEscapeHatchWarns:
         monkeypatch.setenv("SKCOMMS_MAILBOX_OUTBOX_PLAINTEXT", "1")
         scaffold(agent="lumina")
         with caplog.at_level(logging.WARNING, logger="skcomms.mailbox"):
-            send_message("opus@chef.skworld", SECRET)
+            send_message("opus@chef.skworld.io", SECRET)
 
         assert any(
             "SKCOMMS_MAILBOX_OUTBOX_PLAINTEXT" in rec.message and "PLAINTEXT" in rec.message
@@ -423,7 +423,7 @@ class TestPlaintextEscapeHatchWarns:
         monkeypatch.delenv("SKCOMMS_MAILBOX_OUTBOX_PLAINTEXT", raising=False)
         scaffold(agent="lumina")
         with caplog.at_level(logging.WARNING, logger="skcomms.mailbox"):
-            send_message("opus@chef.skworld", SECRET)
+            send_message("opus@chef.skworld.io", SECRET)
 
         assert not any("SKCOMMS_MAILBOX_OUTBOX_PLAINTEXT" in rec.message for rec in caplog.records)
 
@@ -440,7 +440,7 @@ class TestResealLegacyPlaintextOutbox:
 
         monkeypatch.setenv("SKCOMMS_MAILBOX_OUTBOX_PLAINTEXT", "1")
         scaffold(agent="lumina")
-        result = send_message("opus@chef.skworld", SECRET)
+        result = send_message("opus@chef.skworld.io", SECRET)
         monkeypatch.delenv("SKCOMMS_MAILBOX_OUTBOX_PLAINTEXT")
         return Path(result["outbox_path"])
 
@@ -490,7 +490,7 @@ class TestResealLegacyPlaintextOutbox:
 
         monkeypatch.delenv("SKCOMMS_MAILBOX_OUTBOX_PLAINTEXT", raising=False)
         scaffold(agent="lumina")
-        result = send_message("opus@chef.skworld", SECRET)  # sealed record
+        result = send_message("opus@chef.skworld.io", SECRET)  # sealed record
         sealed_before = Path(result["outbox_path"]).read_bytes()
 
         counts = reseal_outbox_plaintext()

@@ -23,10 +23,10 @@ from skcomms.consent_captcha import derive_challenge
 from skcomms.consent_group_gate import GroupConsentGate, GroupJoinResult
 from skcomms.consent_groups import JoinStatus
 
-OWNER = "lumina@chef.skworld"
-MOD = "opus@chef.skworld"
-MEMBER = "jarvis@chef.skworld"
-STRANGER = "mallory@evil.skworld"
+OWNER = "lumina@chef.skworld.io"
+MOD = "opus@chef.skworld.io"
+MEMBER = "jarvis@chef.skworld.io"
+STRANGER = "mallory@evil.skworld.io"
 GID = "skfed-builders"
 
 

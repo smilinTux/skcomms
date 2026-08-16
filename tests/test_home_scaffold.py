@@ -63,7 +63,7 @@ def mock_identity():
         return_value={
             "agent": "lumina",
             "capauth_uri": "capauth:lumina@skworld.io",
-            "fqid": "lumina@chef.skworld",
+            "fqid": "lumina@chef.skworld.io",
             "fingerprint": "DEADBEEF",
         },
     ):

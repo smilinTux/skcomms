@@ -42,13 +42,13 @@ def _gen_key(uid: str):
 
 @pytest.fixture(scope="module")
 def alice_keys():
-    return _gen_key("alice <alice@chef.skworld>")
+    return _gen_key("alice <alice@chef.skworld.io>")
 
 
 def _env(**kw) -> Envelope:
     base = dict(
-        from_fqid="alice@chef.skworld",
-        to_fqid="lumina@chef.skworld",
+        from_fqid="alice@chef.skworld.io",
+        to_fqid="lumina@chef.skworld.io",
         content_type="text/plain",
         body="established-contact DM",
         id="fixed-id",
@@ -104,7 +104,7 @@ class TestConsentTokenSurvivesSignVerify:
         signed = EnvelopeSigner(priv).sign(env)
 
         verifier = EnvelopeVerifier()
-        verifier.add_key("alice@chef.skworld", pub)
+        verifier.add_key("alice@chef.skworld.io", pub)
         result = verifier.verify(signed)
         assert result.valid, result.reason
         # And the token is still readable on the verified envelope.
@@ -122,6 +122,6 @@ class TestConsentTokenSurvivesSignVerify:
         forged = signed.model_copy(update={"envelope": forged_env})
 
         verifier = EnvelopeVerifier()
-        verifier.add_key("alice@chef.skworld", pub)
+        verifier.add_key("alice@chef.skworld.io", pub)
         result = verifier.verify(forged)
         assert not result.valid

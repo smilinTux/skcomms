@@ -42,7 +42,7 @@ def _gen_pubkey():
 
     key = pgpy.PGPKey.new(PubKeyAlgorithm.RSAEncryptOrSign, 1024)
     key.add_uid(
-        pgpy.PGPUID.new("mod-a <mod@trust-a.skworld>"),
+        pgpy.PGPUID.new("mod-a <mod@trust-a.skworld.io>"),
         usage={KeyFlags.Sign},
         hashes=[HashAlgorithm.SHA256],
         ciphers=[SymmetricKeyAlgorithm.AES256],
@@ -102,16 +102,16 @@ def test_feeds_subscribe_then_list_then_unsubscribe(tmp_path):
     keyfile = tmp_path / "pub_a.asc"
     keyfile.write_text(_gen_pubkey(), encoding="utf-8")
 
-    r = _run("feeds", "subscribe", "mod@trust-a.skworld", str(keyfile))
+    r = _run("feeds", "subscribe", "mod@trust-a.skworld.io", str(keyfile))
     assert r.exit_code == 0
     feeds = list_feeds("lumina")
-    assert len(feeds) == 1 and feeds[0]["publisher"] == "mod@trust-a.skworld"
+    assert len(feeds) == 1 and feeds[0]["publisher"] == "mod@trust-a.skworld.io"
     assert feeds[0]["pubkey"].startswith("-----BEGIN PGP PUBLIC KEY")
 
     listed = _run("feeds", "list")
-    assert "mod@trust-a.skworld" in listed.output
+    assert "mod@trust-a.skworld.io" in listed.output
 
-    u = _run("feeds", "unsubscribe", "mod@trust-a.skworld")
+    u = _run("feeds", "unsubscribe", "mod@trust-a.skworld.io")
     assert u.exit_code == 0
     assert list_feeds("lumina") == []
 
@@ -134,7 +134,7 @@ def test_tier_anonymous_default():
 
 
 def test_tier_verified_is_sovereign():
-    r = _run("tier", "peer@trust.skworld", "--verified")
+    r = _run("tier", "peer@trust.skworld.io", "--verified")
     assert r.exit_code == 0
     assert "sovereign" in r.output.lower()
 

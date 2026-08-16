@@ -28,6 +28,24 @@
   `docs-check` CI gate at tiers 1,2.
 
 ### Fixed
+- **fqid fixtures brought onto the canonical grammar (test + docs only).**
+  `sk-standards/standards/IDENTITY_NAMING_STANDARD.md` (ratified 2026-08-14) makes
+  `<agent>@<operator>.<org-domain>` the one legal subject spelling, and capauth now
+  enforces it in `capauth.subject.canonical_subject` at `enroll_device`. skcomms'
+  fixtures still used the TLD-less `@<operator>.skworld` form, which broke four
+  `test_pairing_mirror.py` tests: two asserted the pre-standard spelling, two found an
+  EMPTY capauth store because the subject was refused outright and the pairing mirror
+  swallows every capauth error by design. Fixtures, docs and src docstrings now use the
+  canonical form, along with the realm values coupled to them (cluster.json fixtures,
+  `build_fqid` arguments, consent-policy server sets, the peer-inbox path, the skfed
+  `REALM` constant). New `tests/test_canonical_fqid_regression.py` pins the rule itself:
+  capauth refuses a TLD-less subject, `mirror_pairing` therefore enrolls nothing for
+  one, a canonical subject on the same path DOES enrol (the negative control), and no
+  `@<operator>.skworld` literal survives anywhere in `tests/`. No production identity
+  string changed and no stored record was touched. Known and NOT fixed here: `api.py`
+  and `access/routing.py` still fall back to `f"{agent}@local.skworld"`, a subject
+  capauth refuses; changing an identity string that goes on the wire is an operator
+  call.
 - **https-s2s 422 wire-format mismatch fixed at the source (sign-at-send).**
   `SKComms.send` now wraps every outbound message into the canonical signed
   **Envelope v1** wire format (Envelope v1 header map + detached CapAuth

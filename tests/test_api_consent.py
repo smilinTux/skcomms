@@ -20,7 +20,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 SELF_AGENT = "lumina"
-SENDER = "jarvis@chef.skworld"
+SENDER = "jarvis@chef.skworld.io"
 
 
 @pytest.fixture

@@ -43,16 +43,18 @@ class _FakeSignaling:
 async def test_manager_call_and_auto_answer():
     bus = _Bus()
     incoming: list = []
-    opus = P2PSessionManager(signaling=_FakeSignaling("opus@chef.skworld", bus), poll_interval=0.1)
+    opus = P2PSessionManager(
+        signaling=_FakeSignaling("opus@chef.skworld.io", bus), poll_interval=0.1
+    )
     lumina = P2PSessionManager(
-        signaling=_FakeSignaling("lumina@chef.skworld", bus),
+        signaling=_FakeSignaling("lumina@chef.skworld.io", bus),
         poll_interval=0.1,
         on_session=lambda peer, s: incoming.append(peer),
     )
     try:
         await lumina.start()  # lumina listening (auto-answer)
-        sess_o = await opus.call("lumina@chef.skworld")  # opus dials
-        sess_l_peer = "opus@chef.skworld"
+        sess_o = await opus.call("lumina@chef.skworld.io")  # opus dials
+        sess_l_peer = "opus@chef.skworld.io"
 
         await sess_o.wait_open(timeout=20)
         # lumina auto-created an answering session for opus
@@ -65,8 +67,8 @@ async def test_manager_call_and_auto_answer():
         sess_l.send("pong")
         assert await sess_o.recv(timeout=20) == "pong"
 
-        assert "opus@chef.skworld" in incoming  # on_session fired for the incoming call
-        assert "lumina@chef.skworld" in opus.active()
+        assert "opus@chef.skworld.io" in incoming  # on_session fired for the incoming call
+        assert "lumina@chef.skworld.io" in opus.active()
     finally:
         await opus.close()
         await lumina.close()

@@ -3,9 +3,9 @@ from skcomms.transports.lora.addressing import SK_CHANNEL, NodeMap
 
 def test_map_and_lookup_roundtrip(tmp_path):
     m = NodeMap(path=tmp_path / "nodes.json")
-    m.bind("lumina@chef.skworld", "!abcd1234")
-    assert m.node_for("lumina@chef.skworld") == "!abcd1234"
-    assert m.fqid_for("!abcd1234") == "lumina@chef.skworld"
+    m.bind("lumina@chef.skworld.io", "!abcd1234")
+    assert m.node_for("lumina@chef.skworld.io") == "!abcd1234"
+    assert m.fqid_for("!abcd1234") == "lumina@chef.skworld.io"
 
 
 def test_unknown_returns_none(tmp_path):

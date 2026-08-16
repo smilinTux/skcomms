@@ -39,7 +39,7 @@ def _gen_key(uid: str):
 
 @pytest.fixture(scope="module")
 def alice_keys():
-    return _gen_key("alice <jarvis@chef.skworld>")
+    return _gen_key("alice <jarvis@chef.skworld.io>")
 
 
 @pytest.fixture(scope="module")
@@ -49,7 +49,7 @@ def bob_keys():
 
 def _env(body="hi", **kw) -> Envelope:
     return Envelope(
-        from_fqid="jarvis@chef.skworld", to_fqid="lumina@chef.skworld", body=body, **kw
+        from_fqid="jarvis@chef.skworld.io", to_fqid="lumina@chef.skworld.io", body=body, **kw
     )
 
 
@@ -74,9 +74,9 @@ class TestNonce:
 class TestNonceCache:
     def test_first_seen_then_replay(self):
         c = fed.NonceCache()
-        assert c.check_and_add("jarvis@chef.skworld", "n1") is True
-        assert c.check_and_add("jarvis@chef.skworld", "n1") is False  # replay
-        assert c.check_and_add("lumina@chef.skworld", "n1") is True  # per-sender
+        assert c.check_and_add("jarvis@chef.skworld.io", "n1") is True
+        assert c.check_and_add("jarvis@chef.skworld.io", "n1") is False  # replay
+        assert c.check_and_add("lumina@chef.skworld.io", "n1") is True  # per-sender
 
     def test_ttl_eviction(self):
         c = fed.NonceCache(ttl_s=10)
@@ -114,14 +114,14 @@ class TestAcceptSigned:
     def test_happy_path(self, alice_keys):
         _, pub = alice_keys
         v = EnvelopeVerifier()
-        v.add_key("jarvis@chef.skworld", pub)
+        v.add_key("jarvis@chef.skworld.io", pub)
         env = fed.accept_signed(self._signed(alice_keys), verifier=v, nonce_cache=fed.NonceCache())
-        assert env.from_fqid == "jarvis@chef.skworld" and env.body == "hi"
+        assert env.from_fqid == "jarvis@chef.skworld.io" and env.body == "hi"
 
     def test_replay_rejected(self, alice_keys):
         _, pub = alice_keys
         v = EnvelopeVerifier()
-        v.add_key("jarvis@chef.skworld", pub)
+        v.add_key("jarvis@chef.skworld.io", pub)
         nc = fed.NonceCache()
         signed = self._signed(alice_keys)
         fed.accept_signed(signed, verifier=v, nonce_cache=nc)
@@ -138,7 +138,7 @@ class TestAcceptSigned:
         # signed by bob, but verifier only knows alice's key for that fqid
         _, alice_pub = alice_keys
         v = EnvelopeVerifier()
-        v.add_key("jarvis@chef.skworld", alice_pub)
+        v.add_key("jarvis@chef.skworld.io", alice_pub)
         signed = self._signed(bob_keys)
         with pytest.raises(fed.SignatureError):
             fed.accept_signed(signed, verifier=v, nonce_cache=fed.NonceCache())
@@ -146,7 +146,7 @@ class TestAcceptSigned:
     def test_stale_rejected(self, alice_keys):
         _, pub = alice_keys
         v = EnvelopeVerifier()
-        v.add_key("jarvis@chef.skworld", pub)
+        v.add_key("jarvis@chef.skworld.io", pub)
         old = (datetime.now(timezone.utc) - timedelta(seconds=999)).isoformat()
         with pytest.raises(fed.StaleError):
             fed.accept_signed(
@@ -156,7 +156,7 @@ class TestAcceptSigned:
     def test_accept_bytes_roundtrip(self, alice_keys):
         _, pub = alice_keys
         v = EnvelopeVerifier()
-        v.add_key("jarvis@chef.skworld", pub)
+        v.add_key("jarvis@chef.skworld.io", pub)
         raw = self._signed(alice_keys).to_bytes()
         env = fed.accept_bytes(raw, verifier=v, nonce_cache=fed.NonceCache())
-        assert env.to_fqid == "lumina@chef.skworld"
+        assert env.to_fqid == "lumina@chef.skworld.io"

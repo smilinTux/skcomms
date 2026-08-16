@@ -23,7 +23,7 @@
 #
 # Usage:
 #   scripts/skfed-neutral-addresses.sh [--base-domain skworld.io] [--prefix fed-] \
-#       [--agent lumina] [--fqid lumina@chef.skworld]... [--all] [--apply]
+#       [--agent lumina] [--fqid lumina@chef.skworld.io]... [--all] [--apply]
 #
 set -euo pipefail
 

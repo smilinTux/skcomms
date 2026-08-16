@@ -10,7 +10,7 @@ overwritten.
 Store layout (``${SKCOMMS_HOME:-~/.skcapstone/skcomms}/known_fingerprints.json``)::
 
     {
-      "lumina@chef.skworld": {
+      "lumina@chef.skworld.io": {
         "fingerprint": "AAAA...5555",
         "first_seen": "2026-06-10T12:00:00+00:00",
         "pubkey": "-----BEGIN PGP PUBLIC KEY BLOCK----- ..."   # optional

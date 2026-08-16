@@ -45,15 +45,15 @@ def test_accept_mirrors_peer_into_capauth(tmp_path, monkeypatch):
     fp = fingerprint_from_pubkey(pub)
     uri = to_skp_uri(
         PairingBundle(
-            fqid="opus@chef.skworld", fingerprint=fp, syncthing_device_id="DEV-2", pubkey=pub
+            fqid="opus@chef.skworld.io", fingerprint=fp, syncthing_device_id="DEV-2", pubkey=pub
         )
     )
     rec = accept_pairing(uri)
-    assert rec["fqid"] == "opus@chef.skworld"
+    assert rec["fqid"] == "opus@chef.skworld.io"
 
-    devs = list_devices(subject="opus@chef.skworld", base_dir=str(tmp_path / "capauth"))
+    devs = list_devices(subject="opus@chef.skworld.io", base_dir=str(tmp_path / "capauth"))
     assert len(devs) == 1
-    assert devs[0].subject == "opus@chef.skworld"
+    assert devs[0].subject == "opus@chef.skworld.io"
     assert str(getattr(devs[0].mode, "value", devs[0].mode)) == "tofu"
 
 
@@ -63,8 +63,8 @@ def test_mirror_pairing_direct(tmp_path, monkeypatch):
 
     monkeypatch.setenv("SKCOMMS_PAIRING_KERNEL_BASE", str(tmp_path))
     pub = _gen_pubkey()
-    PM.mirror_pairing("lumina@chef.skworld", pub)
-    devs = list_devices(subject="lumina@chef.skworld", base_dir=str(tmp_path))
+    PM.mirror_pairing("lumina@chef.skworld.io", pub)
+    devs = list_devices(subject="lumina@chef.skworld.io", base_dir=str(tmp_path))
     assert len(devs) == 1
     assert str(getattr(devs[0].mode, "value", devs[0].mode)) == "tofu"
 
@@ -78,7 +78,7 @@ def test_mirror_is_fail_safe(tmp_path, monkeypatch):
 
     monkeypatch.setattr("capauth.pairing.enroll_device", _boom)
     # Must NOT raise.
-    PM.mirror_pairing("opus@chef.skworld", _gen_pubkey())
+    PM.mirror_pairing("opus@chef.skworld.io", _gen_pubkey())
 
 
 def test_accept_still_succeeds_when_mirror_raises(tmp_path, monkeypatch):
@@ -95,14 +95,14 @@ def test_accept_still_succeeds_when_mirror_raises(tmp_path, monkeypatch):
     fp = fingerprint_from_pubkey(pub)
     uri = to_skp_uri(
         PairingBundle(
-            fqid="opus@chef.skworld", fingerprint=fp, syncthing_device_id="DEV-2", pubkey=pub
+            fqid="opus@chef.skworld.io", fingerprint=fp, syncthing_device_id="DEV-2", pubkey=pub
         )
     )
     rec = accept_pairing(uri)
-    assert rec["fqid"] == "opus@chef.skworld"
+    assert rec["fqid"] == "opus@chef.skworld.io"
     from skcomms.peers import list_peers
 
-    assert "opus@chef.skworld" in list_peers()
+    assert "opus@chef.skworld.io" in list_peers()
 
 
 def test_kernel_disabled_writes_nothing(tmp_path, monkeypatch):
@@ -111,8 +111,8 @@ def test_kernel_disabled_writes_nothing(tmp_path, monkeypatch):
 
     monkeypatch.setenv("SKCOMMS_PAIRING_KERNEL", "0")
     monkeypatch.setenv("SKCOMMS_PAIRING_KERNEL_BASE", str(tmp_path))
-    PM.mirror_pairing("opus@chef.skworld", _gen_pubkey())
-    assert list_devices(subject="opus@chef.skworld", base_dir=str(tmp_path)) == []
+    PM.mirror_pairing("opus@chef.skworld.io", _gen_pubkey())
+    assert list_devices(subject="opus@chef.skworld.io", base_dir=str(tmp_path)) == []
 
 
 # ---------------------------------------------------------------------------
@@ -134,16 +134,16 @@ def test_remove_mirrors_revocation_into_capauth(tmp_path, monkeypatch):
     fp = fingerprint_from_pubkey(pub)
     uri = to_skp_uri(
         PairingBundle(
-            fqid="opus@chef.skworld", fingerprint=fp, syncthing_device_id="DEV-2", pubkey=pub
+            fqid="opus@chef.skworld.io", fingerprint=fp, syncthing_device_id="DEV-2", pubkey=pub
         )
     )
     accept_pairing(uri)
-    devs = list_devices(subject="opus@chef.skworld", base_dir=base)
+    devs = list_devices(subject="opus@chef.skworld.io", base_dir=base)
     assert len(devs) == 1 and not devs[0].revoked
 
-    assert remove_peer("opus@chef.skworld") is True
+    assert remove_peer("opus@chef.skworld.io") is True
 
-    devs = list_devices(subject="opus@chef.skworld", base_dir=base)
+    devs = list_devices(subject="opus@chef.skworld.io", base_dir=base)
     assert len(devs) == 1
     assert devs[0].revoked
 
@@ -154,11 +154,11 @@ def test_mirror_revocation_direct(tmp_path, monkeypatch):
 
     monkeypatch.setenv("SKCOMMS_PAIRING_KERNEL_BASE", str(tmp_path))
     pub = _gen_pubkey()
-    PM.mirror_pairing("lumina@chef.skworld", pub)
-    assert not list_devices(subject="lumina@chef.skworld", base_dir=str(tmp_path))[0].revoked
+    PM.mirror_pairing("lumina@chef.skworld.io", pub)
+    assert not list_devices(subject="lumina@chef.skworld.io", base_dir=str(tmp_path))[0].revoked
 
-    PM.mirror_revocation("lumina@chef.skworld")
-    devs = list_devices(subject="lumina@chef.skworld", base_dir=str(tmp_path))
+    PM.mirror_revocation("lumina@chef.skworld.io")
+    devs = list_devices(subject="lumina@chef.skworld.io", base_dir=str(tmp_path))
     assert len(devs) == 1 and devs[0].revoked
 
 
@@ -174,19 +174,19 @@ def test_remove_still_succeeds_when_mirror_raises(tmp_path, monkeypatch):
     fp = fingerprint_from_pubkey(pub)
     uri = to_skp_uri(
         PairingBundle(
-            fqid="opus@chef.skworld", fingerprint=fp, syncthing_device_id="DEV-2", pubkey=pub
+            fqid="opus@chef.skworld.io", fingerprint=fp, syncthing_device_id="DEV-2", pubkey=pub
         )
     )
     accept_pairing(uri)
-    assert "opus@chef.skworld" in list_peers()
+    assert "opus@chef.skworld.io" in list_peers()
 
     def _boom(*a, **k):
         raise RuntimeError("capauth down")
 
     monkeypatch.setattr("capauth.pairing.revoke", _boom)
     # Must NOT raise, and must still remove the peer locally.
-    assert remove_peer("opus@chef.skworld") is True
-    assert "opus@chef.skworld" not in list_peers()
+    assert remove_peer("opus@chef.skworld.io") is True
+    assert "opus@chef.skworld.io" not in list_peers()
 
 
 def test_mirror_revocation_is_fail_safe(tmp_path, monkeypatch):
@@ -198,7 +198,7 @@ def test_mirror_revocation_is_fail_safe(tmp_path, monkeypatch):
 
     monkeypatch.setattr("capauth.pairing.list_devices", _boom)
     # Must NOT raise.
-    PM.mirror_revocation("opus@chef.skworld")
+    PM.mirror_revocation("opus@chef.skworld.io")
 
 
 def test_remove_unknown_peer_is_noop(tmp_path, monkeypatch):
@@ -208,8 +208,8 @@ def test_remove_unknown_peer_is_noop(tmp_path, monkeypatch):
 
     monkeypatch.setenv("SKCOMMS_HOME", str(tmp_path / "skcomms"))
     monkeypatch.setenv("SKCOMMS_PAIRING_KERNEL_BASE", str(tmp_path / "capauth"))
-    assert remove_peer("ghost@chef.skworld") is False
-    assert list_devices(subject="ghost@chef.skworld", base_dir=str(tmp_path / "capauth")) == []
+    assert remove_peer("ghost@chef.skworld.io") is False
+    assert list_devices(subject="ghost@chef.skworld.io", base_dir=str(tmp_path / "capauth")) == []
 
 
 def test_revocation_kernel_disabled_writes_nothing(tmp_path, monkeypatch):
@@ -218,10 +218,10 @@ def test_revocation_kernel_disabled_writes_nothing(tmp_path, monkeypatch):
 
     # Seed a live device with the kernel ON, then flip it OFF for the revocation.
     monkeypatch.setenv("SKCOMMS_PAIRING_KERNEL_BASE", str(tmp_path))
-    PM.mirror_pairing("opus@chef.skworld", _gen_pubkey())
+    PM.mirror_pairing("opus@chef.skworld.io", _gen_pubkey())
     monkeypatch.setenv("SKCOMMS_PAIRING_KERNEL", "0")
-    PM.mirror_revocation("opus@chef.skworld")
-    devs = list_devices(subject="opus@chef.skworld", base_dir=str(tmp_path))
+    PM.mirror_revocation("opus@chef.skworld.io")
+    devs = list_devices(subject="opus@chef.skworld.io", base_dir=str(tmp_path))
     assert len(devs) == 1 and not devs[0].revoked
 
 
@@ -233,7 +233,7 @@ def test_revocation_kernel_disabled_writes_nothing(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def _peer_bundle(fqid="opus@chef.skworld", name="Testpeer"):
+def _peer_bundle(fqid="opus@chef.skworld.io", name="Testpeer"):
     from skcomms.peers import fingerprint_from_pubkey
 
     pub = _gen_pubkey()
@@ -261,11 +261,11 @@ def test_public_pairing_mirrors_peer_into_capauth(tmp_path, monkeypatch):
         peers_dir=tmp_path / "peers",
         self_bundle_provider=lambda: None,
     )
-    assert res["paired"]["fqid"] == "opus@chef.skworld"
+    assert res["paired"]["fqid"] == "opus@chef.skworld.io"
 
-    devs = list_devices(subject="opus@chef.skworld", base_dir=str(tmp_path / "capauth"))
+    devs = list_devices(subject="opus@chef.skworld.io", base_dir=str(tmp_path / "capauth"))
     assert len(devs) == 1
-    assert devs[0].subject == "opus@chef.skworld"
+    assert devs[0].subject == "opus@chef.skworld.io"
     assert str(getattr(devs[0].mode, "value", devs[0].mode)) == "tofu"
 
 
@@ -287,7 +287,7 @@ def test_public_pairing_still_succeeds_when_mirror_raises(tmp_path, monkeypatch)
         peers_dir=tmp_path / "peers",
         self_bundle_provider=lambda: None,
     )
-    assert res["paired"]["fqid"] == "opus@chef.skworld"
+    assert res["paired"]["fqid"] == "opus@chef.skworld.io"
     assert res["paired"]["fingerprint"] == bundle["fingerprint"]
 
 
@@ -306,8 +306,8 @@ def test_public_pairing_kernel_disabled_writes_nothing(tmp_path, monkeypatch):
         peers_dir=tmp_path / "peers",
         self_bundle_provider=lambda: None,
     )
-    assert res["paired"]["fqid"] == "opus@chef.skworld"
-    assert list_devices(subject="opus@chef.skworld", base_dir=str(tmp_path / "capauth")) == []
+    assert res["paired"]["fqid"] == "opus@chef.skworld.io"
+    assert list_devices(subject="opus@chef.skworld.io", base_dir=str(tmp_path / "capauth")) == []
 
 
 # ── idempotency (trust on FIRST use, not on every use) ───────────────────
@@ -326,7 +326,7 @@ _KEY_B = "not-a-real-key-fixture-bravo"
 def test_re_mirroring_the_same_key_does_not_mint_a_second_device(tmp_path, monkeypatch):
     """Repeated accepts of one peer+key must converge on ONE device record.
 
-    Regression pin for the observed drift: opus@chef.skworld accumulated 22
+    Regression pin for the observed drift: opus@chef.skworld.io accumulated 22
     approved TOFU records in a single afternoon because every accept called
     enroll_device + approve unconditionally.
     """
@@ -336,9 +336,9 @@ def test_re_mirroring_the_same_key_does_not_mint_a_second_device(tmp_path, monke
     from skcomms.pairing_mirror import mirror_pairing
 
     for _ in range(5):
-        mirror_pairing("peer@example.skworld", _KEY_A)
+        mirror_pairing("peer@example.skworld.io", _KEY_A)
 
-    devices = list_devices("peer@example.skworld", base_dir=tmp_path, include_revoked=True)
+    devices = list_devices("peer@example.skworld.io", base_dir=tmp_path, include_revoked=True)
     assert len(devices) == 1
 
 
@@ -349,13 +349,13 @@ def test_a_genuinely_new_key_still_enrolls(tmp_path, monkeypatch):
 
     from skcomms.pairing_mirror import mirror_pairing
 
-    mirror_pairing("peer@example.skworld", _KEY_A)
-    mirror_pairing("peer@example.skworld", _KEY_B)
+    mirror_pairing("peer@example.skworld.io", _KEY_A)
+    mirror_pairing("peer@example.skworld.io", _KEY_B)
 
-    devices = list_devices("peer@example.skworld", base_dir=tmp_path, include_revoked=True)
+    devices = list_devices("peer@example.skworld.io", base_dir=tmp_path, include_revoked=True)
     assert len(devices) == 2
 
     # And re-presenting the first key still does not add a third.
-    mirror_pairing("peer@example.skworld", _KEY_A)
-    devices = list_devices("peer@example.skworld", base_dir=tmp_path, include_revoked=True)
+    mirror_pairing("peer@example.skworld.io", _KEY_A)
+    devices = list_devices("peer@example.skworld.io", base_dir=tmp_path, include_revoked=True)
     assert len(devices) == 2

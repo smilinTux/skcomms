@@ -178,12 +178,12 @@ class TestEventCodec:
             parse_directory_event,
         )
 
-        rec = _record("lumina@chef.skworld", "noroc2027", pubkey_a)
+        rec = _record("lumina@chef.skworld.io", "noroc2027", pubkey_a)
         ev = build_directory_event(rec)
         assert ev["kind"] == DIRECTORY_KIND
-        assert _dtag(ev) == "lumina@chef.skworld"
+        assert _dtag(ev) == "lumina@chef.skworld.io"
         parsed = parse_directory_event(ev)
-        assert parsed["fqid"] == "lumina@chef.skworld"
+        assert parsed["fqid"] == "lumina@chef.skworld.io"
         assert parsed["inbox_url"] == "https://noroc2027/api/v1/inbox"
 
     def test_build_requires_fqid(self):
@@ -213,12 +213,12 @@ class TestPublishResolve:
         relay = FakeRelay()
         client = _client(relay)
 
-        assert client.publish_directory(_record("lumina@chef.skworld", "noroc2027", pubkey_a))
+        assert client.publish_directory(_record("lumina@chef.skworld.io", "noroc2027", pubkey_a))
         assert len(relay.events) == 1
 
-        peer = client.resolve_peer("lumina@chef.skworld")
+        peer = client.resolve_peer("lumina@chef.skworld.io")
         assert peer is not None
-        assert peer.fqid == "lumina@chef.skworld"
+        assert peer.fqid == "lumina@chef.skworld.io"
         assert peer.name == "lumina"
         assert peer.inbox_url() == "https://noroc2027/api/v1/inbox"
         assert peer.pubkey == pubkey_a
@@ -237,11 +237,11 @@ class TestPublishResolve:
 
         relay = FakeRelay()
         client = _client(relay)
-        client.publish_directory(_record("lumina@chef.skworld", "noroc2027", pubkey_a))
-        client.resolve_peer("lumina@chef.skworld")
+        client.publish_directory(_record("lumina@chef.skworld.io", "noroc2027", pubkey_a))
+        client.resolve_peer("lumina@chef.skworld.io")
 
         # TOFU pinned the fingerprint for this fqid
-        assert fingerprint_for("lumina@chef.skworld") is not None
+        assert fingerprint_for("lumina@chef.skworld.io") is not None
 
     def test_resolve_unknown_returns_none(self, home):
         relay = FakeRelay()
@@ -258,11 +258,11 @@ class TestDiscoverAll:
     def test_discover_all_seeds_multiple(self, home, pubkey_a, pubkey_b):
         relay = FakeRelay()
         client = _client(relay)
-        client.publish_directory(_record("lumina@chef.skworld", "noroc2027", pubkey_a))
-        client.publish_directory(_record("jarvis@chef.skworld", "skstack41", pubkey_b))
+        client.publish_directory(_record("lumina@chef.skworld.io", "noroc2027", pubkey_a))
+        client.publish_directory(_record("jarvis@chef.skworld.io", "skstack41", pubkey_b))
 
         seeded = client.discover_all()
-        assert {p.fqid for p in seeded} == {"lumina@chef.skworld", "jarvis@chef.skworld"}
+        assert {p.fqid for p in seeded} == {"lumina@chef.skworld.io", "jarvis@chef.skworld.io"}
 
         from skcomms.discovery import PeerStore
 
@@ -273,8 +273,8 @@ class TestDiscoverAll:
     def test_discover_all_idempotent(self, home, pubkey_a, pubkey_b):
         relay = FakeRelay()
         client = _client(relay)
-        client.publish_directory(_record("lumina@chef.skworld", "noroc2027", pubkey_a))
-        client.publish_directory(_record("jarvis@chef.skworld", "skstack41", pubkey_b))
+        client.publish_directory(_record("lumina@chef.skworld.io", "noroc2027", pubkey_a))
+        client.publish_directory(_record("jarvis@chef.skworld.io", "skstack41", pubkey_b))
 
         first = client.discover_all()
         second = client.discover_all()
@@ -289,7 +289,7 @@ class TestDiscoverAll:
     def test_sync_directory_alias(self, home, pubkey_a):
         relay = FakeRelay()
         client = _client(relay)
-        client.publish_directory(_record("lumina@chef.skworld", "noroc2027", pubkey_a))
+        client.publish_directory(_record("lumina@chef.skworld.io", "noroc2027", pubkey_a))
         assert client.sync_directory == client.discover_all
         assert len(client.sync_directory()) == 1
 
@@ -305,23 +305,23 @@ class TestTofuConflict:
         client = _client(relay)
 
         # first contact pins pubkey_a
-        client.publish_directory(_record("lumina@chef.skworld", "noroc2027", pubkey_a))
-        first = client.resolve_peer("lumina@chef.skworld")
+        client.publish_directory(_record("lumina@chef.skworld.io", "noroc2027", pubkey_a))
+        first = client.resolve_peer("lumina@chef.skworld.io")
         assert first is not None and first.pubkey == pubkey_a
 
         from skcomms.tofu import fingerprint_for
 
-        pinned = fingerprint_for("lumina@chef.skworld")
+        pinned = fingerprint_for("lumina@chef.skworld.io")
 
         # attacker republishes the SAME fqid with a DIFFERENT key
         client.publish_directory(
-            _record("lumina@chef.skworld", "evil-node", pubkey_a_changed, ts=1_750_999_999)
+            _record("lumina@chef.skworld.io", "evil-node", pubkey_a_changed, ts=1_750_999_999)
         )
-        rejected = client.resolve_peer("lumina@chef.skworld")
+        rejected = client.resolve_peer("lumina@chef.skworld.io")
         assert rejected is None  # conflict → not upserted
 
         # pin unchanged; stored peer still points at the original honest node
-        assert fingerprint_for("lumina@chef.skworld") == pinned
+        assert fingerprint_for("lumina@chef.skworld.io") == pinned
         from skcomms.discovery import PeerStore
 
         stored = _store().get("lumina")
@@ -332,15 +332,15 @@ class TestTofuConflict:
     ):
         relay = FakeRelay()
         client = _client(relay)
-        client.publish_directory(_record("lumina@chef.skworld", "noroc2027", pubkey_a))
+        client.publish_directory(_record("lumina@chef.skworld.io", "noroc2027", pubkey_a))
         client.discover_all()  # pin lumina = pubkey_a
 
         # now lumina conflicts, jarvis is fresh — jarvis must still seed
         relay.events.clear()
-        client.publish_directory(_record("lumina@chef.skworld", "evil", pubkey_a_changed))
-        client.publish_directory(_record("jarvis@chef.skworld", "skstack41", pubkey_b))
+        client.publish_directory(_record("lumina@chef.skworld.io", "evil", pubkey_a_changed))
+        client.publish_directory(_record("jarvis@chef.skworld.io", "skstack41", pubkey_b))
         seeded = client.discover_all()
-        assert {p.fqid for p in seeded} == {"jarvis@chef.skworld"}
+        assert {p.fqid for p in seeded} == {"jarvis@chef.skworld.io"}
 
 
 # ---------------------------------------------------------------------------
@@ -357,17 +357,17 @@ class TestReplaceable:
 
         # publish via the seam directly to control created_at ordering
         old = build_directory_event(
-            {**_record("lumina@chef.skworld", "old-node", pubkey_a, ts=1000)}
+            {**_record("lumina@chef.skworld.io", "old-node", pubkey_a, ts=1000)}
         )
         old["created_at"] = 1000
         new = build_directory_event(
-            {**_record("lumina@chef.skworld", "new-node", pubkey_a, ts=2000)}
+            {**_record("lumina@chef.skworld.io", "new-node", pubkey_a, ts=2000)}
         )
         new["created_at"] = 2000
         relay.publish(old)
         relay.publish(new)  # replaceable drop keeps only newest by d-tag anyway
 
-        peer = client.resolve_peer("lumina@chef.skworld")
+        peer = client.resolve_peer("lumina@chef.skworld.io")
         assert peer.inbox_url() == "https://new-node/api/v1/inbox"
 
 
@@ -385,14 +385,14 @@ class TestEnsurePeer:
         store.add(
             PeerInfo(
                 name="lumina",
-                fqid="lumina@chef.skworld",
+                fqid="lumina@chef.skworld.io",
                 transports=[
                     PeerTransport(transport="https-s2s", settings={"inbox_url": "https://x/i"})
                 ],
             )
         )
         # a relay that would error if queried — proves no discovery happened
-        peer = ensure_peer("lumina@chef.skworld", store=store, directory=_boom_client())
+        peer = ensure_peer("lumina@chef.skworld.io", store=store, directory=_boom_client())
         assert peer is not None
         assert peer.inbox_url() == "https://x/i"
 
@@ -402,9 +402,9 @@ class TestEnsurePeer:
 
         relay = FakeRelay()
         client = _client(relay)
-        client.publish_directory(_record("lumina@chef.skworld", "noroc2027", pubkey_a))
+        client.publish_directory(_record("lumina@chef.skworld.io", "noroc2027", pubkey_a))
 
-        peer = ensure_peer("lumina@chef.skworld", store=_store(), directory=client)
+        peer = ensure_peer("lumina@chef.skworld.io", store=_store(), directory=client)
         assert peer is not None
         assert peer.inbox_url() == "https://noroc2027/api/v1/inbox"
 
@@ -431,7 +431,7 @@ def _boom_client():
 
 
 def _signed_record(
-    priv: str, pub: str, fqid="lumina@chef.skworld", node="noroc2027", ts=1_750_000_000
+    priv: str, pub: str, fqid="lumina@chef.skworld.io", node="noroc2027", ts=1_750_000_000
 ):
     """Build a CapAuth-signed directory record for *fqid* using armored *priv*/*pub*."""
     from skcomms.nostr_discovery import sign_record
@@ -462,7 +462,7 @@ class TestSignedReplication:
         relay = FakeRelay()
         client = _client(relay)
         assert client.publish_directory(rec)
-        peer = client.resolve_peer("lumina@chef.skworld")
+        peer = client.resolve_peer("lumina@chef.skworld.io")
         assert peer is not None
         assert peer.inbox_url() == "https://noroc2027/api/v1/inbox"
         assert peer.pubkey == pub
@@ -498,7 +498,7 @@ class TestSignedReplication:
         relay = FakeRelay()
         relay.events.append(ev)
         client = _client(relay)
-        assert client.resolve_peer("lumina@chef.skworld") is None
+        assert client.resolve_peer("lumina@chef.skworld.io") is None
 
     def test_wrong_key_signature_rejected(self, home, keypair_a, keypair_b):
         """A record signed by key B but advertising key A's pubkey is rejected."""
@@ -515,7 +515,7 @@ class TestSignedReplication:
         priv_b, _pub_b = keypair_b
 
         rec = {
-            "fqid": "lumina@chef.skworld",
+            "fqid": "lumina@chef.skworld.io",
             "node": "noroc2027",
             "inbox_url": "https://noroc2027/api/v1/inbox",
             "pubkey": pub_a,  # advertises A's key ...
@@ -543,12 +543,12 @@ class TestSignedReplication:
         """Legacy-unsigned records still resolve when strict mode is off (default)."""
         from skcomms.nostr_discovery import verify_record_signature
 
-        rec = _record("lumina@chef.skworld", "noroc2027", pubkey_a)
+        rec = _record("lumina@chef.skworld.io", "noroc2027", pubkey_a)
         assert verify_record_signature(rec) is None  # no signature present
         relay = FakeRelay()
         client = _client(relay)
         client.publish_directory(rec)
-        assert client.resolve_peer("lumina@chef.skworld") is not None
+        assert client.resolve_peer("lumina@chef.skworld.io") is not None
 
     def test_unsigned_rejected_in_strict_mode(self, home, monkeypatch, keypair_a):
         """Strict mode rejects unsigned records but still accepts signed ones."""
@@ -556,7 +556,7 @@ class TestSignedReplication:
 
         monkeypatch.setenv(STRICT_SIGNED_ENV, "1")
 
-        unsigned = _record("ghost@chef.skworld", "noroc2027", _gen_pubkey())
+        unsigned = _record("ghost@chef.skworld.io", "noroc2027", _gen_pubkey())
         assert record_to_peer(unsigned) is None  # unsigned → rejected under strict
 
         priv, pub = keypair_a
@@ -572,7 +572,7 @@ class TestSignedReplication:
         monkeypatch.setattr(
             nd,
             "resolve_self_identity",
-            lambda *a, **k: {"fqid": "lumina@chef.skworld", "agent": "lumina"},
+            lambda *a, **k: {"fqid": "lumina@chef.skworld.io", "agent": "lumina"},
         )
         monkeypatch.setattr(nd, "_self_capauth_pubkey", lambda agent: pub)
 

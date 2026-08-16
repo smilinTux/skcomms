@@ -36,7 +36,7 @@ def _gen_pubkey():
     return str(k.pubkey)
 
 
-def _peer_bundle(fqid="opus@chef.skworld", name="Testpeer"):
+def _peer_bundle(fqid="opus@chef.skworld.io", name="Testpeer"):
     from skcomms.peers import fingerprint_from_pubkey
 
     pub = _gen_pubkey()
@@ -107,7 +107,7 @@ def test_inbound_request_routes_into_key_exchange(tmp_path, monkeypatch):
         {"bundle": bundle},
         self_bundle_provider=lambda: {"name": "me"},
     )
-    assert res["paired"]["fqid"] == "opus@chef.skworld"
+    assert res["paired"]["fqid"] == "opus@chef.skworld.io"
     assert res["paired"]["fingerprint"] == bundle["fingerprint"]
     assert res["self_bundle"] == {"name": "me"}
     # It actually went through the real import path -> peer YAML landed.
@@ -228,7 +228,7 @@ def test_route_accepts_when_enabled(client, monkeypatch):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["ok"] is True
-    assert body["paired"]["fqid"] == "opus@chef.skworld"
+    assert body["paired"]["fqid"] == "opus@chef.skworld.io"
 
 
 def test_route_rejects_bad_token(client, monkeypatch):
