@@ -36,7 +36,7 @@ class DaemonConfig(BaseModel):
     """Background daemon settings."""
 
     enabled: bool = True
-    poll_interval_s: int = 5
+    poll_interval_s: int = 30
     log_file: str = "~/.skcapstone/skcomms/logs/transport.log"
 
 
