@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import logging
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -29,6 +30,23 @@ logger = logging.getLogger("skcomms.crypto")
 #: with this prefix so the two coexist in the same string field without any
 #: model change (back-compat: classical content is byte-for-byte unchanged).
 PQDM_SCHEME = "pqdm1:"
+
+#: Environment variable carrying the CapAuth signing-key passphrase.
+KEY_PASSPHRASE_ENV_VAR = "SKCOMMS_KEY_PASSPHRASE"
+
+
+def resolve_key_passphrase() -> str:
+    """Resolve the signing-key passphrase for this process.
+
+    Single resolution point for every key-unlock path (transport send,
+    mailbox signing, mailbox at-rest reader): the ``SKCOMMS_KEY_PASSPHRASE``
+    environment variable, defaulting to the empty string for unprotected
+    keys. The value is never logged.
+
+    Returns:
+        The configured passphrase, or ``""`` when the variable is unset.
+    """
+    return os.environ.get(KEY_PASSPHRASE_ENV_VAR, "")
 
 
 class CryptoError(Exception):
@@ -138,7 +156,7 @@ class EnvelopeCrypto:
 
             return cls(
                 private_key_armor=private_armor,
-                passphrase="",
+                passphrase=resolve_key_passphrase(),
                 own_fingerprint=fingerprint,
                 hybrid_provider=hybrid_provider,
             )

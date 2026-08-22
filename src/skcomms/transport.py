@@ -77,6 +77,17 @@ class DeliveryReport(BaseModel):
     attempts: list[SendResult] = Field(default_factory=list)
 
     @property
+    def success(self) -> bool:
+        """Compatibility alias for ``delivered``.
+
+        ``delivered`` is the canonical field name on this aggregate report;
+        ``success`` exists only on the per-attempt :class:`SendResult`. This
+        read-only alias keeps existing consumers (the skcapstone MCP comm
+        tools read ``report.success``) working without renaming the field.
+        """
+        return self.delivered
+
+    @property
     def successful_transport(self) -> Optional[str]:
         """Name of the transport that delivered, if any."""
         for attempt in self.attempts:

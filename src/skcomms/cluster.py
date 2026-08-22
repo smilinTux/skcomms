@@ -56,10 +56,15 @@ logger = logging.getLogger("skcomms.cluster")
 #: Environment variable that overrides the cluster.json search path.
 CLUSTER_ENV_VAR = "SKCOMMS_CLUSTER_JSON"
 
-_CLUSTER_LOOKUP = [
+#: Default cluster.json search path, first match wins. Public so error
+#: messages at every call site name the exact paths that were searched.
+CLUSTER_LOOKUP_PATHS = [
     Path("/etc/skcapstone/cluster.json"),
     Path.home() / ".skcapstone" / "cluster.json",
 ]
+
+#: Backwards-compatible private alias for CLUSTER_LOOKUP_PATHS.
+_CLUSTER_LOOKUP = CLUSTER_LOOKUP_PATHS
 
 _FINGERPRINT_RE = re.compile(r"^[0-9A-Fa-f]{40}$")
 
