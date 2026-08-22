@@ -42,7 +42,6 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import os
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -51,6 +50,7 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
+from .crypto import resolve_key_passphrase
 from .home import skcomms_home
 from .identity import resolve_self_identity
 from .signing import EnvelopeSigner
@@ -212,7 +212,7 @@ def _load_signer(agent: str) -> EnvelopeSigner:
     ]
     for path in candidates:
         if path.exists():
-            passphrase = os.environ.get("SKCOMMS_KEY_PASSPHRASE", "")
+            passphrase = resolve_key_passphrase()
             return EnvelopeSigner(path.read_text(encoding="utf-8"), passphrase)
     raise FileNotFoundError(
         f"no PGP private key for {agent!r}; looked in {[str(c) for c in candidates]}"

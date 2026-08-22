@@ -675,6 +675,92 @@ def init(agent: Optional[str]):
     _print("")
 
 
+@main.group("cluster")
+def cluster_group():
+    """Realm anchor (cluster.json) management."""
+
+
+@cluster_group.command("init")
+@click.option("--realm", required=True, help="Realm name (e.g. skworld.io).")
+@click.option("--operator", required=True, help="Operator name (e.g. chef).")
+@click.option(
+    "--operator-fingerprint",
+    default=None,
+    help="Operator PGP fingerprint, 40 hex chars (optional).",
+)
+@click.option(
+    "--home",
+    "home",
+    default=None,
+    type=click.Path(),
+    help="Directory that holds cluster.json (default: ~/.skcapstone).",
+)
+@click.option("--force", is_flag=True, help="Overwrite an existing cluster.json.")
+def cluster_init(
+    realm: str,
+    operator: str,
+    operator_fingerprint: Optional[str],
+    home: Optional[str],
+    force: bool,
+):
+    """Write the realm anchor cluster.json, validated against the schema.
+
+    Every fqid (``<agent>@<operator>.<realm>``) derives from cluster.json,
+    but no command created one: hosts without it failed deep in the send
+    path. This writes ``~/.skcapstone/cluster.json`` (or ``--home``) with a
+    validated realm/operator pair and proves the result round-trips through
+    :func:`skcomms.cluster.load_cluster_config`. Refuses to overwrite an
+    existing file without ``--force``.
+
+    Examples:
+
+        skcomms cluster init --realm skworld.io --operator chef
+
+        skcomms cluster init --realm skworld.io --operator chef --force
+    """
+    from datetime import datetime, timezone
+
+    from pydantic import ValidationError
+
+    from .cluster import ClusterConfig, ClusterConfigError, load_cluster_config
+
+    target_dir = Path(home).expanduser() if home else Path.home() / ".skcapstone"
+    path = target_dir / "cluster.json"
+    if path.exists() and not force:
+        _print(f"\n  [red]cluster.json already exists:[/] {path}")
+        _print("  Use [cyan]--force[/] to overwrite it.\n")
+        raise SystemExit(1)
+
+    document = {
+        "realm": realm,
+        "operator": operator,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if operator_fingerprint:
+        document["operator_pubkey_fingerprint"] = operator_fingerprint
+    try:
+        ClusterConfig.model_validate(document)
+    except ValidationError as exc:
+        _print(f"\n  [red]invalid cluster.json values:[/] {exc}\n")
+        raise SystemExit(1)
+
+    target_dir.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
+
+    try:
+        validated = load_cluster_config(path)
+    except ClusterConfigError as exc:
+        _print(f"\n  [red]written file failed validation:[/] {exc}\n")
+        raise SystemExit(1)
+
+    _print(f"\n  [bold green]cluster.json written[/] [dim]{path}[/]")
+    _print(f"  Realm:       [cyan]{validated.realm}[/]")
+    _print(f"  Operator:    [cyan]{validated.operator}[/]")
+    if validated.operator_pubkey_fingerprint:
+        _print(f"  Fingerprint: [dim]{validated.operator_pubkey_fingerprint}[/]")
+    _print("  Validation:  [green]OK[/] (load_cluster_config round-trip)\n")
+
+
 @main.command("send")
 @click.argument("to_fqid")
 @click.argument("message")

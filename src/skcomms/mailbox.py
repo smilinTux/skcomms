@@ -22,8 +22,14 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from .cluster import get_operator, require_operator, require_realm
-from .crypto import PQDM_SCHEME, CryptoError, EnvelopeCrypto
+from .cluster import (
+    CLUSTER_ENV_VAR,
+    CLUSTER_LOOKUP_PATHS,
+    get_operator,
+    require_operator,
+    require_realm,
+)
+from .crypto import PQDM_SCHEME, CryptoError, EnvelopeCrypto, resolve_key_passphrase
 from .envelope import Envelope, SignedEnvelope
 from .home import peer_inbox, scaffold, skcomms_home
 from .identity import resolve_self_identity
@@ -207,7 +213,7 @@ def _load_signer(agent: str) -> EnvelopeSigner:
     ]
     for path in candidates:
         if path.exists():
-            passphrase = os.environ.get("SKCOMMS_KEY_PASSPHRASE", "")
+            passphrase = resolve_key_passphrase()
             return EnvelopeSigner(path.read_text(encoding="utf-8"), passphrase)
     raise FileNotFoundError(
         f"no PGP private key for {agent!r}; looked in {[str(c) for c in candidates]}"
@@ -388,7 +394,11 @@ def send_message(
     ident = resolve_self_identity(agent)
     from_fqid = ident.get("fqid")
     if not from_fqid:
-        raise ValueError("cannot resolve sender fqid (cluster.json missing?)")
+        searched = ", ".join(str(path) for path in CLUSTER_LOOKUP_PATHS)
+        raise ValueError(
+            "cannot resolve sender fqid: no cluster.json found "
+            f"(searched: ${CLUSTER_ENV_VAR} override, then {searched})"
+        )
 
     # Pin the sending agent ONCE from the resolved identity and reuse it for
     # every per-agent path/key below. Passing the raw ``agent`` (often None)
@@ -514,7 +524,7 @@ def _reader_crypto_for(agent: Optional[str]) -> Optional[EnvelopeCrypto]:
     priv_armor = _load_private_armor(reader) if reader else None
     if not priv_armor:
         return None
-    passphrase = os.environ.get("SKCOMMS_KEY_PASSPHRASE", "")
+    passphrase = resolve_key_passphrase()
     return EnvelopeCrypto(private_key_armor=priv_armor, passphrase=passphrase)
 
 
