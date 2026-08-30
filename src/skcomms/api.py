@@ -1058,6 +1058,60 @@ async def get_messages():
         ) from exc
 
 
+@app.get(
+    "/api/v1/sealed-inbox",
+    response_model=list[MessageEnvelopeResponse],
+    tags=["messaging"],
+)
+async def get_sealed_inbox(agent: Optional[str] = None):
+    """Read + verify PGP-sealed-at-rest envelopes from the agent's inbox.
+
+    Complements ``GET /api/v1/messages`` (file-transport envelopes from
+    ``comm.receive()``). Sealed-at-rest envelopes are PGP-encrypted at rest
+    and carry a PGP detached signature; they live in the Syncthing-replicated
+    realm tree. This endpoint unseals them with the reading agent's private
+    key and verifies each signature against the sender's TOFU-pinned public
+    key.
+
+    Args:
+        agent: FQID agent component (e.g. ``jarvis``). Defaults to the
+            resolved self-identity when omitted.
+
+    Returns:
+        List of verified envelope payloads, chronological (by file name).
+    """
+    from .mailbox import read_inbox
+
+    try:
+        results = read_inbox(agent)
+        out: list[MessageEnvelopeResponse] = []
+        for env, verification in results:
+            out.append(
+                MessageEnvelopeResponse(
+                    envelope_id=env.id,
+                    sender=env.from_fqid,
+                    recipient=env.to_fqid,
+                    content=env.body,
+                    content_type=env.content_type,
+                    encrypted=True,
+                    compressed=False,
+                    signature=verification.fingerprint if verification.valid else None,
+                    thread_id=env.thread_id,
+                    in_reply_to=env.reply_to,
+                    urgency=Urgency.NORMAL,
+                    created_at=env.created_at,
+                    is_ack="ack" in (env.headers or {}).get("purpose", ""),
+                )
+            )
+        return out
+    except Exception as exc:
+        logger.exception("Failed to read sealed inbox")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to read sealed inbox: {exc}",
+        ) from exc
+
+
 # ---------------------------------------------------------------------------
 # Federation S2S inbox (SKFed S2)
 # ---------------------------------------------------------------------------
