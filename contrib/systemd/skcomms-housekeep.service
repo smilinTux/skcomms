@@ -1,5 +1,7 @@
-# SKComms housekeeping: one-shot retention pass (outbox prune + archive TTL +
-# mailbox retention). Driven by skcomms-housekeep.timer; see SOP.md section 6.
+# SKComms housekeeping: one-shot retention pass (outbox prune, archive TTL,
+# mailbox retention) for EVERY agent home on the node (--all-agents; a
+# single-agent node simply has one). Driven by skcomms-housekeep.timer; see
+# SOP.md section 6.
 #
 # This is belt-and-braces: the running API daemon (skcomms-api.service) already
 # runs the same pass on its internal loop, but the timer guarantees a sweep even
@@ -19,6 +21,6 @@ Documentation=https://github.com/smilinTux/skcomms
 [Service]
 Type=oneshot
 EnvironmentFile=-%h/.config/skcomms/skcomms.env
-ExecStart=%h/.skenv/bin/skcomms housekeep
+ExecStart=%h/.skenv/bin/skcomms housekeep --all-agents
 StandardOutput=journal
 StandardError=journal
