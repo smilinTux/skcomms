@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Security
+
+- Raised the `cryptography` range to `>=50.0.0,<51.0` and `zeroconf` to `>=0.149.16`, and bumped the vulnerable pins in `constraints.txt` (cryptography, mcp, PyJWT, anyio, certifi, pyasn1) to clear the 2026-11-13 dependency sweep findings.
+
 ### Docs
 - **Corrected a false security claim in SOP.md and SECURITY.md.** Both asserted that
   `:9384` stays on loopback and that no skcomms socket is ever published beyond
