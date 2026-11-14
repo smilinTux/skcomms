@@ -43,6 +43,8 @@ def test_explain_shape_matches_contract():
 def test_explain_byte_compatible_with_adapter():
     # The adapter is the shared source of truth: explain() must match its shape
     # exactly (kinds/conditions/actions), so the operator brief reads one schema.
+    # skcapstone needs Python >=3.12; skip on the older lanes skcomms supports.
+    pytest.importorskip("skcapstone")
     from skcapstone.operator_seat.skcomms_adapter import skcomms_explain
 
     assert op.explain() == skcomms_explain()

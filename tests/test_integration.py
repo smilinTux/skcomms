@@ -30,7 +30,7 @@ def home(tmp_path, monkeypatch):
     """
     monkeypatch.setenv("SKCAPSTONE_HOME", str(tmp_path))
     monkeypatch.delenv("SK_STANDALONE", raising=False)
-    import skcapstone
+    skcapstone = pytest.importorskip("skcapstone")
 
     monkeypatch.setattr(skcapstone, "AGENT_HOME", str(tmp_path))
     return tmp_path
