@@ -62,7 +62,7 @@ pqc = [
     # (or SK_PQC_LIBOQS) to e.g. ~/.local so it uses ~/.local/lib/liboqs.so.
     # Install: pip install "skcomms[pqc]"
     "liboqs-python>=0.12",
-    "cryptography>=42.0,<50.0",
+    "cryptography>=50.0.0,<51.0",
 ]
 sk-pqc = [
     # coord 0a1f0a51: OPTIONAL re-export of the published sk_pqc lib. When present,
@@ -74,7 +74,7 @@ sk-pqc = [
 ]
 nostr = [
     "websockets>=12.0",
-    "cryptography>=42.0,<50.0",
+    "cryptography>=50.0.0,<51.0",
 ]
 websocket = [
     "websockets>=12.0",
@@ -94,7 +94,7 @@ discord = [
     "discord.py>=2.3",
 ]
 discovery = [
-    "zeroconf>=0.131.0",
+    "zeroconf>=0.149.16",
 ]
 meshtastic = ["meshtastic>=2.3"]
 api = [
@@ -108,8 +108,8 @@ all = [
     "capauth>=0.1.0",
     "pgpy>=0.6.0",
     "websockets>=12.0",
-    "cryptography>=42.0,<50.0",
-    "zeroconf>=0.131.0",
+    "cryptography>=50.0.0,<51.0",
+    "zeroconf>=0.149.16",
     "fastapi>=0.109.0,<1.0.0",
     "uvicorn[standard]>=0.27.0",
     "aiortc>=1.9.0",
@@ -126,7 +126,7 @@ dev = [
     "httpx>=0.27",
     "pgpy>=0.6.0",
     "websockets>=12.0",
-    "cryptography>=42.0,<50.0",
+    "cryptography>=50.0.0,<51.0",
 ]
 
 [project.scripts]

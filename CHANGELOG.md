@@ -103,6 +103,7 @@
   property of the receiving socket, not of the shared identity, so it belongs
   per-node. Residual replay exposure across a corrupt-DB fresh-start is bounded
   by the ~5 min envelope freshness window.
+- Raised the `cryptography` range to `>=50.0.0,<51.0` and `zeroconf` to `>=0.149.16`, and bumped the vulnerable pins in `constraints.txt` (cryptography, mcp, PyJWT, anyio, certifi, pyasn1) to clear the 2026-11-13 dependency sweep findings.
 
 ### Added
 - **Daemon-integrated outbox pruning + archive retention** (`skcomms.housekeeping`):
