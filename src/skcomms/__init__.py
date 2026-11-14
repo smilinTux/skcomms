@@ -15,7 +15,15 @@ FQID / realm layer (pre-alpha stubs, implementations landing in coord tasks):
     from skcomms.cluster import ...
 """
 
-__version__ = "0.2.16"
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _dist_version
+
+try:
+    # The git tag is the version (setuptools_scm); read it from the installed
+    # distribution instead of a hand-kept literal that goes stale.
+    __version__ = _dist_version("skcomms")
+except PackageNotFoundError:  # running from a source tree that is not installed
+    __version__ = "0.0.0+unknown"
 
 from .core import SKComm, SKComms
 from .crypto import EnvelopeCrypto, KeyStore
