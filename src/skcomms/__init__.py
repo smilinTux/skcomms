@@ -15,7 +15,8 @@ FQID / realm layer (pre-alpha stubs, implementations landing in coord tasks):
     from skcomms.cluster import ...
 """
 
-from importlib.metadata import PackageNotFoundError, version as _dist_version
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _dist_version
 
 try:
     # The git tag is the version (setuptools_scm); read it from the installed
