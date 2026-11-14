@@ -46,10 +46,19 @@ jobs:
       # also stops this dragging a published skcomms over the checkout under test.
       - name: Install skcapstone (optional integration backbone) from source
         run: |
+          # skcapstone requires Python >=3.12 while skcomms supports >=3.10. One
+          # pip call is all-or-nothing, so naming skcapstone on a 3.10/3.11
+          # runner aborted the whole install and left skcoord, skcot and capauth
+          # missing too (42 tests failed or errored). Install the three that
+          # support 3.10 everywhere, and skcapstone only where it can install;
+          # tests that need it skip via importorskip on older interpreters.
           pip install --no-deps --no-cache-dir \
-            "skcapstone @ git+https://github.com/smilinTux/skcapstone" \
             "skcoord @ git+https://github.com/smilinTux/skcoord" \
             "skcot @ git+https://github.com/smilinTux/skcot" \
             "capauth @ git+https://github.com/smilinTux/capauth"
+          if python -c 'import sys; sys.exit(0 if sys.version_info >= (3, 12) else 1)'; then
+            pip install --no-deps --no-cache-dir \
+              "skcapstone @ git+https://github.com/smilinTux/skcapstone"
+          fi
       - name: Run QA pytest suite
         run: python -m pytest tests/ -q
